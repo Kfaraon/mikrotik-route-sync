@@ -1,103 +1,136 @@
 package collectors
 
 import (
-    "bufio"
-    "context"
-    "encoding/json"
-    "fmt"
-    "net/http"
-    "strings"
-    "time"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/netip"
+	"strings"
 )
 
-type CDNCollector struct {
-    asn  int
-    http *http.Client
+type cdnSource struct {
+	URL   string
+	Parse func([]byte) ([]netip.Prefix, error)
 }
 
-func NewCDNCollector(asn int) *CDNCollector {
-    return &CDNCollector{asn: asn, http: &http.Client{Timeout: 30 * time.Second}}
+// Ключ — имя сервиса, как его вводит пользователь (или классификатор).
+var cdnSources = map[string]cdnSource{
+	"cloudflare": {
+		URL:   "https://www.cloudflare.com/ips-v4",
+		Parse: parsePlainLines,
+	},
+	"cloudfront": {
+		URL:   "https://ip-ranges.amazonaws.com/ip-ranges.json",
+		Parse: parseAWSRanges("CLOUDFRONT"),
+	},
+	"aws": {
+		URL:   "https://ip-ranges.amazonaws.com/ip-ranges.json",
+		Parse: parseAWSRanges(""),
+	},
+	"google": {
+		URL:   "https://www.gstatic.com/ipranges/goog.json",
+		Parse: parseGoogleRanges,
+	},
+	"fastly": {
+		URL:   "https://api.fastly.com/public-ip-list",
+		Parse: parseFastlyRanges,
+	},
+	// Akamai не отдаёт стабильный публичный JSON.
+	// Для akamai используем метод asn (см. classifier).
 }
 
-func (c *CDNCollector) Collect(ctx context.Context, _ string) ([]string, error) {
-    switch c.asn {
-    case 13335:
-        return c.fetchCloudflare(ctx)
-    case 15169:
-        return c.fetchGoogle(ctx)
-    case 16509:
-        return c.fetchAWSCloudFront(ctx)
-    }
-    return nil, fmt.Errorf("unknown CDN ASN %d", c.asn)
+type CDNCollector struct{}
+
+func (c *CDNCollector) Name() string { return "cdn" }
+
+func (c *CDNCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
+	src, ok := cdnSources[strings.ToLower(service)]
+	if !ok {
+		return nil, fmt.Errorf("no CDN source for %q", service)
+	}
+	data, err := fetch(ctx, src.URL)
+	if err != nil {
+		return nil, err
+	}
+	prefixes, err := src.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return &Result{Prefixes: prefixes, Source: src.URL, Method: "cdn"}, nil
 }
 
-func (c *CDNCollector) fetchCloudflare(ctx context.Context) ([]string, error) {
-    return c.fetchLines(ctx, "https://www.cloudflare.com/ips-v4")
+func parsePlainLines(data []byte) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if p, err := netip.ParsePrefix(line); err == nil {
+			out = append(out, p.Masked())
+		}
+	}
+	return out, nil
 }
 
-func (c *CDNCollector) fetchGoogle(ctx context.Context) ([]string, error) {
-    req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.gstatic.com/ipranges/goog.json", nil)
-    resp, err := c.http.Do(req)
-    if err != nil {
-        return nil, err
-    }
-    defer resp.Body.Close()
-    var data struct {
-        Prefixes []struct {
-            IPv4Prefix string `json:"ipv4Prefix"`
-        } `json:"prefixes"`
-    }
-    if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-        return nil, err
-    }
-    out := make([]string, 0, len(data.Prefixes))
-    for _, p := range data.Prefixes {
-        if p.IPv4Prefix != "" {
-            out = append(out, p.IPv4Prefix)
-        }
-    }
-    return out, nil
+func parseGoogleRanges(data []byte) ([]netip.Prefix, error) {
+	var v struct {
+		Prefixes []struct {
+			IPv4 string `json:"ipv4Prefix"`
+			IPv6 string `json:"ipv6Prefix"`
+		} `json:"prefixes"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return nil, err
+	}
+	var out []netip.Prefix
+	for _, p := range v.Prefixes {
+		if p.IPv4 == "" {
+			continue
+		}
+		if pr, err := netip.ParsePrefix(p.IPv4); err == nil {
+			out = append(out, pr.Masked())
+		}
+	}
+	return out, nil
 }
 
-func (c *CDNCollector) fetchAWSCloudFront(ctx context.Context) ([]string, error) {
-    req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://ip-ranges.amazonaws.com/ip-ranges.json", nil)
-    resp, err := c.http.Do(req)
-    if err != nil {
-        return nil, err
-    }
-    defer resp.Body.Close()
-    var data struct {
-        Prefixes []struct {
-            Service string `json:"service"`
-            IPv4    string `json:"ip_prefix"`
-        } `json:"prefixes"`
-    }
-    if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-        return nil, err
-    }
-    var out []string
-    for _, p := range data.Prefixes {
-        if p.Service == "CLOUDFRONT" {
-            out = append(out, p.IPv4)
-        }
-    }
-    return out, nil
+func parseAWSRanges(serviceFilter string) func([]byte) ([]netip.Prefix, error) {
+	return func(data []byte) ([]netip.Prefix, error) {
+		var v struct {
+			Prefixes []struct {
+				Service string `json:"service"`
+				IPv4    string `json:"ip_prefix"`
+			} `json:"prefixes"`
+		}
+		if err := json.Unmarshal(data, &v); err != nil {
+			return nil, err
+		}
+		var out []netip.Prefix
+		for _, p := range v.Prefixes {
+			if serviceFilter != "" && p.Service != serviceFilter {
+				continue
+			}
+			if pr, err := netip.ParsePrefix(p.IPv4); err == nil {
+				out = append(out, pr.Masked())
+			}
+		}
+		return out, nil
+	}
 }
 
-func (c *CDNCollector) fetchLines(ctx context.Context, url string) ([]string, error) {
-    req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-    resp, err := c.http.Do(req)
-    if err != nil {
-        return nil, err
-    }
-    defer resp.Body.Close()
-    var out []string
-    sc := bufio.NewScanner(resp.Body)
-    for sc.Scan() {
-        line := strings.TrimSpace(sc.Text())
-        if line != "" && !strings.HasPrefix(line, "#") {
-            out = append(out, line)
-        }
-    }
-    return out, sc.Err()
+func parseFastlyRanges(data []byte) ([]netip.Prefix, error) {
+	var v struct {
+		Addresses []string `json:"addresses"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return nil, err
+	}
+	var out []netip.Prefix
+	for _, a := range v.Addresses {
+		if p, err := netip.ParsePrefix(a); err == nil {
+			out = append(out, p.Masked())
+		}
+	}
+	return out, nil
 }
