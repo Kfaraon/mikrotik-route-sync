@@ -1,71 +1,61 @@
 package collectors
 
 import (
+	"bufio"
 	"context"
-	"fmt"
+	"io"
+	"net/http"
 	"net/netip"
+	"strings"
+	"time"
 )
 
-// StaticURLCollector — загрузка произвольного списка CIDR по URL.
-type StaticURLCollector struct{}
+type StaticCollector struct {
+	url string
+}
 
-func (s *StaticURLCollector) Name() string { return "static_url" }
+func NewStaticCollector(url string) Collector {
+	return &StaticCollector{url: url}
+}
 
-func (s *StaticURLCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
-	if opts.URL == "" {
-		return nil, fmt.Errorf("static_url collector requires URL")
-	}
-	data, err := fetch(ctx, opts.URL)
+func (c *StaticCollector) Name() string { return "static_url" }
+
+func (c *StaticCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", c.url, nil)
 	if err != nil {
 		return nil, err
 	}
-	prefixes, err := parsePlainLines(data)
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	var out []netip.Prefix
-	seen := map[netip.Prefix]struct{}{}
-	for _, p := range prefixes {
-		if _, ok := seen[p]; ok {
+	defer resp.Body.Close()
+
+	var prefixes []netip.Prefix
+	excludeSet := make(map[netip.Prefix]bool)
+	for _, ex := range opts.Exclude {
+		excludeSet[ex.Masked()] = true
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		seen[p] = struct{}{}
-		out = append(out, p)
+		if prefix, err := netip.ParsePrefix(line); err == nil {
+			prefix = prefix.Masked()
+			if !excludeSet[prefix] {
+				prefixes = append(prefixes, prefix)
+			}
+		}
 	}
-	return &Result{Prefixes: out, Source: opts.URL, Method: "static_url"}, nil
-}package collectors
 
-import (
-    "bufio"
-    "context"
-    "net/http"
-    "strings"
-    "time"
-)
-
-type StaticURLCollector struct {
-    url  string
-    http *http.Client
-}
-
-func NewStaticURLCollector(url string) *StaticURLCollector {
-    return &StaticURLCollector{url: url, http: &http.Client{Timeout: 30 * time.Second}}
-}
-
-func (c *StaticURLCollector) Collect(ctx context.Context, _ string) ([]string, error) {
-    req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
-    resp, err := c.http.Do(req)
-    if err != nil {
-        return nil, err
-    }
-    defer resp.Body.Close()
-    var out []string
-    sc := bufio.NewScanner(resp.Body)
-    for sc.Scan() {
-        line := strings.TrimSpace(sc.Text())
-        if line != "" && !strings.HasPrefix(line, "#") {
-            out = append(out, line)
-        }
-    }
-    return out, sc.Err()
+	return &Result{
+		Prefixes: prefixes,
+		Source:   c.url,
+		Method:   "static_url",
+	}, nil
 }
