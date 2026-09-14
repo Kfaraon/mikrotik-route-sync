@@ -10,8 +10,8 @@ import (
 
     tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-    "github.com/example/mikrotik-route-sync/internal/config"
-    "github.com/example/mikrotik-route-sync/internal/core"
+    "github.com/Kfaraon/mikrotik-route-sync/internal/config"
+    "github.com/Kfaraon/mikrotik-route-sync/internal/core"
 )
 
 type state struct {
