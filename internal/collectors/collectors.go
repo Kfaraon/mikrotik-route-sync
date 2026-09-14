@@ -25,10 +25,4 @@ type Options struct {
 type Collector interface {
 	Name() string
 	Collect(ctx context.Context, service string, opts Options) (*Result, error)
-}package collectors
-
-import "context"
-
-type Collector interface {
-    Collect(ctx context.Context, service string) ([]string, error)
 }
