@@ -1,0 +1,81 @@
+timezone: Asia/Yekaterinburg
+
+logging:
+  level: info
+  file: /var/log/mikrotik-route-sync/app.log
+  max_size_mb: 10
+  max_files: 5
+  max_total_mb: 50
+  compress: true
+  also_stdout: true
+
+mikrotik:
+  host: 192.168.88.1
+  username: api
+  password: "your_password_here"
+  use_ssl: true
+  verify_ssl: false
+  gateway: wg-cz-vpn
+  routing_table: main
+  distance: 2
+  comment_prefix: "AUTO"
+
+telegram:
+  enabled: false
+  bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+  chat_id: "123456789"
+  authorized_chat_ids:
+    - "123456789"
+  buttons:
+    enabled: true
+    max_selected_services: 10
+  weekly_report: "weekly on monday at 09:00"
+
+web:
+  enabled: true
+  listen: ":8080"
+  auth:
+    enabled: true
+    username: admin
+    password: "admin_password_here"
+  session_timeout: 24h
+
+scheduler:
+  parallel: true
+  max_concurrent: 3
+  reload_interval: 1m
+  cache_ttl: 24h
+  cache_purge: "every 1h"
+
+schedules:
+  global: "every 6h"
+  groups:
+    social:
+      schedule: "daily at 03:00"
+      services: [instagram, telegram]
+    video:
+      schedule: "every 12h"
+      services: [youtube]
+    torrents:
+      schedule: "weekly on sunday at 05:00"
+      services: [rutor]
+  services:
+    instagram:
+      schedule: "every 4h"
+    cloudflare:
+      schedule: "every 1h"
+    rutor:
+      schedule: "manual"
+
+services:
+  - instagram
+  - youtube
+  - cloudflare
+  - rutor
+  - telegram
+
+overrides:
+  rutor:
+    domains: [rutor.info, rutor.org]
+    max_asn_prefixes: 50
+    exclude: [1.2.3.0/24]

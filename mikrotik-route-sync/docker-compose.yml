@@ -1,0 +1,13 @@
+services:
+  mikrotik-route-sync:
+    build: .
+    container_name: mikrotik-route-sync
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/etc/mikrotik-route-sync/config.yaml:ro
+      - ./data/logs:/var/log/mikrotik-route-sync
+      - ./data/lib:/var/lib/mikrotik-route-sync
+    environment:
+      - TZ=Asia/Yekaterinburg
