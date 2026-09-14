@@ -1,23 +1,42 @@
-# syntax=docker/dockerfile:1.7
-FROM golang:1.23-alpine AS build
-WORKDIR /src
+# Stage 1: Build
+FROM golang:1.22-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 
+WORKDIR /app
+
+# Кэширование зависимостей
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Копирование исходников
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w -X main.version=$(git describe --tags --always 2>/dev/null || echo dev)" \
-    -o /out/app ./cmd/app
 
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/app /app
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# Статическая сборка
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /mikrotik-route-sync ./cmd/app
 
-VOLUME ["/data", "/var/log/mikrotik-sync"]
-USER nonroot:nonroot
+# Stage 2: Runtime (scratch — минимальный образ)
+FROM scratch
+
+# Копирование CA-сертификатов для HTTPS
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Копирование бинарника
+COPY --from=builder /mikrotik-route-sync /mikrotik-route-sync
+
+# Создание непривилегированного пользователя
+COPY --from=builder /etc/passwd /etc/passwd
+USER nobody
+
+# Рабочая директория
+WORKDIR /app
+
+# Точки монтирования
+VOLUME ["/data", "/var/log/mikrotik-route-sync"]
+
+# Порт веб-интерфейса
 EXPOSE 8080
-ENTRYPOINT ["/app"]
+
+# Точка входа
+ENTRYPOINT ["/mikrotik-route-sync"]
 CMD ["web"]
