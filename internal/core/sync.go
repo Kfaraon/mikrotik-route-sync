@@ -167,9 +167,7 @@ func (s *Syncer) syncOne(ctx context.Context, service string, dryRun bool) (noti
 
 func (s *Syncer) collect(ctx context.Context, service string) ([]string, classifier.Method, error) {
 	d, err := s.classifier.Classify(ctx, service)
-	if err != nil {
-		return nil, "", err
-	}
+	if err != nil { return nil, "", err }
 
 	var col collectors.Collector
 	switch d.Method {
@@ -184,4 +182,25 @@ func (s *Syncer) collect(ctx context.Context, service string) ([]string, classif
 		if ov, ok := s.cfg.Overrides[service]; ok && ov.MaxASNPrefixes > 0 {
 			maxASN = ov.MaxASNPrefixes
 		}
-		col = collectors.NewWHOISCollector(s.res
+		col = collectors.NewWHOISCollector(s.resolver, d.Domains, maxASN)
+	case classifier.MethodStaticURL:
+		col = collectors.NewStaticCollector(d.URL)
+	case classifier.MethodRIPEstat:
+		col = collectors.NewRIPEstatCollector(d.ASN)
+	case classifier.MethodBGPTools:
+		col = collectors.NewBGPToolsCollector(d.ASN)
+	default:
+		return nil, d.Method, fmt.Errorf("unsupported method %s", d.Method)
+	}
+
+	result, err := col.Collect(ctx, service, collectors.Options{
+		Domains: d.Domains,
+		ASN:     d.ASN,
+		URL:     d.URL,
+	})
+	if err != nil { return nil, d.Method, err }
+
+	var cidrs []string
+	for _, p := range result.Prefixes { cidrs = append(cidrs, p.String()) }
+	return cidrs, d.Method, nil
+}
