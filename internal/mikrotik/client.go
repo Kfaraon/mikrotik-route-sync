@@ -12,15 +12,15 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/sony/gobreaker"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/sony/gobreaker"
 )
 
 type Client struct {
-	cfg   config.MikroTikConfig
-	http  *http.Client
-	cb    *gobreaker.CircuitBreaker
-	base  string
+	cfg  config.MikroTikConfig
+	http *http.Client
+	cb   *gobreaker.CircuitBreaker
+	base string
 }
 
 type Route struct {
@@ -37,26 +37,24 @@ func New(cfg config.MikroTikConfig) *Client {
 	if cfg.UseSSL {
 		scheme = "https"
 	}
-	
 	tr := &http.Transport{
 		MaxIdleConns:        10,
 		IdleConnTimeout:     60 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
 	}
-	
 	if cfg.UseSSL {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: !cfg.VerifySSL}
 	}
-	
+
 	return &Client{
 		cfg:  cfg,
-		http: &http.Client{Timeout: 15 * time.Second, Transport: tr},
+		http: &http.Client{Timeout: 30 * time.Second, Transport: tr},
 		cb: gobreaker.NewCircuitBreaker(gobreaker.Settings{
-			Name:          "mikrotik",
-			MaxRequests:   3,
-			Interval:      30 * time.Second,
-			Timeout:       60 * time.Second,
-			ReadyToTrip:   func(c gobreaker.Counts) bool { return c.ConsecutiveFailures >= 5 },
+			Name:        "mikrotik",
+			MaxRequests: 3,
+			Interval:    30 * time.Second,
+			Timeout:     60 * time.Second,
+			ReadyToTrip: func(c gobreaker.Counts) bool { return c.ConsecutiveFailures >= 5 },
 		}),
 		base: fmt.Sprintf("%s://%s/rest", scheme, cfg.Host),
 	}
@@ -68,9 +66,8 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any,
 	if canRetry {
 		attempts = maxAttempts
 	}
-	
 	var lastErr error
-	
+
 	for i := 0; i < attempts; i++ {
 		if i > 0 {
 			backoff := time.Duration(1<<uint(i-1)) * 500 * time.Millisecond
@@ -83,30 +80,17 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any,
 				return ctx.Err()
 			}
 		}
-		
-		_, err := c.cb.Execute(func() (any, error) {
-			return nil, c.doOnce(ctx, method, path, body, out)
-		})
-		
+		_, err := c.cb.Execute(func() (any, error) { return nil, c.doOnce(ctx, method, path, body, out) })
 		if err == nil {
 			return nil
 		}
-		
 		lastErr = err
-		
-		var he interface{ Status() int }
-		if errors.As(err, &he) {
-			status := he.Status()
-			if status >= 400 && status < 500 {
-				return err // Не повторяем 4xx ошибки
-			}
-		}
-		
+
+		// 4xx ошибки не ретраить
 		if !canRetry || errors.Is(err, gobreaker.ErrOpenState) {
 			return err
 		}
 	}
-	
 	return lastErr
 }
 
@@ -116,36 +100,31 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body any, out 
 		raw, _ := json.Marshal(body)
 		buf = bytes.NewReader(raw)
 	}
-	
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, buf)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return err
 	}
-	
 	req.SetBasicAuth(c.cfg.Username, c.cfg.Password)
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("do request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("mikrotik: %d %s", resp.StatusCode, string(raw))
 	}
-	
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
 	}
-	
 	return nil
 }
 
 func (c *Client) ListRoutes(ctx context.Context, comment string) ([]Route, error) {
 	var routes []Route
-	// comment-exact=yes критически важен для RouterOS v7.15+
 	path := fmt.Sprintf("/ip/route?comment=%s&comment-exact=yes", url.QueryEscape(comment))
 	err := c.do(ctx, http.MethodGet, path, nil, &routes, true)
 	return routes, err
@@ -162,4 +141,8 @@ func (c *Client) RemoveRoute(ctx context.Context, id string) error {
 func (c *Client) Ping(ctx context.Context) error {
 	var out []map[string]any
 	return c.do(ctx, http.MethodGet, "/system/identity", nil, &out, true)
+}
+
+func (c *Client) BackupRoutes(ctx context.Context, comment string) ([]Route, error) {
+	return c.ListRoutes(ctx, comment)
 }
