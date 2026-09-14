@@ -4,7 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"github.com/example/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
