@@ -1,13 +1,23 @@
+version: '3.8'
+
 services:
   mikrotik-route-sync:
-    build: .
-    container_name: mikrotik-route-sync
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mrs
     restart: unless-stopped
+    volumes:
+      - ./config.yaml:/data/config.yaml:ro
+      - ./cache.db:/var/lib/mikrotik-route-sync/cache.db
+      - ./logs:/var/log/mikrotik-route-sync
     ports:
       - "8080:8080"
-    volumes:
-      - ./config.yaml:/etc/mikrotik-route-sync/config.yaml:ro
-      - ./data/logs:/var/log/mikrotik-route-sync
-      - ./data/lib:/var/lib/mikrotik-route-sync
     environment:
       - TZ=Asia/Yekaterinburg
+    networks:
+      - mrs-net
+
+networks:
+  mrs-net:
+    driver: bridge
