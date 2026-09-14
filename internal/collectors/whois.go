@@ -1,50 +1,54 @@
 package collectors
 
 import (
-    "context"
+	"context"
+	"fmt"
+	"net"
+	"net/netip"
 
-    "github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
+	"yourmodule/internal/resolver"
 )
 
+// WHOISCollector — DNS → ASN → все префиксы ASN (с лимитом).
 type WHOISCollector struct {
-    resolver *resolver.Resolver
-    domains  []string
-    maxASN   int
+	Resolver *resolver.Resolver
 }
 
-func NewWHOISCollector(r *resolver.Resolver, domains []string, maxASN int) *WHOISCollector {
-    if maxASN <= 0 {
-        maxASN = 200
-    }
-    return &WHOISCollector{resolver: r, domains: domains, maxASN: maxASN}
-}
+func (w *WHOISCollector) Name() string { return "whois" }
 
-func (c *WHOISCollector) Collect(ctx context.Context, _ string) ([]string, error) {
-    out := map[string]struct{}{}
-    for _, d := range c.domains {
-        ips, err := c.resolver.ResolveDomain(ctx, d)
-        if err != nil {
-            continue
-        }
-        for _, ip := range ips {
-            asn, err := c.resolver.ASNByIP(ctx, ip)
-            if err != nil {
-                out[ip+"/32"] = struct{}{}
-                continue
-            }
-            prefixes, err := c.resolver.PrefixesByASN(ctx, asn)
-            if err != nil || len(prefixes) > c.maxASN {
-                out[ip+"/32"] = struct{}{}
-                continue
-            }
-            for _, p := range prefixes {
-                out[p] = struct{}{}
-            }
-        }
-    }
-    result := make([]string, 0, len(out))
-    for k := range out {
-        result = append(result, k)
-    }
-    return result, nil
+func (w *WHOISCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
+	if len(opts.Domains) == 0 {
+		return nil, fmt.Errorf("whois collector requires domains")
+	}
+	var asns []int
+	for _, d := range opts.Domains {
+		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", d)
+		if err != nil {
+			continue
+		}
+		for _, ip := range ips {
+			asn, err := w.Resolver.LookupASN(ctx, ip)
+			if err == nil && asn > 0 {
+				asns = append(asns, asn)
+				break
+			}
+		}
+	}
+	if len(asns) == 0 {
+		return nil, fmt.Errorf("no ASN found for %v", opts.Domains)
+	}
+
+	asnColl := &ASNCollector{}
+	var all []netip.Prefix
+	for _, asn := range asns {
+		res, err := asnColl.Collect(ctx, service, Options{
+			ASN:            asn,
+			MaxASNPrefixes: opts.MaxASNPrefixes,
+		})
+		if err != nil {
+			continue
+		}
+		all = append(all, res.Prefixes...)
+	}
+	return &Result{Prefixes: all, Source: "whois", Method: "whois"}, nil
 }
