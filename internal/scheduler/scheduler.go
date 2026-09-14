@@ -10,10 +10,13 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
 )
+
+const syncTimeout = 10 * time.Minute
 
 type Scheduler struct {
 	cfg      *config.Config
@@ -105,7 +108,6 @@ func (s *Scheduler) Stop(ctx context.Context) {
 		t.Stop()
 	}
 
-	// Правильная остановка cron — Stop() возвращает context.Context
 	stopCtx := s.cron.Stop()
 
 	select {
@@ -138,15 +140,18 @@ func (s *Scheduler) run(service, trigger, schedule string) {
 	s.log.Info("scheduled sync start", "service", service, "trigger", trigger)
 	start := time.Now()
 
-	s.notifier.SyncStart(context.Background(), []string{service}, trigger, schedule)
+	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
+	defer cancel()
 
-	res, err := s.syncer.SyncOneResult(context.Background(), service, false)
+	s.notifier.SyncStart(ctx, []string{service}, trigger, schedule)
+
+	res, err := s.syncer.SyncOneResult(ctx, service, false)
 	if err != nil {
-		s.notifier.Error(context.Background(), service, err)
+		s.notifier.Error(ctx, service, err)
 		return
 	}
 
-	s.notifier.SyncDone(context.Background(), []notifier.SyncResult{res},
+	s.notifier.SyncDone(ctx, []notifier.SyncResult{res},
 		time.Since(start).Round(time.Millisecond).String(), false)
 }
 
