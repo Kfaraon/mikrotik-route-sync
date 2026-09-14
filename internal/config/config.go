@@ -8,17 +8,18 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Timezone  string              `mapstructure:"timezone" yaml:"timezone"`
-	Logging   LoggingConfig       `mapstructure:"logging" yaml:"logging"`
-	MikroTik  MikroTikConfig      `mapstructure:"mikrotik" yaml:"mikrotik"`
-	Telegram  TelegramConfig      `mapstructure:"telegram" yaml:"telegram"`
-	Web       WebConfig           `mapstructure:"web" yaml:"web"`
-	Scheduler SchedulerConfig     `mapstructure:"scheduler" yaml:"scheduler"`
-	Schedules SchedulesConfig     `mapstructure:"schedules" yaml:"schedules"`
-	Services  []string            `mapstructure:"services" yaml:"services"`
+	Timezone  string           `mapstructure:"timezone" yaml:"timezone"`
+	Logging   LoggingConfig    `mapstructure:"logging" yaml:"logging"`
+	MikroTik  MikroTikConfig   `mapstructure:"mikrotik" yaml:"mikrotik"`
+	Telegram  TelegramConfig   `mapstructure:"telegram" yaml:"telegram"`
+	Web       WebConfig        `mapstructure:"web" yaml:"web"`
+	Scheduler SchedulerConfig  `mapstructure:"scheduler" yaml:"scheduler"`
+	Schedules SchedulesConfig  `mapstructure:"schedules" yaml:"schedules"`
+	Services  []string         `mapstructure:"services" yaml:"services"`
 	Overrides map[string]Override `mapstructure:"overrides" yaml:"overrides"`
 	path      string
 }
@@ -28,32 +29,38 @@ type LoggingConfig struct {
 	MaxSizeMB, MaxFiles, MaxTotalMB int `mapstructure:"max_size_mb,max_files,max_total_mb" yaml:"max_size_mb,max_files,max_total_mb"`
 	Compress, AlsoStdout bool `mapstructure:"compress,also_stdout" yaml:"compress,also_stdout"`
 }
+
 type MikroTikConfig struct {
 	Host, Username, Password, Gateway, RoutingTable, CommentPrefix string `mapstructure:"host,username,password,gateway,routing_table,comment_prefix" yaml:"host,username,password,gateway,routing_table,comment_prefix"`
 	UseSSL, VerifySSL bool `mapstructure:"use_ssl,verify_ssl" yaml:"use_ssl,verify_ssl"`
-	Distance          int  `mapstructure:"distance" yaml:"distance"`
+	Distance int `mapstructure:"distance" yaml:"distance"`
 }
+
 type TelegramConfig struct {
 	Enabled bool `mapstructure:"enabled" yaml:"enabled"`
 	BotToken, ChatID, WeeklyReport string `mapstructure:"bot_token,chat_id,weekly_report" yaml:"bot_token,chat_id,weekly_report"`
 	AuthorizedChatIDs []string `mapstructure:"authorized_chat_ids" yaml:"authorized_chat_ids"`
 	Buttons struct { Enabled bool; MaxSelectedServices int } `mapstructure:"buttons" yaml:"buttons"`
 }
+
 type WebConfig struct {
 	Enabled bool `mapstructure:"enabled" yaml:"enabled"`
 	Listen, SessionTimeout string `mapstructure:"listen,session_timeout" yaml:"listen,session_timeout"`
 	Auth struct { Enabled bool; Username, Password string } `mapstructure:"auth" yaml:"auth"`
 }
+
 type SchedulerConfig struct {
 	Parallel bool `mapstructure:"parallel" yaml:"parallel"`
 	MaxConcurrent int `mapstructure:"max_concurrent" yaml:"max_concurrent"`
 	ReloadInterval, CacheTTL, CachePurge string `mapstructure:"reload_interval,cache_ttl,cache_purge" yaml:"reload_interval,cache_ttl,cache_purge"`
 }
+
 type SchedulesConfig struct {
-	Global   string `mapstructure:"global" yaml:"global"`
-	Groups   map[string]struct { Schedule string; Services []string } `mapstructure:"groups" yaml:"groups"`
+	Global string `mapstructure:"global" yaml:"global"`
+	Groups map[string]struct { Schedule string; Services []string } `mapstructure:"groups" yaml:"groups"`
 	Services map[string]struct { Schedule string } `mapstructure:"services" yaml:"services"`
 }
+
 type Override struct {
 	Domains []string `mapstructure:"domains" yaml:"domains"`
 	MaxASNPrefixes int `mapstructure:"max_asn_prefixes" yaml:"max_asn_prefixes"`
@@ -65,10 +72,8 @@ func Load(path string) (*Config, error) {
 	v.SetConfigFile(path)
 	v.SetConfigType("yaml")
 	if err := v.ReadInConfig(); err != nil { return nil, fmt.Errorf("read config: %w", err) }
-	
 	var c Config
 	if err := v.Unmarshal(&c); err != nil { return nil, fmt.Errorf("unmarshal: %w", err) }
-	
 	c.path = path
 	c.applyDefaults()
 	if err := os.MkdirAll(filepath.Dir(c.Logging.File), 0o755); err != nil { return nil, err }
@@ -135,6 +140,20 @@ func (c *Config) Set(path, value string) error {
 	case "timezone": c.Timezone = value
 	default: return fmt.Errorf("unknown key: %s", path)
 	}
+	return nil
+}
+
+// Save записывает конфигурацию обратно в файл
+func (c *Config) Save() error {
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	
+	if err := os.WriteFile(c.path, data, 0o600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	
 	return nil
 }
 
