@@ -1,14 +1,78 @@
-<table>
-  <thead>
-    <tr><th>Сервис</th><th>Расписание</th><th>Следующий запуск</th></tr>
-  </thead>
-  <tbody>
-    {{ range .Schedules }}
-    <tr>
-      <td>{{ .Service }}</td>
-      <td>{{ .Schedule }}</td>
-      <td class="muted">{{ .NextRun }}</td>
-    </tr>
-    {{ end }}
-  </tbody>
-</table>
+{{define "schedules.html"}}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Расписания — MikroTik Route Sync</title>
+    <link rel="stylesheet" href="/static/pico.min.css">
+    <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+<main class="container">
+    <h1>📅 Расписания</h1>
+    <nav><a href="/">← Дашборд</a></nav>
+
+    <table>
+        <thead>
+            <tr><th>Сервис</th><th>Расписание</th><th>Действия</th></tr>
+        </thead>
+        <tbody>
+            {{range .Schedules}}
+            <tr>
+                <td>{{.Service}}</td>
+                <td>
+                    <span class="schedule-display">{{.Schedule}}</span>
+                    <input type="text" class="schedule-input" style="display:none" value="{{.Schedule}}">
+                </td>
+                <td>
+                    <button class="btn-edit-schedule" onclick="editSchedule(this)">✏️</button>
+                    <button class="btn-save-schedule" style="display:none" hx-post="/actions/schedule/update" hx-swap="outerHTML">💾</button>
+                    <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                    <input type="hidden" name="service" value="{{.Service}}">
+                    <input type="hidden" name="schedule" class="schedule-value" value="{{.Schedule}}">
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+
+    <button hx-post="/actions/reload-config" hx-swap="outerHTML">🔄 Перечитать конфиг</button>
+</main>
+<script>
+function editSchedule(btn) {
+    const row = btn.closest('tr');
+    const display = row.querySelector('.schedule-display');
+    const input = row.querySelector('.schedule-input');
+    const editBtn = row.querySelector('.btn-edit-schedule');
+    const saveBtn = row.querySelector('.btn-save-schedule');
+    const valueInput = row.querySelector('.schedule-value');
+
+    display.style.display = 'none';
+    input.style.display = 'inline';
+    editBtn.style.display = 'none';
+    saveBtn.style.display = 'inline';
+
+    saveBtn.onclick = function() {
+        valueInput.value = input.value;
+        display.textContent = input.value;
+        display.style.display = 'inline';
+        input.style.display = 'none';
+        editBtn.style.display = 'inline';
+        saveBtn.style.display = 'none';
+
+        // Отправить через HTMX
+        htmx.ajax('POST', '/actions/schedule/update', {
+            target: row,
+            swap: 'outerHTML',
+            values: {
+                csrf_token: '{{.CSRF}}',
+                service: '{{.Service}}',
+                schedule: input.value
+            }
+        });
+    };
+}
+</script>
+</body>
+</html>
+{{end}}
