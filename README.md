@@ -1,5 +1,54 @@
 # mikrotik-route-sync
 
+Автоматическая синхронизация маршрутов MikroTik RouterOS v7 по имени сервиса.
+
+## Возможности
+- Автоопределение метода сбора IP (ASN / CDN / dynamic / WHOIS / static URL).
+- Агрегация CIDR с проверкой сохранности суммы адресов.
+- Инкрементальная синхронизация: маршруты других сервисов не затрагиваются.
+- Управление через CLI, Telegram-бота и веб-интерфейс.
+- Планировщик с тремя уровнями расписаний (сервис → группа → глобальное).
+
+## Быстрый старт
+```bash
+docker run -d --name mrs \
+  -v $PWD/config.yaml:/data/config.yaml \
+  -v $PWD/logs:/var/log/mikrotik-sync \
+  -p 8080:8080 \
+  mikrotik-route-sync:latest web
+```
+
+## CLI
+| Команда | Назначение |
+|---|---|
+| `app sync` | Синхронизировать все сервисы |
+| `app sync --service instagram` | Один сервис |
+| `app sync --group social` | Группа |
+| `app add-service youtube` | Добавить сервис |
+| `app remove-service rutor` | Удалить сервис |
+| `app logs tail -n 100 --follow` | Логи |
+| `app test-mikrotik` | Проверка подключения |
+| `app test-telegram` | Проверка уведомлений |
+
+## Скриншоты
+- `docs/dashboard.png` — дашборд
+- `docs/services.png` — сервисы
+- `docs/bot-menu.png` — меню бота
+
+## Конфигурация
+См. `config.example.yaml`.
+
+## Разработка
+```bash
+git clone https://github.com/Kfaraon/mikrotik-route-sync
+cd mikrotik-route-sync
+go test ./...
+go run ./cmd/app web
+```
+
+## Лицензия
+MIT# mikrotik-route-sync
+
 Автоматическое управление маршрутами на MikroTik RouterOS v7 через REST API.
 
 ## Возможности
