@@ -3,8 +3,8 @@ package notifier
 import (
     "context"
 
-    "github.com/example/mikrotik-route-sync/internal/config"
-    "github.com/example/mikrotik-route-sync/internal/logging"
+    "github.com/Kfaraon/mikrotik-route-sync/internal/config"
+    "github.com/Kfaraon/mikrotik-route-sync/internal/logging"
 )
 
 type SyncResult struct {
