@@ -7,14 +7,14 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	"github.com/example/mikrotik-route-sync/internal/aggregator"
-	"github.com/example/mikrotik-route-sync/internal/classifier"
-	"github.com/example/mikrotik-route-sync/internal/collectors"
-	"github.com/example/mikrotik-route-sync/internal/config"
-	"github.com/example/mikrotik-route-sync/internal/mikrotik"
-	"github.com/example/mikrotik-route-sync/internal/notifier"
-	"github.com/example/mikrotik-route-sync/internal/resolver"
-	"github.com/example/mikrotik-route-sync/internal/storage"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/mikrotik"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 )
 
 type Syncer struct {
