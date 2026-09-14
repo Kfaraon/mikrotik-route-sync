@@ -99,3 +99,16 @@ func (c *Client) Ping(ctx context.Context) error {
 	var out []map[string]any
 	return c.do(ctx, http.MethodGet, "/system/identity", nil, &out, true)
 }
+
+func (c *Client) DeleteAllRoutes(ctx context.Context, comment string) error {
+	routes, err := c.ListRoutes(ctx, comment)
+	if err != nil {
+		return err
+	}
+	for _, r := range routes {
+		if err := c.DeleteRoute(ctx, r.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
