@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
@@ -31,6 +34,8 @@ type Syncer struct {
 	resolver   *resolver.Resolver
 	classifier *classifier.Classifier
 	notifier   notifier.Notifier
+	busy       map[string]bool
+	busyMtx    sync.Mutex
 }
 
 func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, n notifier.Notifier) *Syncer {
@@ -45,6 +50,23 @@ func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, n not
 		resolver:   r,
 		classifier: classifier.New(cfg, r),
 		notifier:   n,
+		busy:       make(map[string]bool),
+	}
+}
+
+func (s *Syncer) IsBusy(service string) bool {
+	s.busyMtx.Lock()
+	defer s.busyMtx.Unlock()
+	return s.busy[service]
+}
+
+func (s *Syncer) SetBusy(service string, busy bool) {
+	s.busyMtx.Lock()
+	defer s.busyMtx.Unlock()
+	if busy {
+		s.busy[service] = true
+	} else {
+		delete(s.busy, service)
 	}
 }
 
@@ -54,15 +76,43 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dryRun bool) e
 
 	start := time.Now()
 	s.notifier.SyncStart(ctx, services, "manual", "")
-	results := make([]notifier.SyncResult, 0, len(services))
-	for _, svc := range services {
-		res, err := s.syncOne(ctx, svc, dryRun)
-		results = append(results, res)
-		if err != nil {
-			s.log.Error("sync failed", "service", svc, "err", err)
-			s.notifier.Error(ctx, svc, err)
-		}
+	
+	results := make([]notifier.SyncResult, len(services))
+	var mu sync.Mutex
+
+	// Ограничение параллелизма на основе конфига
+	maxConcurrent := s.cfg.Scheduler.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 3
 	}
+	
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrent)
+
+	for i, svc := range services {
+		i, svc := i, svc
+		g.Go(func() error {
+			if s.IsBusy(svc) {
+				s.log.Warn("service is already syncing, skipping", "service", svc)
+				return nil
+			}
+			s.SetBusy(svc, true)
+			defer s.SetBusy(svc, false)
+
+			res, err := s.syncOne(gCtx, svc, dryRun)
+			mu.Lock()
+			results[i] = res
+			mu.Unlock()
+			if err != nil {
+				s.log.Error("sync failed", "service", svc, "err", err)
+				s.notifier.Error(gCtx, svc, err)
+			}
+			return nil // Не прерываем errgroup при ошибке одного сервиса
+		})
+	}
+
+	_ = g.Wait()
+
 	s.notifier.SyncDone(ctx, results, time.Since(start).Round(time.Millisecond).String(), dryRun)
 	return nil
 }
@@ -100,19 +150,17 @@ func (s *Syncer) syncOne(ctx context.Context, service string, dryRun bool) (noti
 
 	comment := s.cfg.Comment(service)
 
-	// Create backup before any changes
+	// 1. Создаём бэкап ПЕРЕД любыми изменениями
 	mikCtx, mikCancel := context.WithTimeout(ctx, mikrotikTimeout)
-	defer mikCancel()
-
 	backup, err := s.mikrotik.BackupRoutes(mikCtx, comment)
+	mikCancel()
 	if err != nil {
 		s.log.Error("backup failed", "service", service, "err", err)
-		// Continue anyway, but log
+		res.Errors++
 	}
 
-	existing := backup
 	existingByDst := map[string]mikrotik.Route{}
-	for _, r := range existing {
+	for _, r := range backup {
 		existingByDst[r.DstAddress] = r
 	}
 
@@ -147,21 +195,22 @@ func (s *Syncer) syncOne(ctx context.Context, service string, dryRun bool) (noti
 		return res, nil
 	}
 
-	// Transaction: remove old, then add new
-	// If add fails, we don't rollback automatically (routes already removed),
-	// but we log the backup for manual recovery
-	var addErrors, removeErrors int
-
+	// 2. ТРАНЗАКЦИЯ: Удаляем старые, затем добавляем новые.
+	// Если добавление падает - выполняем ОТКАТ из бэкапа.
+	var addedInThisRun []mikrotik.Route
+	
+	// Удаляем устаревшие
 	for _, dst := range toRemove {
 		mikCtx, mikCancel := context.WithTimeout(ctx, mikrotikTimeout)
 		if err := s.mikrotik.RemoveRoute(mikCtx, existingByDst[dst].ID); err != nil {
 			s.log.Error("remove failed", "cidr", dst, "err", err)
-			removeErrors++
 			res.Errors++
 		}
 		mikCancel()
 	}
 
+	// Добавляем новые
+	var addErrors int
 	for _, a := range toAdd {
 		mikCtx, mikCancel := context.WithTimeout(ctx, mikrotikTimeout)
 		r := mikrotik.Route{
@@ -175,16 +224,58 @@ func (s *Syncer) syncOne(ctx context.Context, service string, dryRun bool) (noti
 			s.log.Error("add failed", "cidr", a, "err", err)
 			addErrors++
 			res.Errors++
+		} else {
+			addedInThisRun = append(addedInThisRun, r)
 		}
 		mikCancel()
 	}
 
-	if addErrors > 0 || removeErrors > 0 {
-		s.log.Warn("sync completed with errors", "service", service, "add_errors", addErrors, "remove_errors", removeErrors, "backup_count", len(backup))
+	// 3. ОТКАТ: Если были ошибки при добавлении, откатываем изменения
+	if addErrors > 0 {
+		s.log.Warn("rollback triggered due to add errors", "service", service, "add_errors", addErrors)
+		s.rollback(ctx, addedInThisRun, backup, comment)
 	}
 
 	res.Duration = time.Since(start).Round(time.Millisecond).String()
 	return res, nil
+}
+
+// rollback удаляет то, что мы только что добавили, и восстанавливает бэкап
+func (s *Syncer) rollback(ctx context.Context, added []mikrotik.Route, backup []mikrotik.Route, comment string) {
+	s.log.Warn("rolling back routes", "service", comment, "added_count", len(added))
+	
+	// Удаляем то, что только что успешно добавили
+	// (Нам нужно найти их ID, так как AddRoute не возвращает ID напрямую)
+	mikCtx, cancel := context.WithTimeout(ctx, mikrotikTimeout)
+	currentRoutes, _ := s.mikrotik.ListRoutes(mikCtx, comment)
+	cancel()
+
+	currentByDst := make(map[string]mikrotik.Route)
+	for _, r := range currentRoutes {
+		currentByDst[r.DstAddress] = r
+	}
+
+	for _, r := range added {
+		if curr, ok := currentByDst[r.DstAddress]; ok {
+			mikCtx, cancel := context.WithTimeout(ctx, mikrotikTimeout)
+			_ = s.mikrotik.RemoveRoute(mikCtx, curr.ID)
+			cancel()
+		}
+	}
+
+	// Восстанавливаем бэкап
+	for _, r := range backup {
+		mikCtx, cancel := context.WithTimeout(ctx, mikrotikTimeout)
+		_ = s.mikrotik.AddRoute(mikCtx, mikrotik.Route{
+			DstAddress:   r.DstAddress,
+			Gateway:      r.Gateway,
+			Distance:     r.Distance,
+			Comment:      r.Comment,
+			RoutingTable: r.RoutingTable,
+		})
+		cancel()
+	}
+	s.log.Info("rollback completed")
 }
 
 func (s *Syncer) collect(ctx context.Context, service string) ([]netip.Prefix, classifier.Method, error) {
@@ -203,7 +294,6 @@ func (s *Syncer) collect(ctx context.Context, service string) ([]netip.Prefix, c
 		if ov.MaxASNPrefixes > 0 {
 			opts.MaxASNPrefixes = ov.MaxASNPrefixes
 		}
-		// Parse exclude prefixes
 		for _, ex := range ov.Exclude {
 			if p, err := netip.ParsePrefix(ex); err == nil {
 				opts.Exclude = append(opts.Exclude, p)
@@ -246,7 +336,7 @@ func (s *Syncer) filter(in []netip.Prefix) []netip.Prefix {
 		bits := p.Bits()
 		addr := p.Addr()
 
-		// Skip too broad prefixes (IPv4: /0-/9, IPv6: /0-/16)
+		// Skip too broad prefixes
 		if addr.Is4() && bits <= 9 {
 			s.log.Warn("skip too broad prefix", "cidr", p.String())
 			continue
@@ -256,15 +346,14 @@ func (s *Syncer) filter(in []netip.Prefix) []netip.Prefix {
 			continue
 		}
 
-		// Skip private/reserved ranges (IPv4 only)
 		if addr.Is4() {
 			if addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() ||
 				addr.IsMulticast() || addr.IsUnspecified() {
 				continue
 			}
-			// Additional checks for reserved ranges
 			b := addr.As4()
-			if b[0] == 127 || b[0] == 169 && b[1] == 254 || b[0] == 224 || b[0] >= 240 {
+			// ИСПРАВЛЕНО: Добавлены скобки для явного приоритета операторов
+			if b[0] == 127 || (b[0] == 169 && b[1] == 254) || b[0] == 224 || b[0] >= 240 {
 				continue
 			}
 		}
