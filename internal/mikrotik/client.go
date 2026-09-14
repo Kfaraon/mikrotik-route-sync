@@ -5,22 +5,21 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/hashicorp/go-retryablehttp"
+
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/sony/gobreaker"
 )
 
 type Client struct {
-	cfg  config.MikroTikConfig
-	http *http.Client
-	cb   *gobreaker.CircuitBreaker
-	base string
+	cfg    config.MikroTikConfig
+	http   *retryablehttp.Client
+	base   string
 }
 
 type Route struct {
@@ -37,6 +36,7 @@ func New(cfg config.MikroTikConfig) *Client {
 	if cfg.UseSSL {
 		scheme = "https"
 	}
+
 	tr := &http.Transport{
 		MaxIdleConns:        10,
 		IdleConnTimeout:     60 * time.Second,
@@ -46,76 +46,58 @@ func New(cfg config.MikroTikConfig) *Client {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: !cfg.VerifySSL}
 	}
 
+	retryClient := retryablehttp.NewClient()
+	retryClient.HTTPClient = &http.Client{
+		Transport: tr,
+		Timeout:   30 * time.Second,
+	}
+	retryClient.RetryMax = 3
+	retryClient.RetryWaitMin = 500 * time.Millisecond
+	retryClient.RetryWaitMax = 8 * time.Second
+	
+	// Кастомная логика ретраев: 4xx НЕ ретраим, 5xx и сетевые ошибки ретраим
+	retryClient.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
+		if err != nil {
+			return true, nil // Сетевая ошибка - ретраим
+		}
+		// 4xx Client Errors - не ретраим
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return false, nil
+		}
+		// 5xx Server Errors - ретраим
+		return resp.StatusCode >= 500, nil
+	}
+
 	return &Client{
 		cfg:  cfg,
-		http: &http.Client{Timeout: 30 * time.Second, Transport: tr},
-		cb: gobreaker.NewCircuitBreaker(gobreaker.Settings{
-			Name:        "mikrotik",
-			MaxRequests: 3,
-			Interval:    30 * time.Second,
-			Timeout:     60 * time.Second,
-			ReadyToTrip: func(c gobreaker.Counts) bool { return c.ConsecutiveFailures >= 5 },
-		}),
+		http: retryClient,
 		base: fmt.Sprintf("%s://%s/rest", scheme, cfg.Host),
 	}
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body any, out any, canRetry bool) error {
-	const maxAttempts = 4
-	attempts := 1
-	if canRetry {
-		attempts = maxAttempts
-	}
-	var lastErr error
-
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			backoff := time.Duration(1<<uint(i-1)) * 500 * time.Millisecond
-			if backoff > 8*time.Second {
-				backoff = 8 * time.Second
-			}
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		_, err := c.cb.Execute(func() (any, error) { return nil, c.doOnce(ctx, method, path, body, out) })
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-
-		// 4xx ошибки не ретраить
-		if !canRetry || errors.Is(err, gobreaker.ErrOpenState) {
-			return err
-		}
-	}
-	return lastErr
-}
-
-func (c *Client) doOnce(ctx context.Context, method, path string, body any, out any) error {
-	var buf io.Reader
+func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+	var bodyReader io.Reader
 	if body != nil {
 		raw, _ := json.Marshal(body)
-		buf = bytes.NewReader(raw)
+		bodyReader = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, buf)
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, method, c.base+path, bodyReader)
 	if err != nil {
-		return err
+		return fmt.Errorf("create request: %w", err)
 	}
 	req.SetBasicAuth(c.cfg.Username, c.cfg.Password)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("http do: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("mikrotik: %d %s", resp.StatusCode, string(raw))
+		return fmt.Errorf("mikrotik api error %d: %s", resp.StatusCode, string(raw))
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
@@ -123,24 +105,38 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body any, out 
 	return nil
 }
 
+// ListRoutes получает маршруты. Использует клиентскую фильтрацию для гарантии comment-exact,
+// так как некоторые версии RouterOS v7 REST API могут некорректно обрабатывать параметр exact.
 func (c *Client) ListRoutes(ctx context.Context, comment string) ([]Route, error) {
-	var routes []Route
-	path := fmt.Sprintf("/ip/route?comment=%s&comment-exact=yes", url.QueryEscape(comment))
-	err := c.do(ctx, http.MethodGet, path, nil, &routes, true)
-	return routes, err
+	var allRoutes []Route
+	// В RouterOS v7 фильтрация по точному комментарию делается через ?comment=VALUE
+	path := fmt.Sprintf("/ip/route?comment=%s", url.QueryEscape(comment))
+	err := c.do(ctx, http.MethodGet, path, nil, &allRoutes)
+	if err != nil {
+		return nil, err
+	}
+
+	// Клиентская фильтрация для гарантии точного совпадения
+	filtered := make([]Route, 0, len(allRoutes))
+	for _, r := range allRoutes {
+		if r.Comment == comment {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered, nil
 }
 
 func (c *Client) AddRoute(ctx context.Context, r Route) error {
-	return c.do(ctx, http.MethodPost, "/ip/route/add", r, nil, false)
+	return c.do(ctx, http.MethodPost, "/ip/route/add", r, nil)
 }
 
 func (c *Client) RemoveRoute(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/ip/route/remove", map[string]string{"id": id}, nil, false)
+	return c.do(ctx, http.MethodPost, "/ip/route/remove", map[string]string{"id": id}, nil)
 }
 
 func (c *Client) Ping(ctx context.Context) error {
 	var out []map[string]any
-	return c.do(ctx, http.MethodGet, "/system/identity", nil, &out, true)
+	return c.do(ctx, http.MethodGet, "/system/identity", nil, &out)
 }
 
 func (c *Client) BackupRoutes(ctx context.Context, comment string) ([]Route, error) {
