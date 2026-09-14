@@ -9,14 +9,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/example/mikrotik-route-sync/internal/bot"
-	"github.com/example/mikrotik-route-sync/internal/config"
-	"github.com/example/mikrotik-route-sync/internal/core"
-	"github.com/example/mikrotik-route-sync/internal/logging"
-	"github.com/example/mikrotik-route-sync/internal/notifier"
-	"github.com/example/mikrotik-route-sync/internal/scheduler"
-	"github.com/example/mikrotik-route-sync/internal/storage"
-	"github.com/example/mikrotik-route-sync/internal/web"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/bot"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/web"
 )
 
 var (
