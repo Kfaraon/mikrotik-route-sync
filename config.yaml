@@ -1,4 +1,4 @@
-timezone: Asia/Yekaterinburg
+timezone: UTC
 
 logging:
   level: info
@@ -10,19 +10,19 @@ logging:
   also_stdout: true
 
 mikrotik:
-  host: 192.168.88.1
-  username: api
-  password: "your_password_here"
+  host: "192.168.88.1"
+  username: "api_user"
+  password: "CHANGE_ME"  # Или используйте env: MRS_MIKROTIK_PASSWORD
   use_ssl: true
   verify_ssl: false
-  gateway: wg-cz-vpn
-  routing_table: main
+  gateway: "wg-cz-vpn"
+  routing_table: "main"
   distance: 2
   comment_prefix: "AUTO"
 
 telegram:
   enabled: false
-  bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+  bot_token: "CHANGE_ME" # Или используйте env: MRS_TELEGRAM_BOT_TOKEN
   chat_id: "123456789"
   authorized_chat_ids:
     - "123456789"
@@ -36,15 +36,15 @@ web:
   listen: ":8080"
   auth:
     enabled: true
-    username: admin
-    password: "admin_password_here"
-  session_timeout: 24h
+    username: "admin"
+    password: "CHANGE_ME" # Или используйте env: MRS_WEB_PASSWORD
+  session_timeout: "24h"
 
 scheduler:
   parallel: true
   max_concurrent: 3
-  reload_interval: 1m
-  cache_ttl: 24h
+  reload_interval: "1m"
+  cache_ttl: "24h"
   cache_purge: "every 1h"
 
 schedules:
