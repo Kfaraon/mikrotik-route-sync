@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"time"
 )
 
 type CDNCollector struct {
@@ -19,24 +20,26 @@ func NewCDNCollector(asn int) Collector {
 
 func (c *CDNCollector) Name() string { return "cdn" }
 
-var cdnURLs = map[int]string{
-	13335: "https://www.cloudflare.com/ips-v4",
-	16509: "https://ip-ranges.amazonaws.com/ip-ranges.json",
-	15169: "https://www.gstatic.com/ipranges/goog.json",
-}
-
 func (c *CDNCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
-	url, ok := cdnURLs[c.asn]
-	if !ok {
-		return nil, fmt.Errorf("no CDN URL for ASN %d", c.asn)
+	var url string
+	switch c.asn {
+	case 13335:
+		url = "https://www.cloudflare.com/ips-v4"
+	case 16509:
+		url = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+	case 15169:
+		url = "https://www.gstatic.com/ipranges/goog.json"
+	default:
+		return nil, fmt.Errorf("unsupported CDN ASN: %d", c.asn)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -47,38 +50,55 @@ func (c *CDNCollector) Collect(ctx context.Context, service string, opts Options
 		return nil, err
 	}
 
-	var prefixes []string
+	var prefixes []netip.Prefix
 
-	// Cloudflare возвращает простой текст
 	if c.asn == 13335 {
-		for _, line := range splitLines(string(body)) {
-			if line != "" {
-				prefixes = append(prefixes, line)
+		// Cloudflare: plain text list
+		lines := splitLines(string(body))
+		for _, line := range lines {
+			if p, err := netip.ParsePrefix(line); err == nil {
+				prefixes = append(prefixes, p.Masked())
 			}
 		}
-	} else {
-		// JSON формат для AWS и Google
-		var result struct {
+	} else if c.asn == 16509 {
+		// AWS CloudFront: JSON
+		var data struct {
 			Prefixes []struct {
 				IPPrefix string `json:"ip_prefix"`
+				Service  string `json:"service"`
 			} `json:"prefixes"`
 		}
-		if err := json.Unmarshal(body, &result); err == nil {
-			for _, p := range result.Prefixes {
-				prefixes = append(prefixes, p.IPPrefix)
+		if err := json.Unmarshal(body, &data); err != nil {
+			return nil, err
+		}
+		for _, p := range data.Prefixes {
+			if p.Service == "CLOUDFRONT" {
+				if prefix, err := netip.ParsePrefix(p.IPPrefix); err == nil {
+					prefixes = append(prefixes, prefix.Masked())
+				}
 			}
 		}
-	}
-
-	var netPrefixes []netip.Prefix
-	for _, p := range prefixes {
-		if prefix, err := netip.ParsePrefix(p); err == nil {
-			netPrefixes = append(netPrefixes, prefix)
+	} else if c.asn == 15169 {
+		// Google: JSON
+		var data struct {
+			Prefixes []struct {
+				IPv4Prefix string `json:"ipv4Prefix"`
+			} `json:"prefixes"`
+		}
+		if err := json.Unmarshal(body, &data); err != nil {
+			return nil, err
+		}
+		for _, p := range data.Prefixes {
+			if p.IPv4Prefix != "" {
+				if prefix, err := netip.ParsePrefix(p.IPv4Prefix); err == nil {
+					prefixes = append(prefixes, prefix.Masked())
+				}
+			}
 		}
 	}
 
 	return &Result{
-		Prefixes: netPrefixes,
+		Prefixes: prefixes,
 		Source:   url,
 		Method:   "cdn",
 	}, nil
@@ -89,7 +109,13 @@ func splitLines(s string) []string {
 	start := 0
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\n' {
-			lines = append(lines, s[start:i])
+			line := s[start:i]
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			if line != "" {
+				lines = append(lines, line)
+			}
 			start = i + 1
 		}
 	}
