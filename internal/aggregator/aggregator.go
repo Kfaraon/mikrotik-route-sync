@@ -60,3 +60,13 @@ func canMerge(a, b netip.Prefix) bool {
 }
 
 func merge(a netip.Prefix) netip.Prefix { return netip.PrefixFrom(a.Addr().Prev(), a.Bits()-1) }
+
+func AggregateChecked(in []netip.Prefix) ([]netip.Prefix, error) {
+	before := SumAddresses(in)
+	out := Aggregate(in)
+	after := SumAddresses(out)
+	if before != after {
+		return nil, fmt.Errorf("aggregation broke sum: before=%d after=%d", before, after)
+	}
+	return out, nil
+}
