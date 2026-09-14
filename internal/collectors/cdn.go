@@ -4,133 +4,97 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/netip"
-	"strings"
 )
 
-type cdnSource struct {
-	URL   string
-	Parse func([]byte) ([]netip.Prefix, error)
+type CDNCollector struct {
+	asn int
 }
 
-// Ключ — имя сервиса, как его вводит пользователь (или классификатор).
-var cdnSources = map[string]cdnSource{
-	"cloudflare": {
-		URL:   "https://www.cloudflare.com/ips-v4",
-		Parse: parsePlainLines,
-	},
-	"cloudfront": {
-		URL:   "https://ip-ranges.amazonaws.com/ip-ranges.json",
-		Parse: parseAWSRanges("CLOUDFRONT"),
-	},
-	"aws": {
-		URL:   "https://ip-ranges.amazonaws.com/ip-ranges.json",
-		Parse: parseAWSRanges(""),
-	},
-	"google": {
-		URL:   "https://www.gstatic.com/ipranges/goog.json",
-		Parse: parseGoogleRanges,
-	},
-	"fastly": {
-		URL:   "https://api.fastly.com/public-ip-list",
-		Parse: parseFastlyRanges,
-	},
-	// Akamai не отдаёт стабильный публичный JSON.
-	// Для akamai используем метод asn (см. classifier).
+func NewCDNCollector(asn int) Collector {
+	return &CDNCollector{asn: asn}
 }
-
-type CDNCollector struct{}
 
 func (c *CDNCollector) Name() string { return "cdn" }
 
+var cdnURLs = map[int]string{
+	13335: "https://www.cloudflare.com/ips-v4",
+	16509: "https://ip-ranges.amazonaws.com/ip-ranges.json",
+	15169: "https://www.gstatic.com/ipranges/goog.json",
+}
+
 func (c *CDNCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
-	src, ok := cdnSources[strings.ToLower(service)]
+	url, ok := cdnURLs[c.asn]
 	if !ok {
-		return nil, fmt.Errorf("no CDN source for %q", service)
+		return nil, fmt.Errorf("no CDN URL for ASN %d", c.asn)
 	}
-	data, err := fetch(ctx, src.URL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	prefixes, err := src.Parse(data)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	return &Result{Prefixes: prefixes, Source: src.URL, Method: "cdn"}, nil
-}
+	defer resp.Body.Close()
 
-func parsePlainLines(data []byte) ([]netip.Prefix, error) {
-	var out []netip.Prefix
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if p, err := netip.ParsePrefix(line); err == nil {
-			out = append(out, p.Masked())
-		}
-	}
-	return out, nil
-}
-
-func parseGoogleRanges(data []byte) ([]netip.Prefix, error) {
-	var v struct {
-		Prefixes []struct {
-			IPv4 string `json:"ipv4Prefix"`
-			IPv6 string `json:"ipv6Prefix"`
-		} `json:"prefixes"`
-	}
-	if err := json.Unmarshal(data, &v); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
-	var out []netip.Prefix
-	for _, p := range v.Prefixes {
-		if p.IPv4 == "" {
-			continue
-		}
-		if pr, err := netip.ParsePrefix(p.IPv4); err == nil {
-			out = append(out, pr.Masked())
-		}
-	}
-	return out, nil
-}
 
-func parseAWSRanges(serviceFilter string) func([]byte) ([]netip.Prefix, error) {
-	return func(data []byte) ([]netip.Prefix, error) {
-		var v struct {
+	var prefixes []string
+
+	// Cloudflare возвращает простой текст
+	if c.asn == 13335 {
+		for _, line := range splitLines(string(body)) {
+			if line != "" {
+				prefixes = append(prefixes, line)
+			}
+		}
+	} else {
+		// JSON формат для AWS и Google
+		var result struct {
 			Prefixes []struct {
-				Service string `json:"service"`
-				IPv4    string `json:"ip_prefix"`
+				IPPrefix string `json:"ip_prefix"`
 			} `json:"prefixes"`
 		}
-		if err := json.Unmarshal(data, &v); err != nil {
-			return nil, err
-		}
-		var out []netip.Prefix
-		for _, p := range v.Prefixes {
-			if serviceFilter != "" && p.Service != serviceFilter {
-				continue
-			}
-			if pr, err := netip.ParsePrefix(p.IPv4); err == nil {
-				out = append(out, pr.Masked())
+		if err := json.Unmarshal(body, &result); err == nil {
+			for _, p := range result.Prefixes {
+				prefixes = append(prefixes, p.IPPrefix)
 			}
 		}
-		return out, nil
 	}
+
+	var netPrefixes []netip.Prefix
+	for _, p := range prefixes {
+		if prefix, err := netip.ParsePrefix(p); err == nil {
+			netPrefixes = append(netPrefixes, prefix)
+		}
+	}
+
+	return &Result{
+		Prefixes: netPrefixes,
+		Source:   url,
+		Method:   "cdn",
+	}, nil
 }
 
-func parseFastlyRanges(data []byte) ([]netip.Prefix, error) {
-	var v struct {
-		Addresses []string `json:"addresses"`
-	}
-	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, err
-	}
-	var out []netip.Prefix
-	for _, a := range v.Addresses {
-		if p, err := netip.ParsePrefix(a); err == nil {
-			out = append(out, p.Masked())
+func splitLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			lines = append(lines, s[start:i])
+			start = i + 1
 		}
 	}
-	return out, nil
+	if start < len(s) {
+		lines = append(lines, s[start:])
+	}
+	return lines
 }
