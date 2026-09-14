@@ -3,7 +3,7 @@ package collectors
 import (
     "context"
 
-    "github.com/example/mikrotik-route-sync/internal/resolver"
+    "github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
 )
 
 type ASNCollector struct {
