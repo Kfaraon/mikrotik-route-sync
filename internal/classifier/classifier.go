@@ -2,6 +2,9 @@ package classifier
 
 import (
 	"context"
+	"fmt"
+	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
@@ -19,65 +22,85 @@ const (
 )
 
 type Decision struct {
-	Method  Method
-	ASN     int
-	Domains []string
-	URL     string
+	Method   Method   `json:"method"`
+	ASN      int      `json:"asn,omitempty"`
+	Domains  []string `json:"domains,omitempty"`
+	URL      string   `json:"url,omitempty"`
+	Provider string   `json:"provider,omitempty"`
 }
 
-var knownCDN = map[int]string{
-	13335: "cloudflare",
-	16509: "cloudfront",
-	15169: "google",
-}
-
-var dynamicServices = map[string]bool{
-	"google":  true,
-	"youtube": true,
-}
+var knownASN = map[int]string{13335: "cloudflare", 16509: "aws", 15169: "google", 20940: "akamai", 54113: "fastly"}
+var names = map[string]struct {
+	method   Method
+	provider string
+}{"cloudflare": {MethodCDN, "cloudflare"}, "youtube": {MethodDynamic, "google"}, "google": {MethodDynamic, "google"}, "cloudfront": {MethodCDN, "aws"}, "aws": {MethodCDN, "aws"}, "fastly": {MethodCDN, "fastly"}, "akamai": {MethodCDN, "akamai"}}
 
 type Classifier struct {
-	resolver *resolver.Resolver
 	cfg      *config.Config
+	resolver *resolver.Resolver
 }
 
 func New(cfg *config.Config, r *resolver.Resolver) *Classifier {
-	return &Classifier{resolver: r, cfg: cfg}
+	return &Classifier{cfg: cfg, resolver: r}
 }
-
-func (c *Classifier) Classify(ctx context.Context, service string) (*Decision, error) {
-	name := strings.ToLower(service)
-
-	var domains []string
-	if ov, ok := c.cfg.Overrides[name]; ok {
-		domains = ov.Domains
+func (c *Classifier) Classify(ctx context.Context, service string) (Decision, error) {
+	name := config.NormalizeService(service)
+	ov := c.cfg.Overrides[name]
+	if ov.Method != "" {
+		d := Decision{Method: Method(strings.ToLower(ov.Method)), ASN: ov.ASN, Domains: ov.Domains, URL: ov.StaticURL}
+		if d.Method == MethodStaticURL && d.URL == "" {
+			return d, fmt.Errorf("static_url override for %s has no URL", name)
+		}
+		return d, nil
 	}
-	if len(domains) == 0 {
-		domains = []string{name, name + ".com"}
+	if ov.StaticURL != "" {
+		return Decision{Method: MethodStaticURL, URL: ov.StaticURL, Domains: ov.Domains}, nil
 	}
-
-	var asn int
+	if strings.HasPrefix(strings.ToUpper(name), "AS") {
+		n, err := strconv.Atoi(strings.TrimPrefix(strings.ToUpper(name), "AS"))
+		if err == nil && n > 0 {
+			return Decision{Method: MethodASN, ASN: n}, nil
+		}
+	}
+	if n, ok := names[name]; ok {
+		return Decision{Method: n.method, Provider: n.provider, ASN: ov.ASN, Domains: chooseDomains(name, ov.Domains)}, nil
+	}
+	if ip, err := netip.ParseAddr(name); err == nil {
+		asn, e := c.resolver.ASNByIP(ctx, ip.Unmap())
+		if e != nil {
+			return Decision{Method: MethodWHOIS, Domains: []string{name}}, nil
+		}
+		return Decision{Method: MethodASN, ASN: asn, Domains: []string{name}}, nil
+	}
+	domains := chooseDomains(name, ov.Domains)
 	for _, d := range domains {
 		ips, err := c.resolver.ResolveDomain(ctx, d)
-		if err != nil || len(ips) == 0 {
+		if err != nil {
 			continue
 		}
-		a, err := c.resolver.ASNByIP(ctx, ips[0])
-		if err == nil {
-			asn = a
-			break
+		for _, ip := range ips {
+			asn, err := c.resolver.ASNByIP(ctx, ip)
+			if err != nil || asn == 0 {
+				continue
+			}
+			if provider, ok := knownASN[asn]; ok {
+				m := MethodCDN
+				if provider == "google" {
+					m = MethodDynamic
+				}
+				return Decision{Method: m, ASN: asn, Domains: domains, Provider: provider}, nil
+			}
+			return Decision{Method: MethodASN, ASN: asn, Domains: domains}, nil
 		}
 	}
-
-	// Priority classification
-	if dynamicServices[name] {
-		return &Decision{Method: MethodDynamic, ASN: asn, Domains: domains}, nil
+	return Decision{Method: MethodWHOIS, Domains: domains}, nil
+}
+func chooseDomains(name string, override []string) []string {
+	if len(override) > 0 {
+		return append([]string(nil), override...)
 	}
-	if _, ok := knownCDN[asn]; ok {
-		return &Decision{Method: MethodCDN, ASN: asn}, nil
+	if strings.Contains(name, ".") {
+		return []string{name}
 	}
-	if asn != 0 {
-		return &Decision{Method: MethodASN, ASN: asn, Domains: domains}, nil
-	}
-	return &Decision{Method: MethodWHOIS, Domains: domains}, nil
+	return []string{name + ".com", name}
 }

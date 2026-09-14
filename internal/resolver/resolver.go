@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 )
 
@@ -15,134 +19,165 @@ type Resolver struct {
 	cache  *storage.Cache
 	ttl    time.Duration
 	client *http.Client
+	cfg    config.ExternalConfig
 }
 
-func New(cache *storage.Cache, ttl time.Duration) *Resolver {
-	return &Resolver{
-		cache:  cache,
-		ttl:    ttl,
-		client: &http.Client{Timeout: 15 * time.Second},
+func New(cache *storage.Cache, ttl time.Duration, cfg config.ExternalConfig) *Resolver {
+	return &Resolver{cache: cache, ttl: ttl, client: &http.Client{Timeout: 20 * time.Second}, cfg: cfg}
+}
+
+func (r *Resolver) ResolveDomain(ctx context.Context, domain string) ([]netip.Addr, error) {
+	domain = strings.TrimSpace(domain)
+	if ip, err := netip.ParseAddr(domain); err == nil {
+		return []netip.Addr{ip}, nil
 	}
-}
-
-func (r *Resolver) ResolveDomain(ctx context.Context, domain string) ([]string, error) {
-	addrs, err := net.DefaultResolver.LookupHost(ctx, domain)
+	addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", domain)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", domain, err)
 	}
-	return addrs, nil
-}
-
-func (r *Resolver) GetASN(ctx context.Context, ip string) (int, error) {
-	cacheKey := fmt.Sprintf("asn:%s", ip)
-
-	if cached, ok := r.cache.Get(cacheKey); ok {
-		var asn int
-		if err := json.Unmarshal(cached, &asn); err == nil {
-			return asn, nil
+	out := make([]netip.Addr, 0, len(addrs))
+	for _, a := range addrs {
+		if a.IsValid() {
+			out = append(out, a.Unmap())
 		}
 	}
+	return out, nil
+}
 
-	// Используем BGPView API
-	url := fmt.Sprintf("https://api.bgpview.io/ip/%s", ip)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func (r *Resolver) ASNByIP(ctx context.Context, ip netip.Addr) (int, error) {
+	key := "asn:" + ip.String()
+	var cached int
+	if r.cache.Get(key, &cached) && cached > 0 {
+		return cached, nil
+	}
+	asn, err := r.asnBGPView(ctx, ip)
+	if err != nil {
+		asn, err = r.asnRIPE(ctx, ip)
+	}
 	if err != nil {
 		return 0, err
 	}
-
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("bgpview request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("bgpview returned %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Data struct {
-			RIRPrefixes []struct {
+	_ = r.cache.Set(key, asn, r.ttl)
+	return asn, nil
+}
+func (r *Resolver) asnBGPView(ctx context.Context, ip netip.Addr) (int, error) {
+	u := strings.TrimRight(r.cfg.BGPViewBase, "/") + "/ip/" + ip.String()
+	var payload struct {
+		Status string `json:"status"`
+		Data   struct {
+			Prefixes []struct {
 				ASN struct {
 					ASN int `json:"asn"`
-				} `json:"rir_allocation"`
-			} `json:"rir_prefixes"`
-			Prefixes []struct {
-				ASN int `json:"asn"`
+				} `json:"asn"`
 			} `json:"prefixes"`
 		} `json:"data"`
 	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, fmt.Errorf("decode bgpview: %w", err)
+	if err := r.getJSON(ctx, u, &payload); err != nil {
+		return 0, err
 	}
-
-	asn := 0
-	if len(result.Data.Prefixes) > 0 {
-		asn = result.Data.Prefixes[0].ASN
-	}
-
-	if asn > 0 {
-		data, _ := json.Marshal(asn)
-		r.cache.Set(cacheKey, data, r.ttl)
-	}
-
-	return asn, nil
-}
-
-func (r *Resolver) GetASPrefixes(ctx context.Context, asn int) ([]string, error) {
-	cacheKey := fmt.Sprintf("prefixes:%d", asn)
-
-	if cached, ok := r.cache.Get(cacheKey); ok {
-		var prefixes []string
-		if err := json.Unmarshal(cached, &prefixes); err == nil {
-			return prefixes, nil
+	for _, p := range payload.Data.Prefixes {
+		if p.ASN.ASN > 0 {
+			return p.ASN.ASN, nil
 		}
 	}
+	return 0, fmt.Errorf("no ASN for %s", ip)
+}
+func (r *Resolver) asnRIPE(ctx context.Context, ip netip.Addr) (int, error) {
+	u := strings.TrimRight(r.cfg.RIPEStatBase, "/") + "/network-info/data.json?resource=" + ip.String()
+	var payload struct {
+		Data struct {
+			ASNs []string `json:"asns"`
+		} `json:"data"`
+	}
+	if err := r.getJSON(ctx, u, &payload); err != nil {
+		return 0, err
+	}
+	for _, s := range payload.Data.ASNs {
+		s = strings.TrimPrefix(strings.ToUpper(s), "AS")
+		n, _ := strconv.Atoi(s)
+		if n > 0 {
+			return n, nil
+		}
+	}
+	return 0, fmt.Errorf("no ASN for %s", ip)
+}
 
-	url := fmt.Sprintf("https://api.bgpview.io/asn/%d/prefixes", asn)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func (r *Resolver) PrefixesByASN(ctx context.Context, asn int) ([]string, error) {
+	key := fmt.Sprintf("prefixes:%d", asn)
+	var cached []string
+	if r.cache.Get(key, &cached) && len(cached) > 0 {
+		return cached, nil
+	}
+	p, err := r.prefixesBGPView(ctx, asn)
+	if err != nil || len(p) == 0 {
+		p, err = r.prefixesRIPE(ctx, asn)
+	}
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("bgpview request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bgpview returned %d", resp.StatusCode)
-	}
-
-	var result struct {
+	_ = r.cache.Set(key, p, r.ttl)
+	return p, nil
+}
+func (r *Resolver) prefixesBGPView(ctx context.Context, asn int) ([]string, error) {
+	u := fmt.Sprintf("%s/asn/%d/prefixes", strings.TrimRight(r.cfg.BGPViewBase, "/"), asn)
+	var payload struct {
 		Data struct {
-			IPv4Prefixes []struct {
+			IPv4 []struct {
 				Prefix string `json:"prefix"`
 			} `json:"ipv4_prefixes"`
-			IPv6Prefixes []struct {
+			IPv6 []struct {
 				Prefix string `json:"prefix"`
 			} `json:"ipv6_prefixes"`
 		} `json:"data"`
 	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode prefixes: %w", err)
+	if err := r.getJSON(ctx, u, &payload); err != nil {
+		return nil, err
 	}
-
-	var prefixes []string
-	for _, p := range result.Data.IPv4Prefixes {
-		prefixes = append(prefixes, p.Prefix)
+	out := make([]string, 0, len(payload.Data.IPv4)+len(payload.Data.IPv6))
+	for _, x := range payload.Data.IPv4 {
+		out = append(out, x.Prefix)
 	}
-	for _, p := range result.Data.IPv6Prefixes {
-		prefixes = append(prefixes, p.Prefix)
+	for _, x := range payload.Data.IPv6 {
+		out = append(out, x.Prefix)
 	}
-
-	if len(prefixes) > 0 {
-		data, _ := json.Marshal(prefixes)
-		r.cache.Set(cacheKey, data, r.ttl)
+	return out, nil
+}
+func (r *Resolver) prefixesRIPE(ctx context.Context, asn int) ([]string, error) {
+	u := fmt.Sprintf("%s/announced-prefixes/data.json?resource=AS%d", strings.TrimRight(r.cfg.RIPEStatBase, "/"), asn)
+	var payload struct {
+		Data struct {
+			Prefixes []struct {
+				Prefix string `json:"prefix"`
+			} `json:"prefixes"`
+		} `json:"data"`
 	}
-
-	return prefixes, nil
+	if err := r.getJSON(ctx, u, &payload); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(payload.Data.Prefixes))
+	for _, x := range payload.Data.Prefixes {
+		out = append(out, x.Prefix)
+	}
+	return out, nil
+}
+func (r *Resolver) getJSON(ctx context.Context, u string, dst any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	if r.cfg.UserAgent != "" {
+		req.Header.Set("User-Agent", r.cfg.UserAgent)
+	}
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("GET %s: %s", u, resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
+		return err
+	}
+	return nil
 }

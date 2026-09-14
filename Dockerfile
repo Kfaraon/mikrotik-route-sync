@@ -1,42 +1,17 @@
-# Stage 1: Build
-FROM golang:1.22-alpine AS builder
-
-RUN apk add --no-cache git ca-certificates
-
-WORKDIR /app
-
-# Кэширование зависимостей
-COPY go.mod go.sum ./
+FROM golang:1.27.1-alpine AS builder
+RUN apk add --no-cache ca-certificates git
+WORKDIR /src
+COPY go.mod ./
 RUN go mod download
-
-# Копирование исходников
 COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/app
 
-# Статическая сборка
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /mikrotik-route-sync ./cmd/app
-
-# Stage 2: Runtime (scratch — минимальный образ)
 FROM scratch
-
-# Копирование CA-сертификатов для HTTPS
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# Копирование бинарника
-COPY --from=builder /mikrotik-route-sync /mikrotik-route-sync
-
-# Создание непривилегированного пользователя
-COPY --from=builder /etc/passwd /etc/passwd
-USER nobody
-
-# Рабочая директория
-WORKDIR /app
-
-# Точки монтирования
+COPY --from=builder /out/app /app
+WORKDIR /data
+USER 65534:65534
 VOLUME ["/data", "/var/log/mikrotik-route-sync"]
-
-# Порт веб-интерфейса
 EXPOSE 8080
-
-# Точка входа
-ENTRYPOINT ["/mikrotik-route-sync"]
+ENTRYPOINT ["/app", "--config", "/data/config.yaml", "--cache", "/data/cache.db"]
 CMD ["web"]

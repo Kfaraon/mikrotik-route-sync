@@ -9,244 +9,241 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robfig/cron/v3"
-
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/robfig/cron/v3"
 )
 
-const syncTimeout = 10 * time.Minute
-
 type Scheduler struct {
-	cfg      *config.Config
-	syncer   *core.Syncer
-	notifier notifier.Notifier
-	log      *slog.Logger
-	cron     *cron.Cron
-	tickers  []*time.Ticker
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
-	mtx      sync.Mutex
-	busy     map[string]bool
+	cfg    *config.Config
+	syncer *core.Syncer
+	notify notifier.Notifier
+	log    *slog.Logger
+
+	mu      sync.Mutex
+	cron    *cron.Cron
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	sem     chan struct{}
+	started bool
 }
 
-func New(cfg *config.Config, syncer *core.Syncer, n notifier.Notifier, log *slog.Logger) *Scheduler {
-	loc, err := time.LoadLocation(cfg.Timezone)
-	if err != nil {
-		loc = time.UTC
-		log.Warn("invalid timezone, using UTC", "timezone", cfg.Timezone)
-	}
-
-	return &Scheduler{
-		cfg:      cfg,
-		syncer:   syncer,
-		notifier: n,
-		log:      log,
-		cron:     cron.New(cron.WithLocation(loc)),
-		stopCh:   make(chan struct{}),
-		busy:     map[string]bool{},
-	}
+func New(cfg *config.Config, s *core.Syncer, n notifier.Notifier, l *slog.Logger) *Scheduler {
+	return &Scheduler{cfg: cfg, syncer: s, notify: n, log: l}
 }
 
 func (s *Scheduler) Start() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started {
+		return
+	}
+	s.startLocked()
+	s.started = true
+}
+
+func (s *Scheduler) startLocked() {
+	loc, err := time.LoadLocation(s.cfg.Timezone)
+	if err != nil {
+		loc = time.UTC
+		s.log.Warn("invalid timezone, using UTC", "timezone", s.cfg.Timezone)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+
+	limit := s.cfg.Scheduler.MaxConcurrent
+	if limit <= 0 {
+		limit = 1
+	}
+	if !s.cfg.Scheduler.Parallel {
+		limit = 1
+	}
+	s.sem = make(chan struct{}, limit)
+	s.cron = cron.New(cron.WithLocation(loc))
 	for _, svc := range s.cfg.Services {
-		sched := s.cfg.ScheduleFor(svc)
-		if sched == "manual" || sched == "disabled" {
-			continue
-		}
-
-		if spec, ok := intervalToCron(sched); ok {
-			svc := svc // capture loop variable
-			if _, err := s.cron.AddFunc(spec, func() { s.run(svc, "schedule", sched) }); err != nil {
-				s.log.Error("cron add failed", "service", svc, "err", err)
-			}
-			continue
-		}
-
-		if d, ok := parseInterval(sched); ok {
-			svc := svc // capture loop variable
-			t := time.NewTicker(d)
-			s.tickers = append(s.tickers, t)
-			s.wg.Add(1)
-
-			go func() {
-				defer s.wg.Done()
-				for {
-					select {
-					case <-t.C:
-						s.run(svc, "schedule", sched)
-					case <-s.stopCh:
-						return
-					}
-				}
-			}()
-			continue
-		}
-
-		s.log.Warn("unknown schedule format", "service", svc, "schedule", sched)
+		s.addLocked(ctx, svc, s.cfg.ScheduleFor(svc))
 	}
-
-	if s.cfg.Telegram.Enabled && s.cfg.Telegram.WeeklyReport != "" {
-		if spec, ok := intervalToCron(s.cfg.Telegram.WeeklyReport); ok {
-			if _, err := s.cron.AddFunc(spec, s.weeklyReport); err != nil {
-				s.log.Error("weekly report cron add failed", "err", err)
-			}
-		}
-	}
-
 	s.cron.Start()
-	s.log.Info("scheduler started")
+	s.log.Info("scheduler started", "max_concurrent", limit, "timezone", loc.String())
+}
+
+func (s *Scheduler) addLocked(ctx context.Context, service, spec string) {
+	spec = strings.TrimSpace(strings.ToLower(spec))
+	if spec == "" || spec == "manual" || spec == "disabled" || spec == "inherit" {
+		return
+	}
+	if c, ok := toCron(spec); ok {
+		svc, original := service, spec
+		_, err := s.cron.AddFunc(c, func() { s.dispatch(ctx, svc, original) })
+		if err != nil {
+			s.log.Error("schedule add failed", "service", service, "schedule", spec, "err", err)
+		}
+		return
+	}
+	if d, ok := interval(spec); ok {
+		svc, original := service, spec
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			t := time.NewTicker(d)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					s.dispatch(ctx, svc, original)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		return
+	}
+	s.log.Warn("unsupported schedule", "service", service, "schedule", spec)
+}
+
+func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
+	// Capture the semaphore for this scheduler generation. Reload replaces
+	// s.sem; releasing through the field could otherwise target the new channel.
+	sem := s.sem
+	select {
+	case sem <- struct{}{}:
+		go func(gate chan struct{}) {
+			defer func() { <-gate }()
+			s.run(ctx, service, spec)
+		}(sem)
+	default:
+		s.log.Warn("scheduled sync skipped: concurrency limit reached", "service", service, "schedule", spec)
+	}
+}
+
+func (s *Scheduler) run(parent context.Context, service, spec string) {
+	ctx, cancel := context.WithTimeout(parent, 10*time.Minute)
+	defer cancel()
+	start := time.Now()
+	s.notify.SyncStart(ctx, []string{service}, "schedule", spec)
+	r, err := s.syncer.SyncOneResult(ctx, service, false)
+	if err != nil {
+		r.Error = err.Error()
+		s.notify.Error(ctx, service, err)
+	}
+	s.notify.SyncDone(ctx, []notifier.SyncResult{r}, time.Since(start), false)
+}
+
+func (s *Scheduler) stopLocked(ctx context.Context) {
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
+	if s.cron != nil {
+		done := s.cron.Stop()
+		select {
+		case <-done.Done():
+		case <-ctx.Done():
+		}
+		s.cron = nil
+	}
 }
 
 func (s *Scheduler) Stop(ctx context.Context) {
-	s.log.Info("scheduler stopping")
-
-	close(s.stopCh)
-
-	for _, t := range s.tickers {
-		t.Stop()
-	}
-
-	stopCtx := s.cron.Stop()
-
+	s.mu.Lock()
+	s.stopLocked(ctx)
+	s.started = false
+	s.mu.Unlock()
+	done := make(chan struct{})
+	go func() { s.wg.Wait(); close(done) }()
 	select {
-	case <-stopCtx.Done():
-		s.log.Info("cron stopped gracefully")
+	case <-done:
 	case <-ctx.Done():
-		s.log.Warn("scheduler stop timeout, forcing shutdown")
 	}
-
-	s.wg.Wait()
-	s.log.Info("scheduler stopped")
 }
 
-func (s *Scheduler) run(service, trigger, schedule string) {
-	s.mtx.Lock()
-	if s.busy[service] {
-		s.mtx.Unlock()
-		s.log.Warn("service already running, skip", "service", service)
-		return
+// Reload rebuilds all schedules from the current in-memory config. It is safe
+// to call after config changes made by the web UI or another controller.
+func (s *Scheduler) Reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.started {
+		return fmt.Errorf("scheduler is not started")
 	}
-	s.busy[service] = true
-	s.mtx.Unlock()
-
-	defer func() {
-		s.mtx.Lock()
-		s.busy[service] = false
-		s.mtx.Unlock()
-	}()
-
-	s.log.Info("scheduled sync start", "service", service, "trigger", trigger)
-	start := time.Now()
-
-	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	s.notifier.SyncStart(ctx, []string{service}, trigger, schedule)
-
-	res, err := s.syncer.SyncOneResult(ctx, service, false)
-	if err != nil {
-		s.notifier.Error(ctx, service, err)
-		return
-	}
-
-	s.notifier.SyncDone(ctx, []notifier.SyncResult{res},
-		time.Since(start).Round(time.Millisecond).String(), false)
+	s.stopLocked(ctx)
+	s.startLocked()
+	s.log.Info("scheduler reloaded")
+	return nil
 }
 
-func (s *Scheduler) weeklyReport() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	snap, err := s.syncer.Snapshot(ctx)
-	if err != nil {
-		s.log.Error("weekly report snapshot failed", "err", err)
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString("📅 *Weekly Report*\n\n")
-	total := 0
-
-	for _, svc := range s.cfg.Services {
-		count := snap[svc]
-		fmt.Fprintf(&b, "• %s: %d\n", svc, count)
-		total += count
-	}
-
-	fmt.Fprintf(&b, "\nTotal: %d routes", total)
-	s.notifier.Report(ctx, s.cfg, b.String())
-}
-
-func intervalToCron(spec string) (string, bool) {
+// ValidSpec reports whether a schedule is one of the supported special values,
+// a 5-field cron expression, or a supported human-readable expression.
+func ValidSpec(spec string) bool {
 	spec = strings.TrimSpace(strings.ToLower(spec))
-
-	if strings.HasPrefix(spec, "daily at ") {
-		t := strings.TrimPrefix(spec, "daily at ")
-		parts := strings.Split(t, ":")
-		if len(parts) == 2 {
-			h, errH := strconv.Atoi(parts[0])
-			m, errM := strconv.Atoi(parts[1])
-			if errH == nil && errM == nil && h >= 0 && h <= 23 && m >= 0 && m <= 59 {
-				return fmt.Sprintf("%d %d * * *", m, h), true
-			}
-		}
+	if spec == "manual" || spec == "disabled" || spec == "inherit" {
+		return true
 	}
-
-	if strings.HasPrefix(spec, "weekly on ") {
-		rest := strings.TrimPrefix(spec, "weekly on ")
-		parts := strings.SplitN(rest, " at ", 2)
-		if len(parts) == 2 {
-			dow := weekdayToCron(parts[0])
-			t := strings.Split(parts[1], ":")
-			if dow != "" && len(t) == 2 {
-				h, errH := strconv.Atoi(t[0])
-				m, errM := strconv.Atoi(t[1])
-				if errH == nil && errM == nil {
-					return fmt.Sprintf("%d %d * * %s", m, h, dow), true
-				}
-			}
-		}
+	if _, ok := toCron(spec); ok {
+		return true
 	}
+	_, ok := interval(spec)
+	return ok
+}
 
+func toCron(spec string) (string, bool) {
 	if len(strings.Fields(spec)) == 5 {
 		return spec, true
 	}
-
+	if strings.HasPrefix(spec, "daily at ") {
+		h, m, ok := clock(strings.TrimPrefix(spec, "daily at "))
+		if ok {
+			return fmt.Sprintf("%d %d * * *", m, h), true
+		}
+	}
+	if strings.HasPrefix(spec, "weekly on ") {
+		parts := strings.SplitN(strings.TrimPrefix(spec, "weekly on "), " at ", 2)
+		if len(parts) == 2 {
+			dow := weekday(parts[0])
+			h, m, ok := clock(parts[1])
+			if dow != "" && ok {
+				return fmt.Sprintf("%d %d * * %s", m, h, dow), true
+			}
+		}
+	}
 	return "", false
 }
 
-func parseInterval(spec string) (time.Duration, bool) {
-	spec = strings.TrimSpace(strings.ToLower(spec))
+func interval(spec string) (time.Duration, bool) {
 	if !strings.HasPrefix(spec, "every ") {
 		return 0, false
 	}
-
-	raw := strings.TrimSpace(strings.TrimPrefix(spec, "every "))
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		return 0, false
-	}
-
-	return d, true
+	d, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(spec, "every ")))
+	return d, err == nil && d > 0
 }
 
-func weekdayToCron(s string) string {
-	switch strings.TrimSpace(s) {
-	case "sunday", "sun":
+func clock(v string) (int, int, bool) {
+	p := strings.Split(v, ":")
+	if len(p) != 2 {
+		return 0, 0, false
+	}
+	h, e1 := strconv.Atoi(p[0])
+	m, e2 := strconv.Atoi(p[1])
+	return h, m, e1 == nil && e2 == nil && h >= 0 && h < 24 && m >= 0 && m < 60
+}
+
+func weekday(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "sun", "sunday":
 		return "0"
-	case "monday", "mon":
+	case "mon", "monday":
 		return "1"
-	case "tuesday", "tue":
+	case "tue", "tuesday":
 		return "2"
-	case "wednesday", "wed":
+	case "wed", "wednesday":
 		return "3"
-	case "thursday", "thu":
+	case "thu", "thursday":
 		return "4"
-	case "friday", "fri":
+	case "fri", "friday":
 		return "5"
-	case "saturday", "sat":
+	case "sat", "saturday":
 		return "6"
 	}
 	return ""

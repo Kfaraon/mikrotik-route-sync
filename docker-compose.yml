@@ -1,23 +1,15 @@
-version: '3.8'
-
 services:
   mikrotik-route-sync:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mrs
+    build: .
     restart: unless-stopped
-    volumes:
-      - ./config.yaml:/data/config.yaml:ro
-      - ./cache.db:/var/lib/mikrotik-route-sync/cache.db
-      - ./logs:/var/log/mikrotik-route-sync
     ports:
       - "8080:8080"
-    environment:
-      - TZ=Asia/Yekaterinburg
-    networks:
-      - mrs-net
-
-networks:
-  mrs-net:
-    driver: bridge
+    volumes:
+      - ./config.yaml:/data/config.yaml
+      - ./data:/data
+      - ./logs:/var/log/mikrotik-route-sync
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true

@@ -4,137 +4,89 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
+	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type SyncResult struct {
-	Service  string
-	Added    int
-	Removed  int
-	Errors   int
-	DryRun   bool
-	Duration string
+	Service  string        `json:"service"`
+	Method   string        `json:"method"`
+	Prefixes int           `json:"prefixes"`
+	Added    int           `json:"added"`
+	Removed  int           `json:"removed"`
+	Error    string        `json:"error,omitempty"`
+	Duration time.Duration `json:"-"`
 }
-
 type Notifier interface {
-	SyncStart(ctx context.Context, services []string, trigger, schedule string)
-	SyncDone(ctx context.Context, results []SyncResult, duration string, dryRun bool)
-	Error(ctx context.Context, service string, err error)
-	Test(ctx context.Context) error
-	Report(ctx context.Context, cfg *config.Config, message string)
+	SyncStart(context.Context, []string, string, string)
+	SyncDone(context.Context, []SyncResult, time.Duration, bool)
+	Error(context.Context, string, error)
+	Report(context.Context, string)
+	Test(context.Context) error
 }
-
-type Nop struct{}
-
-func (Nop) SyncStart(ctx context.Context, services []string, trigger, schedule string) {}
-func (Nop) SyncDone(ctx context.Context, results []SyncResult, duration string, dryRun bool) {}
-func (Nop) Error(ctx context.Context, service string, err error) {}
-func (Nop) Report(ctx context.Context, cfg *config.Config, text string) {}
-func (Nop) Test(ctx context.Context) error { return nil }
-
-type telegramNotifier struct {
-	bot       *tgbotapi.BotAPI
-	chatID    int64
-	chatIDs   []int64
-	enabled   bool
-	log       *slog.Logger
+type telegram struct {
+	cfg    config.TelegramConfig
+	log    *slog.Logger
+	api    *tgbotapi.BotAPI
+	chatID int64
 }
-
-func (n *telegramNotifier) Report(ctx context.Context, cfg *config.Config, message string) {
-	if !n.enabled { return }
-	msg := tgbotapi.NewMessage(n.chatID, message)
-	msg.ParseMode = "Markdown"
-	_, err := n.bot.Send(msg)
-	if err != nil {
-		n.log.Error("weekly report send failed", "err", err)
-	}
-	// Отправить во все авторизованные чаты
-	for _, id := range n.chatIDs {
-		if id == n.chatID { continue }
-		msg.ChatID = id
-		n.bot.Send(msg)
-	}
-}
+type nop struct{}
 
 func FromConfig(cfg config.TelegramConfig, log *slog.Logger) Notifier {
 	if !cfg.Enabled || cfg.BotToken == "" {
-		return Nop{}
+		return nop{}
 	}
-
 	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
-		log.Error("telegram notifier init failed", "err", err)
-		return Nop{}
+		log.Error("telegram init failed", "err", err)
+		return nop{}
 	}
-
-	return &TelegramNotifier{
-		cfg: &cfg,
-		log: log,
-		api: api,
-	}
+	id, _ := strconv.ParseInt(cfg.ChatID, 10, 64)
+	return &telegram{cfg: cfg, log: log, api: api, chatID: id}
 }
-
-func (t *TelegramNotifier) send(ctx context.Context, text string) {
-	chatID := t.cfg.ChatID
-	msg := tgbotapi.NewMessage(0, text)
-
-	if id, err := parseChatID(chatID); err == nil {
-		msg.ChatID = id
-	} else {
-		t.log.Error("invalid chat_id", "chat_id", chatID)
-		return
+func (t *telegram) send(ctx context.Context, text string) error {
+	if t.chatID == 0 {
+		return fmt.Errorf("telegram chat_id is not configured")
 	}
-
-	if _, err := t.api.Send(msg); err != nil {
-		t.log.Error("telegram send failed", "err", err)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
+	m := tgbotapi.NewMessage(t.chatID, text)
+	_, err := t.api.Send(m)
+	return err
 }
-
-func (t *TelegramNotifier) SyncStart(ctx context.Context, services []string, trigger, schedule string) {
-	text := fmt.Sprintf("🔄 *Sync started*\nServices: %s\nTrigger: %s",
-		fmt.Sprintf("%v", services), trigger)
-	if schedule != "" {
-		text += fmt.Sprintf("\nSchedule: %s", schedule)
-	}
-	t.send(ctx, text)
+func (t *telegram) SyncStart(ctx context.Context, s []string, trigger, schedule string) {
+	_ = t.send(ctx, fmt.Sprintf("🔄 Sync started\nServices: %s\nTrigger: %s\nSchedule: %s", strings.Join(s, ", "), trigger, schedule))
 }
-
-func (t *TelegramNotifier) SyncDone(ctx context.Context, results []SyncResult, duration string, dryRun bool) {
-	text := "✅ *Sync completed*\n"
-	if dryRun {
-		text = "🔍 *Dry-run completed*\n"
+func (t *telegram) SyncDone(ctx context.Context, r []SyncResult, d time.Duration, dry bool) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "✅ Sync finished in %s", d.Round(time.Millisecond))
+	if dry {
+		b.WriteString(" (dry-run)")
 	}
-
-	for _, r := range results {
-		text += fmt.Sprintf("• %s: +%d/-%d", r.Service, r.Added, r.Removed)
-		if r.Errors > 0 {
-			text += fmt.Sprintf(" (%d errors)", r.Errors)
+	for _, x := range r {
+		fmt.Fprintf(&b, "\n• %s: +%d -%d, %d prefixes", x.Service, x.Added, x.Removed, x.Prefixes)
+		if x.Error != "" {
+			fmt.Fprintf(&b, " ERROR: %s", x.Error)
 		}
-		text += "\n"
 	}
-
-	text += fmt.Sprintf("\nDuration: %s", duration)
-	t.send(ctx, text)
+	_ = t.send(ctx, b.String())
 }
-
-func (t *TelegramNotifier) Error(ctx context.Context, service string, err error) {
-	text := fmt.Sprintf("❌ *Error*\nService: %s\nError: %s", service, err.Error())
-	t.send(ctx, text)
+func (t *telegram) Error(ctx context.Context, s string, e error) {
+	_ = t.send(ctx, fmt.Sprintf("❌ %s: %v", s, e))
 }
-
-func (t *TelegramNotifier) Report(ctx context.Context, cfg *config.Config, text string) {
-	t.send(ctx, text)
+func (t *telegram) Report(ctx context.Context, s string) { _ = t.send(ctx, s) }
+func (t *telegram) Test(ctx context.Context) error {
+	return t.send(ctx, "✅ mikrotik-route-sync Telegram test")
 }
-
-func (t *TelegramNotifier) Test(ctx context.Context) error {
-	t.send(ctx, "🧪 Test message from mikrotik-route-sync")
-	return nil
-}
-
-func parseChatID(s string) (int64, error) {
-	var id int64
-	_, err := fmt.Sscanf(s, "%d", &id)
-	return id, err
-}
+func (nop) SyncStart(context.Context, []string, string, string)         {}
+func (nop) SyncDone(context.Context, []SyncResult, time.Duration, bool) {}
+func (nop) Error(context.Context, string, error)                        {}
+func (nop) Report(context.Context, string)                              {}
+func (nop) Test(context.Context) error                                  { return nil }

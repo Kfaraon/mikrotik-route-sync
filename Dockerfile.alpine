@@ -1,27 +1,12 @@
-# Stage 1: Build
-FROM golang:1.22-alpine AS builder
-
-RUN apk add --no-cache git
-
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+FROM golang:1.27.1-alpine AS builder
+RUN apk add --no-cache ca-certificates git
+WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /mikrotik-route-sync ./cmd/app
-
-# Stage 2: Runtime
-FROM alpine:3.19
-
-RUN apk add --no-cache ca-certificates tzdata \
-    && adduser -D -u 1000 appuser
-
-COPY --from=builder /mikrotik-route-sync /usr/local/bin/mikrotik-route-sync
-
-USER appuser
-WORKDIR /app
-
-VOLUME ["/data", "/var/log/mikrotik-route-sync"]
-EXPOSE 8080
-
-ENTRYPOINT ["mikrotik-route-sync"]
+RUN go mod download && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /app ./cmd/app
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -u 10001 app
+COPY --from=builder /app /usr/local/bin/app
+USER app
+WORKDIR /data
+ENTRYPOINT ["app", "--config", "/data/config.yaml", "--cache", "/data/cache.db"]
 CMD ["web"]
