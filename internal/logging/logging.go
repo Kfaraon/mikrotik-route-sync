@@ -4,22 +4,49 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+
 	"gopkg.in/natefinch/lumberjack.v2"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 )
 
 func New(cfg config.LoggingConfig) *slog.Logger {
-	lvl := slog.LevelInfo
+	var level slog.Level
 	switch cfg.Level {
-	case "debug": lvl = slog.LevelDebug
-	case "warn": lvl = slog.LevelWarn
-	case "error": lvl = slog.LevelError
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
 	}
-	rotator := &lumberjack.Logger{
-		Filename: cfg.File, MaxSize: cfg.MaxSizeMB, MaxBackups: cfg.MaxFiles,
-		Compress: cfg.Compress, LocalTime: true,
+
+	var writers []io.Writer
+
+	if cfg.AlsoStdout {
+		writers = append(writers, os.Stdout)
 	}
-	var w io.Writer = rotator
-	if cfg.AlsoStdout { w = io.MultiWriter(os.Stdout, rotator) }
-	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: lvl}))
+
+	if cfg.File != "" {
+		lj := &lumberjack.Logger{
+			Filename:   cfg.File,
+			MaxSize:    cfg.MaxSizeMB,
+			MaxBackups: cfg.MaxFiles,
+			MaxAge:     30,
+			Compress:   cfg.Compress,
+		}
+		writers = append(writers, lj)
+	}
+
+	if len(writers) == 0 {
+		writers = append(writers, os.Stdout)
+	}
+
+	w := io.MultiWriter(writers...)
+
+	handler := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
+	return slog.New(handler)
 }
