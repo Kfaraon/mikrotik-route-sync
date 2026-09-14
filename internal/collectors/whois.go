@@ -2,53 +2,57 @@ package collectors
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"net/netip"
 
-	"yourmodule/internal/resolver"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
 )
 
-// WHOISCollector — DNS → ASN → все префиксы ASN (с лимитом).
 type WHOISCollector struct {
-	Resolver *resolver.Resolver
+	resolver *resolver.Resolver
+	domains  []string
+	maxASN   int
 }
 
-func (w *WHOISCollector) Name() string { return "whois" }
+func NewWHOISCollector(r *resolver.Resolver, domains []string, maxASN int) Collector {
+	return &WHOISCollector{resolver: r, domains: domains, maxASN: maxASN}
+}
 
-func (w *WHOISCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
-	if len(opts.Domains) == 0 {
-		return nil, fmt.Errorf("whois collector requires domains")
-	}
-	var asns []int
-	for _, d := range opts.Domains {
-		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", d)
+func (c *WHOISCollector) Name() string { return "whois" }
+
+func (c *WHOISCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
+	var netPrefixes []netip.Prefix
+
+	for _, domain := range c.domains {
+		ips, err := c.resolver.ResolveDomain(ctx, domain)
+		if err != nil || len(ips) == 0 {
+			continue
+		}
+
+		asn, err := c.resolver.GetASN(ctx, ips[0])
+		if err != nil || asn == 0 {
+			continue
+		}
+
+		prefixes, err := c.resolver.GetASPrefixes(ctx, asn)
 		if err != nil {
 			continue
 		}
-		for _, ip := range ips {
-			asn, err := w.Resolver.LookupASN(ctx, ip)
-			if err == nil && asn > 0 {
-				asns = append(asns, asn)
+
+		count := 0
+		for _, p := range prefixes {
+			if count >= c.maxASN {
 				break
+			}
+			if prefix, err := netip.ParsePrefix(p); err == nil {
+				netPrefixes = append(netPrefixes, prefix)
+				count++
 			}
 		}
 	}
-	if len(asns) == 0 {
-		return nil, fmt.Errorf("no ASN found for %v", opts.Domains)
-	}
 
-	asnColl := &ASNCollector{}
-	var all []netip.Prefix
-	for _, asn := range asns {
-		res, err := asnColl.Collect(ctx, service, Options{
-			ASN:            asn,
-			MaxASNPrefixes: opts.MaxASNPrefixes,
-		})
-		if err != nil {
-			continue
-		}
-		all = append(all, res.Prefixes...)
-	}
-	return &Result{Prefixes: all, Source: "whois", Method: "whois"}, nil
+	return &Result{
+		Prefixes: netPrefixes,
+		Source:   "whois/bgpview",
+		Method:   "whois",
+	}, nil
 }
