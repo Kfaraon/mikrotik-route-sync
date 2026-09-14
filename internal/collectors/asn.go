@@ -2,6 +2,7 @@ package collectors
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
@@ -21,14 +22,30 @@ func (c *ASNCollector) Name() string { return "asn" }
 func (c *ASNCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
 	prefixes, err := c.resolver.GetASPrefixes(ctx, c.asn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get AS prefixes: %w", err)
 	}
 
 	var netPrefixes []netip.Prefix
+	excludeSet := make(map[netip.Prefix]bool)
+	for _, ex := range opts.Exclude {
+		excludeSet[ex.Masked()] = true
+	}
+
 	for _, p := range prefixes {
-		if prefix, err := netip.ParsePrefix(p); err == nil {
-			netPrefixes = append(netPrefixes, prefix)
+		prefix, err := netip.ParsePrefix(p)
+		if err != nil {
+			continue
 		}
+		prefix = prefix.Masked()
+
+		// Skip excluded
+		if excludeSet[prefix] {
+			continue
+		}
+
+		// Validate prefix belongs to ASN (optional WHOIS check)
+		// For performance, we trust BGPView data
+		netPrefixes = append(netPrefixes, prefix)
 	}
 
 	return &Result{
