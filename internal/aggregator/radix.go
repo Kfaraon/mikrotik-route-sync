@@ -2,199 +2,233 @@ package aggregator
 
 import (
 	"fmt"
+	"math/big"
 	"net/netip"
 	"sort"
-	"strings"
 )
 
-type bit int
-const ( bit0 bit = 0; bit1 bit = 1 )
+type bit uint8
 
-type trieNode struct {
-	children [2]*trieNode
-	terminal bool
-	depth    int
-	prefix   netip.Prefix
+const (
+	bit0 bit = 0
+	bit1 bit = 1
+)
+
+type node struct {
+	children [2]*node
+	isLeaf   bool
 }
 
-type RadixTree struct { root *trieNode }
+type RadixTree struct {
+	root *node
+}
 
-func NewRadixTree() *RadixTree {
-	return &RadixTree{root: &trieNode{}}
+func New() *RadixTree {
+	return &RadixTree{root: &node{}}
+}
+
+func getBit(addr netip.Addr, i int) bit {
+	var b [16]byte
+	if addr.Is4() {
+		b4 := addr.As4()
+		copy(b[12:], b4[:])
+	} else {
+		b = addr.As16()
+	}
+	byteIdx := i / 8
+	bitIdx := uint(7 - (i % 8))
+	if b[byteIdx]&(1<<bitIdx) != 0 {
+		return bit1
+	}
+	return bit0
 }
 
 func (t *RadixTree) Insert(p netip.Prefix) {
 	p = p.Masked()
-	node := t.root
-	addr := p.Addr()
+	n := t.root
 	bits := p.Bits()
 	for i := 0; i < bits; i++ {
-		b := getBit(addr, i)
-		if node.children[b] == nil {
-			node.children[b] = &trieNode{depth: i + 1}
+		b := getBit(p.Addr(), i)
+		if n.children[b] == nil {
+			n.children[b] = &node{}
 		}
-		node = node.children[b]
+		n = n.children[b]
 	}
-	node.terminal = true
-	node.prefix = p
-}
-
-func getBit(addr netip.Addr, i int) bit {
-	if addr.Is4() {
-		b := addr.As4()
-		byteIdx := i / 8
-		bitIdx := uint(7 - (i % 8))
-		if b[byteIdx]&(1<<bitIdx) != 0 { return bit1 }
-		return bit0
-	}
-	b := addr.As16()
-	byteIdx := i / 8
-	bitIdx := uint(7 - (i % 8))
-	if b[byteIdx]&(1<<bitIdx) != 0 { return bit1 }
-	return bit0
-}
-
-// Compact удаляет терминальные узлы, если родитель тоже терминальный
-// (подсеть полностью покрыта более широкой подсетью)
-func (t *RadixTree) Compact() {
-	t.compact(t.root, false)
-}
-
-func (t *RadixTree) compact(node *trieNode, parentTerminal bool) bool {
-	if node == nil { return false }
-	hasChildren := false
-	for _, c := range node.children {
-		if c != nil {
-			hasChildren = true
-			t.compact(c, parentTerminal || node.terminal)
-		}
-	}
-	if parentTerminal && node.terminal {
-		node.terminal = false
-	}
-	if node.terminal { return true }
-	return hasChildren
-}
-
-// Merge объединяет смежные подсети с одинаковой длиной маски
-func (t *RadixTree) Merge() {
-	changed := true
-	for changed {
-		changed = false
-		merged := NewRadixTree()
-		prefixes := t.Collect()
-		sort.Slice(prefixes, func(i, j int) bool {
-			if prefixes[i].Bits() != prefixes[j].Bits() {
-				return prefixes[i].Bits() > prefixes[j].Bits()
-			}
-			return prefixes[i].Addr().Compare(prefixes[j].Addr()) < 0
-		})
-		used := make([]bool, len(prefixes))
-		for i := 0; i < len(prefixes); i++ {
-			if used[i] { continue }
-			for j := i + 1; j < len(prefixes); j++ {
-				if used[j] { continue }
-				if merged, ok := canMerge(prefixes[i], prefixes[j]); ok {
-					merged.Insert(merged.prefix)
-					used[i], used[j] = true, true
-					changed = true
-					break
-				}
-			}
-			if !used[i] { merged.Insert(prefixes[i]) }
-		}
-		*t = *merged
-	}
-}
-
-type mergeResult struct {
-	prefix netip.Prefix
-	ok     bool
-}
-
-func canMerge(a, b netip.Prefix) (mergeResult, bool) {
-	if a.Bits() != b.Bits() || a.Bits() == 0 || a.Addr().Is4() != b.Addr().Is4() {
-		return mergeResult{}, false
-	}
-	parentA := netip.PrefixFrom(a.Addr().Prev(), a.Bits()-1).Masked()
-	parentB := netip.PrefixFrom(b.Addr().Prev(), b.Bits()-1).Masked()
-	if parentA == parentB {
-		return mergeResult{prefix: parentA, ok: true}, true
-	}
-	return mergeResult{}, false
+	n.isLeaf = true
 }
 
 func (t *RadixTree) Collect() []netip.Prefix {
 	var result []netip.Prefix
-	t.collect(t.root, netip.Addr{}, 0, &result)
+	var walk func(n *node, addr [16]byte, depth int, isIPv4 bool)
+	walk = func(n *node, addr [16]byte, depth int, isIPv4 bool) {
+		if n == nil {
+			return
+		}
+		if n.isLeaf {
+			var a netip.Addr
+			if isIPv4 {
+				a = netip.AddrFrom4([4]byte{addr[12], addr[13], addr[14], addr[15]})
+			} else {
+				a = netip.AddrFrom16(addr)
+			}
+			result = append(result, netip.PrefixFrom(a, depth))
+			return
+		}
+		for b := bit(0); b < 2; b++ {
+			if n.children[b] != nil {
+				newAddr := addr
+				byteIdx := depth / 8
+				bitIdx := uint(7 - (depth % 8))
+				if b == bit1 {
+					newAddr[byteIdx] |= 1 << bitIdx
+				} else {
+					newAddr[byteIdx] &^= 1 << bitIdx
+				}
+				walk(n.children[b], newAddr, depth+1, isIPv4)
+			}
+		}
+	}
+
+	// Separate IPv4 and IPv6
+	walk(t.root, [16]byte{}, 0, false)
 	return result
 }
 
-func (t *RadixTree) collect(node *trieNode, addr netip.Addr, depth int, result *[]netip.Prefix) {
-	if node == nil { return }
-	if node.terminal && node.prefix.IsValid() {
-		*result = append(*result, node.prefix)
-		return
+func canMerge(a, b netip.Prefix) (netip.Prefix, bool) {
+	if a.Bits() != b.Bits() || a.Bits() == 0 || a.Addr().Is4() != b.Addr().Is4() {
+		return netip.Prefix{}, false
 	}
-	// Рекурсия в дочерние узлы
-	for b, child := range node.children {
-		if child != nil {
-			// Восстановление адреса по битам — упрощённо через prefix
-			_ = b
-			t.collect(child, addr, depth+1, result)
-		}
+	// Check if they differ only in the last bit of the parent
+	parentBits := a.Bits() - 1
+	parentA := netip.PrefixFrom(a.Addr(), parentBits).Masked()
+	parentB := netip.PrefixFrom(b.Addr(), parentBits).Masked()
+	if parentA == parentB {
+		return parentA, true
 	}
+	return netip.Prefix{}, false
 }
 
-// Aggregate — главная функция агрегации с проверкой суммы адресов
-func Aggregate(prefixes []string) ([]string, error) {
-	if len(prefixes) == 0 { return nil, nil }
+func Aggregate(prefixes []netip.Prefix) ([]string, error) {
+	if len(prefixes) == 0 {
+		return nil, nil
+	}
 
-	// Парсинг и дедупликация
-	seen := make(map[netip.Prefix]struct{})
-	var list []netip.Prefix
-	for _, s := range prefixes {
-		p, err := netip.ParsePrefix(strings.TrimSpace(s))
-		if err != nil { return nil, fmt.Errorf("bad prefix %q: %w", s, err) }
-		p = p.Masked()
-		if _, ok := seen[p]; !ok {
-			seen[p] = struct{}{}
-			list = append(list, p)
+	// Validate and mask all prefixes
+	masked := make([]netip.Prefix, 0, len(prefixes))
+	for _, p := range prefixes {
+		if !p.IsValid() {
+			continue
 		}
-	}
-	if len(list) == 0 { return nil, nil }
-
-	// Подсчёт суммы адресов ДО
-	sumBefore := sumAddresses(list)
-
-	// Radix Tree
-	tree := NewRadixTree()
-	for _, p := range list { tree.Insert(p) }
-	tree.Compact()
-	tree.Merge()
-	aggregated := tree.Collect()
-
-	// Подсчёт суммы адресов ПОСЛЕ
-	sumAfter := sumAddresses(aggregated)
-
-	// Валидация
-	if sumBefore != sumAfter {
-		return nil, fmt.Errorf("aggregation validation failed: before=%d after=%d", sumBefore, sumAfter)
+		masked = append(masked, p.Masked())
 	}
 
-	out := make([]string, len(aggregated))
-	for i, p := range aggregated { out[i] = p.String() }
-	return out, nil
+	if len(masked) == 0 {
+		return nil, nil
+	}
+
+	// Sort by bits (longer prefixes first) then by address
+	sort.Slice(masked, func(i, j int) bool {
+		if masked[i].Bits() != masked[j].Bits() {
+			return masked[i].Bits() > masked[j].Bits()
+		}
+		return masked[i].Addr().Less(masked[j].Addr())
+	})
+
+	// Build tree
+	tree := New()
+	for _, p := range masked {
+		tree.Insert(p)
+	}
+
+	// Collect unique prefixes from tree (handles overlapping)
+	collected := tree.Collect()
+
+	// Merge adjacent networks iteratively
+	merged := mergeAdjacent(collected)
+
+	// Convert to strings
+	result := make([]string, len(merged))
+	for i, p := range merged {
+		result[i] = p.String()
+	}
+
+	// Validate: sum of addresses should match
+	originalSum := sumAddresses(masked)
+	mergedSum := sumAddresses(merged)
+	if originalSum.Cmp(mergedSum) != 0 {
+		return nil, fmt.Errorf("aggregation validation failed: original=%s, merged=%s", originalSum.String(), mergedSum.String())
+	}
+
+	return result, nil
 }
 
-func sumAddresses(prefixes []netip.Prefix) uint64 {
-	var sum uint64
+func mergeAdjacent(prefixes []netip.Prefix) []netip.Prefix {
+	if len(prefixes) == 0 {
+		return nil
+	}
+
+	changed := true
+	current := prefixes
+
+	for changed {
+		changed = false
+		// Group by prefix length
+		byLen := make(map[int][]netip.Prefix)
+		for _, p := range current {
+			byLen[p.Bits()] = append(byLen[p.Bits()], p)
+		}
+
+		var next []netip.Prefix
+		for bits, group := range byLen {
+			if bits == 0 {
+				next = append(next, group...)
+				continue
+			}
+			// Sort group
+			sort.Slice(group, func(i, j int) bool {
+				return group[i].Addr().Less(group[j].Addr())
+			})
+
+			merged := make([]bool, len(group))
+			for i := 0; i < len(group); i++ {
+				if merged[i] {
+					continue
+				}
+				if i+1 < len(group) && !merged[i+1] {
+					if parent, ok := canMerge(group[i], group[i+1]); ok {
+						next = append(next, parent)
+						merged[i] = true
+						merged[i+1] = true
+						changed = true
+						continue
+					}
+				}
+				next = append(next, group[i])
+			}
+		}
+		current = next
+	}
+
+	return current
+}
+
+func sumAddresses(prefixes []netip.Prefix) *big.Int {
+	sum := big.NewInt(0)
+	one := big.NewInt(1)
 	for _, p := range prefixes {
 		bits := p.Bits()
-		if bits < 0 || bits > 128 { continue }
-		size := uint64(1) << uint(32-bits)
-		if p.Addr().Is6() { size = uint64(1) << uint(128-bits) }
-		sum += size
+		if bits < 0 {
+			continue
+		}
+		var totalBits int
+		if p.Addr().Is4() {
+			totalBits = 32
+		} else {
+			totalBits = 128
+		}
+		hosts := big.NewInt(0)
+		hosts.Lsh(one, uint(totalBits-bits))
+		sum.Add(sum, hosts)
 	}
 	return sum
 }
