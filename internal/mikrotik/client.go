@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"time"
 	"github.com/sony/gobreaker"
-	"github.com/example/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 )
 
 type Client struct {
