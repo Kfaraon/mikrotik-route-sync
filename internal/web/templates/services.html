@@ -1,0 +1,29 @@
+<form hx-post="/actions/sync-selected" hx-target="#sync-result" hx-swap="innerHTML">
+  <input type="hidden" name="csrf_token" value="{{ .CSRF }}">
+  <table>
+    <thead>
+      <tr>
+        <th><input type="checkbox" onclick="document.querySelectorAll('input[name=service]').forEach(c=>c.checked=this.checked)"></th>
+        <th>Сервис</th>
+        <th>Маршрутов</th>
+        <th>Расписание</th>
+        <th>Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Services }}
+      <tr>
+        <td><input type="checkbox" name="service" value="{{ .Name }}"></td>
+        <td>{{ .Name }}</td>
+        <td>{{ .RouteCount }}</td>
+        <td class="muted">{{ .Schedule }}</td>
+        <td>
+          <button type="button" hx-post="/actions/sync-one/{{ .Name }}" hx-target="#sync-result">🔄</button>
+        </td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  <button type="submit">▶️ Обновить выбранные</button>
+</form>
+<div id="sync-result"></div>

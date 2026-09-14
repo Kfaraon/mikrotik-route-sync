@@ -1,0 +1,14 @@
+<table>
+  <thead>
+    <tr><th>Сервис</th><th>Расписание</th><th>Следующий запуск</th></tr>
+  </thead>
+  <tbody>
+    {{ range .Schedules }}
+    <tr>
+      <td>{{ .Service }}</td>
+      <td>{{ .Schedule }}</td>
+      <td class="muted">{{ .NextRun }}</td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>

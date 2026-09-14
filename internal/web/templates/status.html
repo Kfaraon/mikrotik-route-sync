@@ -1,0 +1,17 @@
+<div class="grid">
+  <article>
+    <h3>MikroTik</h3>
+    <p class="status-{{ .MikroTikStatus }}">{{ .MikroTikStatus }}</p>
+  </article>
+  <article>
+    <h3>Сервисов</h3>
+    <p>{{ .ServiceCount }}</p>
+  </article>
+  <article>
+    <h3>Маршрутов</h3>
+    <p>{{ .RouteCount }}</p>
+  </article>
+</div>
+<button hx-post="/actions/sync-all" hx-confirm="Запустить синхронизацию всех сервисов?">
+  🔄 Синхронизировать всё
+</button>
