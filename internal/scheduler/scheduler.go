@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 	"github.com/robfig/cron/v3"
-	"github.com/example/mikrotik-route-sync/internal/config"
-	"github.com/example/mikrotik-route-sync/internal/core"
-	"github.com/example/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
 )
 
 type Scheduler struct {
