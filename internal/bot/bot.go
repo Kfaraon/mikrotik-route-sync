@@ -9,12 +9,13 @@ import (
 	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 )
 
 type state struct {
-	screen   string          // "main", "sync_menu", "sync_services", "confirm", "status", "schedules"
+	screen   string
 	selected map[string]bool
 }
 
@@ -26,19 +27,18 @@ type bot struct {
 	authorized map[int64]bool
 	mtx        sync.Mutex
 	states     map[int64]*state
+	busy       map[string]bool
+	busyMtx    sync.Mutex
 }
 
 func Run(ctx context.Context, cfg *config.Config, syncer *core.Syncer, log *slog.Logger) error {
 	if !cfg.Telegram.Enabled || cfg.Telegram.BotToken == "" {
-		log.Info("telegram bot disabled")
 		return nil
 	}
-
 	api, err := tgbotapi.NewBotAPI(cfg.Telegram.BotToken)
 	if err != nil {
-		return fmt.Errorf("create bot: %w", err)
+		return err
 	}
-
 	log.Info("telegram bot started", "user", api.Self.UserName)
 
 	b := &bot{
@@ -48,8 +48,8 @@ func Run(ctx context.Context, cfg *config.Config, syncer *core.Syncer, log *slog
 		api:        api,
 		authorized: map[int64]bool{},
 		states:     map[int64]*state{},
+		busy:       map[string]bool{},
 	}
-
 	for _, id := range cfg.Telegram.AuthorizedChatIDs {
 		if n, err := strconv.ParseInt(id, 10, 64); err == nil {
 			b.authorized[n] = true
@@ -61,7 +61,6 @@ func Run(ctx context.Context, cfg *config.Config, syncer *core.Syncer, log *slog
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
-
 	updates := api.GetUpdatesChan(u)
 
 	for {
@@ -70,11 +69,24 @@ func Run(ctx context.Context, cfg *config.Config, syncer *core.Syncer, log *slog
 			api.StopReceivingUpdates()
 			return nil
 		case upd := <-updates:
-			if upd == nil {
-				continue
-			}
 			b.handle(upd)
 		}
+	}
+}
+
+func (b *bot) isBusy(service string) bool {
+	b.busyMtx.Lock()
+	defer b.busyMtx.Unlock()
+	return b.busy[service]
+}
+
+func (b *bot) setBusy(service string, busy bool) {
+	b.busyMtx.Lock()
+	defer b.busyMtx.Unlock()
+	if busy {
+		b.busy[service] = true
+	} else {
+		delete(b.busy, service)
 	}
 }
 
@@ -84,7 +96,6 @@ func (b *bot) handle(upd tgbotapi.Update) {
 		if !b.authorized[chatID] {
 			return
 		}
-
 		switch upd.Message.Command() {
 		case "start", "menu":
 			b.showMain(chatID)
@@ -95,7 +106,7 @@ func (b *bot) handle(upd tgbotapi.Update) {
 		case "schedule":
 			b.showSchedules(chatID)
 		case "help":
-			b.sendText(chatID, "/menu — главное меню\n/status — статус сервисов\n/sync — синхронизация\n/schedule — расписания")
+			_, _ = b.api.Send(tgbotapi.NewMessage(chatID, "/menu /status /sync /schedule /help"))
 		}
 		return
 	}
@@ -105,229 +116,150 @@ func (b *bot) handle(upd tgbotapi.Update) {
 	}
 }
 
-func (b *bot) getState(chatID int64) *state {
-	b.mtx.Lock()
-	defer b.mtx.Unlock()
-
-	st := b.states[chatID]
-	if st == nil {
-		st = &state{screen: "main", selected: map[string]bool{}}
-		b.states[chatID] = st
-	}
-	return st
-}
-
 func (b *bot) handleCallback(cb *tgbotapi.CallbackQuery) {
 	chatID := cb.Message.Chat.ID
 	if !b.authorized[chatID] {
 		return
 	}
+	b.mtx.Lock()
+	st := b.states[chatID]
+	if st == nil {
+		st = &state{screen: "main", selected: map[string]bool{}}
+		b.states[chatID] = st
+	}
+	b.mtx.Unlock()
 
-	st := b.getState(chatID)
 	data := cb.Data
-
 	var resp tgbotapi.EditMessageTextConfig
 
 	switch {
 	case data == "main":
+		b.mtx.Lock()
 		st.screen = "main"
+		b.mtx.Unlock()
 		resp = b.renderMain(chatID, cb.Message.MessageID)
 
 	case data == "sync":
+		b.mtx.Lock()
 		st.screen = "sync_menu"
+		b.mtx.Unlock()
 		resp = b.renderSyncMenu(chatID, cb.Message.MessageID)
 
-	case data == "status":
-		st.screen = "status"
-		resp = b.renderStatus(chatID, cb.Message.MessageID)
-
-	case data == "schedule":
-		st.screen = "schedules"
-		resp = b.renderSchedules(chatID, cb.Message.MessageID)
-
-	case data == "settings":
-		resp = b.renderSettings(chatID, cb.Message.MessageID)
-
 	case data == "sync:all":
+		b.mtx.Lock()
 		st.screen = "confirm"
 		st.selected = map[string]bool{}
 		for _, s := range b.cfg.Services {
 			st.selected[s] = true
 		}
+		b.mtx.Unlock()
 		resp = b.renderConfirm(chatID, cb.Message.MessageID, st)
 
 	case data == "sync:services":
+		b.mtx.Lock()
 		st.screen = "sync_services"
 		st.selected = map[string]bool{}
+		b.mtx.Unlock()
 		resp = b.renderServices(chatID, cb.Message.MessageID, st)
 
 	case strings.HasPrefix(data, "toggle:"):
 		svc := strings.TrimPrefix(data, "toggle:")
+		b.mtx.Lock()
 		st.selected[svc] = !st.selected[svc]
+		b.mtx.Unlock()
 		resp = b.renderServices(chatID, cb.Message.MessageID, st)
 
 	case data == "select:all":
+		b.mtx.Lock()
 		for _, s := range b.cfg.Services {
 			st.selected[s] = true
 		}
+		b.mtx.Unlock()
 		resp = b.renderServices(chatID, cb.Message.MessageID, st)
 
 	case data == "start:selected":
 		var svcs []string
+		b.mtx.Lock()
 		for s, on := range st.selected {
 			if on {
 				svcs = append(svcs, s)
 			}
 		}
 		st.screen = "main"
+		b.mtx.Unlock()
 
-		if len(svcs) == 0 {
-			resp = tgbotapi.NewEditMessageText(chatID, cb.Message.MessageID, "❌ Не выбрано ни одного сервиса.")
-		} else {
-			resp = tgbotapi.NewEditMessageText(chatID, cb.Message.MessageID,
-				fmt.Sprintf("▶️ Запущено для: %s", strings.Join(svcs, ", ")))
-			go func() {
-				ctx := context.Background()
-				b.syncer.SyncMany(ctx, svcs, false)
-			}()
+		// Check busy
+		var busyServices []string
+		var readyServices []string
+		for _, s := range svcs {
+			if b.isBusy(s) {
+				busyServices = append(busyServices, s)
+			} else {
+				readyServices = append(readyServices, s)
+			}
 		}
 
-	case data == "confirm:cancel":
-		st.screen = "main"
-		st.selected = map[string]bool{}
-		resp = b.renderMain(chatID, cb.Message.MessageID)
+		if len(busyServices) > 0 {
+			msg := fmt.Sprintf("⚠️ Сервисы уже синхронизируются: %s", strings.Join(busyServices, ", "))
+			resp = tgbotapi.NewEditMessageText(chatID, cb.Message.MessageID, msg)
+			break
+		}
 
-	default:
-		resp = tgbotapi.NewEditMessageText(chatID, cb.Message.MessageID, "Неизвестная команда")
+		if len(readyServices) == 0 {
+			resp = tgbotapi.NewEditMessageText(chatID, cb.Message.MessageID, "Не выбрано ни одного сервиса.")
+			break
+		}
+
+		// Mark as busy
+		for _, s := range readyServices {
+			b.setBusy(s, true)
+		}
+
+		resp = tgbotapi.NewEditMessageText(chatID, cb.Message.MessageID,
+			fmt.Sprintf("▶️ Запущено для: %s", strings.Join(readyServices, ", ")))
+
+		go func() {
+			defer func() {
+				for _, s := range readyServices {
+					b.setBusy(s, false)
+				}
+			}()
+			_ = b.syncer.SyncMany(context.Background(), readyServices, false)
+		}()
 	}
-
 	resp.ChatID = chatID
-	if _, err := b.api.Send(resp); err != nil {
-		b.log.Error("send callback response", "err", err)
-	}
-
-	if _, err := b.api.Request(tgbotapi.NewCallback(cb.ID, "")); err != nil {
-		b.log.Error("send callback answer", "err", err)
-	}
-}
-
-func (b *bot) sendText(chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := b.api.Send(msg); err != nil {
-		b.log.Error("send text", "err", err)
-	}
+	_, _ = b.api.Send(resp)
+	_, _ = b.api.Request(tgbotapi.NewCallback(cb.ID, ""))
 }
 
 func (b *bot) showMain(chatID int64) {
-	msg := tgbotapi.NewMessage(chatID, "🏠 Главное меню")
+	msg := tgbotapi.NewMessage(chatID, "Главное меню")
 	msg.ReplyMarkup = mainMenu()
-	if _, err := b.api.Send(msg); err != nil {
-		b.log.Error("show main", "err", err)
-	}
-}
-
-func (b *bot) showStatus(chatID int64) {
-	ctx := context.Background()
-	var lines []string
-
-	for _, svc := range b.cfg.Services {
-		routes, err := b.syncer.ListRoutes(ctx, svc)
-		if err != nil {
-			lines = append(lines, fmt.Sprintf("• %s: ⚠️ ошибка", svc))
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("• %s: %d маршрутов", svc, len(routes)))
-	}
-
-	b.sendText(chatID, strings.Join(lines, "\n"))
-}
-
-func (b *bot) showSyncMenu(chatID int64) {
-	msg := tgbotapi.NewMessage(chatID, "🔄 Что синхронизировать?")
-	msg.ReplyMarkup = syncMenu()
-	if _, err := b.api.Send(msg); err != nil {
-		b.log.Error("show sync menu", "err", err)
-	}
-}
-
-func (b *bot) showSchedules(chatID int64) {
-	var lines []string
-	for _, svc := range b.cfg.Services {
-		lines = append(lines, fmt.Sprintf("• %s: %s", svc, b.cfg.ScheduleFor(svc)))
-	}
-	b.sendText(chatID, "📅 Расписания:\n"+strings.Join(lines, "\n"))
+	_, _ = b.api.Send(msg)
 }
 
 func (b *bot) renderMain(chatID int64, msgID int) tgbotapi.EditMessageTextConfig {
-	c := tgbotapi.NewEditMessageText(chatID, msgID, "🏠 Главное меню")
+	c := tgbotapi.NewEditMessageText(chatID, msgID, "Главное меню")
 	m := mainMenu()
 	c.ReplyMarkup = &m
 	return c
 }
 
+func (b *bot) showSyncMenu(chatID int64) {
+	msg := tgbotapi.NewMessage(chatID, "Что синхронизировать?")
+	msg.ReplyMarkup = syncMenu()
+	_, _ = b.api.Send(msg)
+}
+
 func (b *bot) renderSyncMenu(chatID int64, msgID int) tgbotapi.EditMessageTextConfig {
-	c := tgbotapi.NewEditMessageText(chatID, msgID, "🔄 Что синхронизировать?")
+	c := tgbotapi.NewEditMessageText(chatID, msgID, "Что синхронизировать?")
 	m := syncMenu()
 	c.ReplyMarkup = &m
 	return c
 }
 
-func (b *bot) renderStatus(chatID int64, msgID int) tgbotapi.EditMessageTextConfig {
-	ctx := context.Background()
-	var lines []string
-
-	for _, svc := range b.cfg.Services {
-		routes, err := b.syncer.ListRoutes(ctx, svc)
-		if err != nil {
-			lines = append(lines, fmt.Sprintf("• %s: ⚠️", svc))
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("• %s: %d", svc, len(routes)))
-	}
-
-	c := tgbotapi.NewEditMessageText(chatID, msgID, "📊 Статус:\n"+strings.Join(lines, "\n"))
-	c.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{
-		InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-			{
-				tgbotapi.NewInlineKeyboardButtonData("🔄 Обновить", "status"),
-				tgbotapi.NewInlineKeyboardButtonData("🏠 Меню", "main"),
-			},
-		},
-	}
-	return c
-}
-
-func (b *bot) renderSchedules(chatID int64, msgID int) tgbotapi.EditMessageTextConfig {
-	var lines []string
-	for _, svc := range b.cfg.Services {
-		lines = append(lines, fmt.Sprintf("• %s: %s", svc, b.cfg.ScheduleFor(svc)))
-	}
-
-	c := tgbotapi.NewEditMessageText(chatID, msgID, "📅 Расписания:\n"+strings.Join(lines, "\n"))
-	c.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{
-		InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-			{tgbotapi.NewInlineKeyboardButtonData("🏠 Меню", "main")},
-		},
-	}
-	return c
-}
-
-func (b *bot) renderSettings(chatID int64, msgID int) tgbotapi.EditMessageTextConfig {
-	text := fmt.Sprintf("⚙️ Настройки:\n• MikroTik: %s\n• Gateway: %s\n• Timezone: %s",
-		b.cfg.MikroTik.Host, b.cfg.MikroTik.Gateway, b.cfg.Timezone)
-
-	c := tgbotapi.NewEditMessageText(chatID, msgID, text)
-	c.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{
-		InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
-			{tgbotapi.NewInlineKeyboardButtonData("🏠 Меню", "main")},
-		},
-	}
-	return c
-}
-
 func (b *bot) renderServices(chatID int64, msgID int, st *state) tgbotapi.EditMessageTextConfig {
 	var rows [][]tgbotapi.InlineKeyboardButton
-
 	for _, s := range b.cfg.Services {
 		mark := "☐"
 		if st.selected[s] {
@@ -337,7 +269,6 @@ func (b *bot) renderServices(chatID int64, msgID int, st *state) tgbotapi.EditMe
 			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%s %s", mark, s), "toggle:"+s),
 		))
 	}
-
 	rows = append(rows,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("▶️ Запустить", "start:selected"),
@@ -347,7 +278,6 @@ func (b *bot) renderServices(chatID int64, msgID int, st *state) tgbotapi.EditMe
 			tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "main"),
 		),
 	)
-
 	c := tgbotapi.NewEditMessageText(chatID, msgID, "Выберите сервисы:")
 	c.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{InlineKeyboard: rows}
 	return c
@@ -360,17 +290,39 @@ func (b *bot) renderConfirm(chatID int64, msgID int, st *state) tgbotapi.EditMes
 			svcs = append(svcs, s)
 		}
 	}
-
 	c := tgbotapi.NewEditMessageText(chatID, msgID, "Запустить: "+strings.Join(svcs, ", "))
 	c.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{
 		InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{
 			{
 				tgbotapi.NewInlineKeyboardButtonData("✅ Подтвердить", "start:selected"),
-				tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "confirm:cancel"),
+				tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "main"),
 			},
 		},
 	}
 	return c
+}
+
+func (b *bot) showStatus(chatID int64) {
+	var lines []string
+	for _, svc := range b.cfg.Services {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		routes, err := b.syncer.ListRoutes(ctx, svc)
+		cancel()
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("• %s: err", svc))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("• %s: %d routes", svc, len(routes)))
+	}
+	_, _ = b.api.Send(tgbotapi.NewMessage(chatID, strings.Join(lines, "\n")))
+}
+
+func (b *bot) showSchedules(chatID int64) {
+	var lines []string
+	for _, svc := range b.cfg.Services {
+		lines = append(lines, fmt.Sprintf("• %s: %s", svc, b.cfg.ScheduleFor(svc)))
+	}
+	_, _ = b.api.Send(tgbotapi.NewMessage(chatID, strings.Join(lines, "\n")))
 }
 
 func mainMenu() tgbotapi.InlineKeyboardMarkup {
