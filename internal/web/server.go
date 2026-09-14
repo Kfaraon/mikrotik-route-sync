@@ -15,9 +15,9 @@ import (
 	"time"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/example/mikrotik-route-sync/internal/config"
-	"github.com/example/mikrotik-route-sync/internal/core"
-	"github.com/example/mikrotik-route-sync/internal/scheduler"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 )
 
 //go:embed templates/*.html
