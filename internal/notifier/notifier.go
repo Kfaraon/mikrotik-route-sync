@@ -22,8 +22,8 @@ type Notifier interface {
 	SyncStart(ctx context.Context, services []string, trigger, schedule string)
 	SyncDone(ctx context.Context, results []SyncResult, duration string, dryRun bool)
 	Error(ctx context.Context, service string, err error)
-	Report(ctx context.Context, cfg *config.Config, text string)
 	Test(ctx context.Context) error
+	Report(ctx context.Context, cfg *config.Config, message string)
 }
 
 type Nop struct{}
@@ -34,10 +34,28 @@ func (Nop) Error(ctx context.Context, service string, err error) {}
 func (Nop) Report(ctx context.Context, cfg *config.Config, text string) {}
 func (Nop) Test(ctx context.Context) error { return nil }
 
-type TelegramNotifier struct {
-	cfg *config.TelegramConfig
-	log *slog.Logger
-	api *tgbotapi.BotAPI
+type telegramNotifier struct {
+	bot       *tgbotapi.BotAPI
+	chatID    int64
+	chatIDs   []int64
+	enabled   bool
+	log       *slog.Logger
+}
+
+func (n *telegramNotifier) Report(ctx context.Context, cfg *config.Config, message string) {
+	if !n.enabled { return }
+	msg := tgbotapi.NewMessage(n.chatID, message)
+	msg.ParseMode = "Markdown"
+	_, err := n.bot.Send(msg)
+	if err != nil {
+		n.log.Error("weekly report send failed", "err", err)
+	}
+	// Отправить во все авторизованные чаты
+	for _, id := range n.chatIDs {
+		if id == n.chatID { continue }
+		msg.ChatID = id
+		n.bot.Send(msg)
+	}
 }
 
 func FromConfig(cfg config.TelegramConfig, log *slog.Logger) Notifier {
