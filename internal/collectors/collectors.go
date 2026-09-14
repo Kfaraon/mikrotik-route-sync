@@ -5,14 +5,12 @@ import (
 	"net/netip"
 )
 
-// Result — унифицированный результат работы любого сборщика.
 type Result struct {
 	Prefixes []netip.Prefix
-	Source   string // URL / ASN / whois, откуда пришли данные
-	Method   string // asn | cdn | dynamic | whois | static_url
+	Source   string
+	Method   string
 }
 
-// Options — параметры, которые может использовать сборщик.
 type Options struct {
 	Domains        []string
 	ASN            int
@@ -21,7 +19,6 @@ type Options struct {
 	Exclude        []netip.Prefix
 }
 
-// Collector — интерфейс любого сборщика.
 type Collector interface {
 	Name() string
 	Collect(ctx context.Context, service string, opts Options) (*Result, error)
