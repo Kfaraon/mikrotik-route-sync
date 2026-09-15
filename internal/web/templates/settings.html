@@ -1,116 +1,115 @@
 {{define "settings.html"}}
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <title>Настройки — MikroTik Route Sync</title>
-    <link rel="stylesheet" href="/static/pico.min.css">
-    <script src="/static/htmx.min.js"></script>
-    <style>
-        .password-field { font-family: monospace; }
-        .password-mask { color: #888; }
-        .btn-show, .btn-edit, .btn-test, .btn-reset { margin-left: 0.5rem; }
-    </style>
+  <meta charset="utf-8">
+  <title>MikroTik Route Sync — Настройки</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
 </head>
 <body>
-<main class="container">
+  <nav class="container-fluid">
+    <ul>
+      <li><a href="/">🏠 Дашборд</a></li>
+      <li><a href="/services">📦 Сервисы</a></li>
+      <li><a href="/schedules">📅 Расписания</a></li>
+      <li><a href="/settings" aria-current="page">⚙️ Настройки</a></li>
+      <li><a href="/logs">📜 Логи</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
     <h1>⚙️ Настройки</h1>
-    <nav><a href="/">← Дашборд</a></nav>
 
-    <section id="mikrotik-settings">
-        <h2>MikroTik</h2>
-        <div hx-get="/partials/settings" hx-trigger="config-changed from:body" hx-swap="innerHTML">
-            <form hx-post="/actions/config/set" hx-swap="outerHTML">
-                <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-                <label>Host: <input type="text" name="value" value="{{.MikroTik.Host}}">
-                    <input type="hidden" name="key" value="mikrotik.host"></label>
-                <button type="submit">Сохранить</button>
-            </form>
-            <form hx-post="/actions/config/set" hx-swap="outerHTML">
-                <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-                <label>Username: <input type="text" name="value" value="{{.MikroTik.Username}}">
-                    <input type="hidden" name="key" value="mikrotik.username"></label>
-                <button type="submit">Сохранить</button>
-            </form>
-            <form hx-post="/actions/config/set" hx-swap="outerHTML">
-                <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-                <label>Password:
-                    <span class="password-field">
-                        <span class="password-mask" id="mikrotik-password">••••••••</span>
-                        <button type="button" class="btn-show" onclick="togglePassword('mikrotik-password', '{{.MikroTik.Password}}')">👁 Показать</button>
-                        <button type="button" class="btn-edit" onclick="editPassword('mikrotik-password')">✏️ Изменить</button>
-                    </span>
-                    <input type="hidden" name="key" value="mikrotik.password">
-                    <input type="text" name="value" style="display:none" id="mikrotik-password-input">
-                </label>
-                <button type="submit">Сохранить</button>
-            </form>
-            <button hx-post="/actions/test-mikrotik" hx-swap="outerHTML" class="btn-test">🧪 Проверить подключение</button>
-        </div>
-    </section>
-
-    <section id="telegram-settings">
-        <h2>Telegram</h2>
-        <form hx-post="/actions/config/set" hx-swap="outerHTML">
-            <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-            <label>Bot Token:
-                <span class="password-field">
-                    <span class="password-mask" id="telegram-token">••••••••</span>
-                    <button type="button" class="btn-show" onclick="togglePassword('telegram-token', '{{.Telegram.BotToken}}')">👁</button>
-                    <button type="button" class="btn-edit" onclick="editPassword('telegram-token')">✏️</button>
-                </span>
-                <input type="hidden" name="key" value="telegram.bot_token">
-                <input type="text" name="value" style="display:none" id="telegram-token-input">
-            </label>
-            <button type="submit">Сохранить</button>
-        </form>
-        <button hx-post="/actions/test-telegram" hx-swap="outerHTML">🧪 Проверить Telegram</button>
-    </section>
-
+    <!-- MikroTik -->
     <section>
-        <h2>Общие</h2>
-        <button hx-post="/actions/reload-config" hx-swap="outerHTML">🔄 Перечитать конфиг</button>
+      <h2>MikroTik RouterOS</h2>
+      <table>
+        <tbody>
+          <tr><td>Host</td><td><code>{{ .Cfg.MikroTik.Host }}</code></td></tr>
+          <tr><td>Port</td><td><code>{{ .Cfg.MikroTik.Port }}</code></td></tr>
+          <tr><td>Username</td><td><code>{{ .Cfg.MikroTik.Username }}</code></td></tr>
+          <tr>
+            <td>Password</td>
+            <td class="secret-field">
+              <span class="password-mask">{{ mask .Cfg.MikroTik.Password }}</span>
+            </td>
+          </tr>
+          <tr><td>Gateway</td><td><code>{{ .Cfg.MikroTik.Gateway }}</code></td></tr>
+          <tr><td>Routing Table</td><td><code>{{ .Cfg.MikroTik.RoutingTable }}</code></td></tr>
+          <tr><td>Distance</td><td><code>{{ .Cfg.MikroTik.Distance }}</code></td></tr>
+          <tr><td>Verify SSL</td><td><code>{{ .Cfg.MikroTik.VerifySSL }}</code></td></tr>
+        </tbody>
+      </table>
     </section>
-</main>
-<script>
-function togglePassword(id, value) {
-    const el = document.getElementById(id);
-    if (el.textContent === '••••••••') {
-        el.textContent = value;
-        el.classList.remove('password-mask');
-        setTimeout(() => {
-            el.textContent = '••••••••';
-            el.classList.add('password-mask');
-        }, 10000);
-    } else {
-        el.textContent = '••••••••';
-        el.classList.add('password-mask');
-    }
-}
 
-function editPassword(id) {
-    const el = document.getElementById(id);
-    const input = document.getElementById(id + '-input');
-    const current = el.textContent === '••••••••' ? '' : el.textContent;
-    input.style.display = 'inline';
-    input.value = current;
-    input.focus();
-    input.onblur = function() {
-        el.textContent = input.value || '••••••••';
-        input.style.display = 'none';
-    };
-}
+    <!-- Telegram -->
+    <section>
+      <h2>Telegram</h2>
+      <table>
+        <tbody>
+          <tr><td>Enabled</td><td><code>{{ .Cfg.Telegram.Enabled }}</code></td></tr>
+          <tr>
+            <td>Bot Token</td>
+            <td class="secret-field">
+              <span class="password-mask">{{ mask .Cfg.Telegram.BotToken }}</span>
+            </td>
+          </tr>
+          <tr><td>Chat ID</td><td><code>{{ .Cfg.Telegram.ChatID }}</code></td></tr>
+          <tr><td>Authorized</td><td><code>{{ range .Cfg.Telegram.AuthorizedChatIDs }}{{ . }} {{ end }}</code></td></tr>
+        </tbody>
+      </table>
+    </section>
 
-// SSE для live-обновлений
-const eventSource = new EventSource('/api/v1/sse');
-eventSource.addEventListener('config-changed', (e) => {
-    console.log('Config changed:', e.data);
-    htmx.trigger('body', 'config-changed');
-});
-eventSource.addEventListener('config-reloaded', (e) => {
-    location.reload();
-});
-</script>
+    <!-- Web -->
+    <section>
+      <h2>Web</h2>
+      <table>
+        <tbody>
+          <tr><td>Listen</td><td><code>{{ .Cfg.Web.Listen }}</code></td></tr>
+          <tr><td>Auth Enabled</td><td><code>{{ .Cfg.Web.Auth.Enabled }}</code></td></tr>
+          <tr>
+            <td>Password</td>
+            <td class="secret-field">
+              <span class="password-mask">{{ mask .Cfg.Web.Auth.Password }}</span>
+            </td>
+          </tr>
+          <tr><td>Allowed CIDRs</td><td><code>{{ range .Cfg.Web.AllowedCIDRs }}{{ . }} {{ end }}</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Safety -->
+    <section>
+      <h2>Safety</h2>
+      <table>
+        <tbody>
+          <tr><td>Max Delete Ratio</td><td><code>{{ .Cfg.Safety.MaxDeleteRatio }}</code></td></tr>
+          <tr><td>Min Prefix v4</td><td><code>{{ .Cfg.Safety.MinPrefixV4 }}</code></td></tr>
+          <tr><td>Min Prefix v6</td><td><code>{{ .Cfg.Safety.MinPrefixV6 }}</code></td></tr>
+          <tr><td>Allow Host Routes</td><td><code>{{ .Cfg.Safety.AllowHostRoutes }}</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Scheduler -->
+    <section>
+      <h2>Scheduler</h2>
+      <table>
+        <tbody>
+          <tr><td>Parallel</td><td><code>{{ .Cfg.Scheduler.Parallel }}</code></td></tr>
+          <tr><td>Max Concurrent</td><td><code>{{ .Cfg.Scheduler.MaxConcurrent }}</code></td></tr>
+          <tr><td>Cache TTL</td><td><code>{{ .Cfg.Scheduler.CacheTTLText }}</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p class="muted">
+      ⚠️ Секреты маскируются. Для изменения используйте <code>app config set</code> или редактирование файла.
+    </p>
+  </main>
 </body>
 </html>
 {{end}}
