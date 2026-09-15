@@ -30,7 +30,9 @@ type Config struct {
 	Schedules Schedules           `yaml:"schedules"`
 	Services  []string            `yaml:"services"`
 	Overrides map[string]Override `yaml:"overrides"`
+	path      string              // Путь к файлу конфига для сохранения
 }
+
 type Logging struct {
 	Level      string `yaml:"level"`
 	File       string `yaml:"file"`
@@ -40,6 +42,7 @@ type Logging struct {
 	Compress   bool   `yaml:"compress"`
 	AlsoStdout bool   `yaml:"also_stdout"`
 }
+
 type MikroTik struct {
 	Host          string        `yaml:"host"`
 	Port          int           `yaml:"port"`
@@ -55,6 +58,7 @@ type MikroTik struct {
 	CommentPrefix string        `yaml:"comment_prefix"`
 	RateLimit     int           `yaml:"rate_limit"`
 }
+
 type Telegram struct {
 	Enabled           bool     `yaml:"enabled"`
 	BotToken          string   `yaml:"bot_token"`
@@ -62,6 +66,7 @@ type Telegram struct {
 	AuthorizedChatIDs []string `yaml:"authorized_chat_ids"`
 	RateLimit         int      `yaml:"rate_limit"`
 }
+
 type Web struct {
 	Enabled            bool     `yaml:"enabled"`
 	Listen             string   `yaml:"listen"`
@@ -72,11 +77,13 @@ type Web struct {
 	CSRFEnabled        bool     `yaml:"csrf_enabled"`
 	SecurityHeaders    bool     `yaml:"security_headers"`
 }
+
 type WebAuth struct {
 	Enabled  bool   `yaml:"enabled"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 }
+
 type Scheduler struct {
 	Parallel       bool   `yaml:"parallel"`
 	MaxConcurrent  int    `yaml:"max_concurrent"`
@@ -84,6 +91,7 @@ type Scheduler struct {
 	CacheTTL       string `yaml:"cache_ttl"`
 	CachePurge     string `yaml:"cache_purge"`
 }
+
 type Safety struct {
 	MaxDeleteRatio          float64 `yaml:"max_delete_ratio"`
 	RequireConfirmationOver int     `yaml:"require_confirmation_over"`
@@ -92,12 +100,14 @@ type Safety struct {
 	AllowHostRoutes         bool    `yaml:"allow_host_routes"`
 	MaxASNPrefixes          int     `yaml:"max_asn_prefixes"`
 }
+
 type Retry struct {
 	MaxAttempts int    `yaml:"max_attempts"`
 	BaseDelay   string `yaml:"base_delay"`
 	MaxDelay    string `yaml:"max_delay"`
 	Jitter      bool   `yaml:"jitter"`
 }
+
 type External struct {
 	HTTPTimeout   string `yaml:"http_timeout"`
 	MaxResponseMB int    `yaml:"max_response_mb"`
@@ -105,23 +115,28 @@ type External struct {
 	RDAPTimeout   string `yaml:"rdap_timeout"`
 	Resolver      string `yaml:"resolver"`
 }
+
 type Snapshots struct {
 	Enabled  bool   `yaml:"enabled"`
 	TTL      string `yaml:"ttl"`
 	MaxCount int    `yaml:"max_count"`
 }
+
 type Schedules struct {
 	Global   string                     `yaml:"global"`
 	Groups   map[string]GroupSchedule   `yaml:"groups"`
 	Services map[string]ServiceSchedule `yaml:"services"`
 }
+
 type GroupSchedule struct {
 	Schedule string   `yaml:"schedule"`
 	Services []string `yaml:"services"`
 }
+
 type ServiceSchedule struct {
 	Schedule string `yaml:"schedule"`
 }
+
 type Override struct {
 	Method         string   `yaml:"method"`
 	Domains        []string `yaml:"domains"`
@@ -134,7 +149,41 @@ type Override struct {
 }
 
 func defaults() Config {
-	return Config{Timezone: "UTC", Logging: Logging{Level: "info", File: "/var/log/mikrotik-sync/app.log", MaxSizeMB: 10, MaxFiles: 5, MaxTotalMB: 50, Compress: true, AlsoStdout: true}, MikroTik: MikroTik{Port: 443, UseSSL: true, VerifySSL: true, TimeoutText: "30s", RoutingTable: "main", Distance: 2, CommentPrefix: "AUTO", RateLimit: 20}, Web: Web{Listen: "127.0.0.1:8080", SessionTimeoutText: "24h", CSRFEnabled: true, SecurityHeaders: true}, Scheduler: Scheduler{Parallel: true, MaxConcurrent: 3, ReloadInterval: "1m", CacheTTL: "24h", CachePurge: "every 1h"}, Safety: Safety{MaxDeleteRatio: .5, RequireConfirmationOver: 100, MinPrefixV4: 8, MinPrefixV6: 16, MaxASNPrefixes: 100}, Retry: Retry{MaxAttempts: 3, BaseDelay: "1s", MaxDelay: "30s", Jitter: true}, External: External{HTTPTimeout: "15s", MaxResponseMB: 50, RDAPTimeout: "10s", Resolver: "1.1.1.1:53"}, Snapshots: Snapshots{Enabled: true, TTL: "168h", MaxCount: 50}, Overrides: map[string]Override{}, Schedules: Schedules{Global: "every 6h", Groups: map[string]GroupSchedule{}, Services: map[string]ServiceSchedule{}}}
+	return Config{
+		Timezone: "UTC",
+		Logging: Logging{
+			Level: "info", File: "/var/log/mikrotik-sync/app.log",
+			MaxSizeMB: 10, MaxFiles: 5, MaxTotalMB: 50, Compress: true, AlsoStdout: true,
+		},
+		MikroTik: MikroTik{
+			Port: 443, UseSSL: true, VerifySSL: true, TimeoutText: "30s",
+			RoutingTable: "main", Distance: 2, CommentPrefix: "AUTO", RateLimit: 20,
+		},
+		Web: Web{
+			Listen: "127.0.0.1:8080", SessionTimeoutText: "24h",
+			CSRFEnabled: true, SecurityHeaders: true,
+		},
+		Scheduler: Scheduler{
+			Parallel: true, MaxConcurrent: 3, ReloadInterval: "1m",
+			CacheTTL: "24h", CachePurge: "every 1h",
+		},
+		Safety: Safety{
+			MaxDeleteRatio: .5, RequireConfirmationOver: 100,
+			MinPrefixV4: 8, MinPrefixV6: 16, MaxASNPrefixes: 100,
+		},
+		Retry: Retry{MaxAttempts: 3, BaseDelay: "1s", MaxDelay: "30s", Jitter: true},
+		External: External{
+			HTTPTimeout: "15s", MaxResponseMB: 50,
+			RDAPTimeout: "10s", Resolver: "1.1.1.1:53",
+		},
+		Snapshots: Snapshots{Enabled: true, TTL: "168h", MaxCount: 50},
+		Overrides: map[string]Override{},
+		Schedules: Schedules{
+			Global: "every 6h",
+			Groups: map[string]GroupSchedule{},
+			Services: map[string]ServiceSchedule{},
+		},
+	}
 }
 
 func Load(path string) (*Config, error) {
@@ -158,8 +207,10 @@ func Load(path string) (*Config, error) {
 	} else {
 		return nil, fmt.Errorf("mikrotik.timeout: %w", err)
 	}
+	cfg.path = path // Сохраняем путь для последующего Save()
 	return &cfg, nil
 }
+
 func applyEnv(c *Config) {
 	env := func(k string) *string {
 		if f := os.Getenv(k + "_FILE"); f != "" {
@@ -186,6 +237,7 @@ func applyEnv(c *Config) {
 		c.External.BGPViewAPIKey = *v
 	}
 }
+
 func (c *Config) Validate() error {
 	if c.MikroTik.Host == "" {
 		return errors.New("mikrotik.host is required")
@@ -219,9 +271,11 @@ func (c *Config) Validate() error {
 	}
 	return nil
 }
+
 func (c *Config) ServicesInGroup(name string) []string {
 	return append([]string(nil), c.Schedules.Groups[name].Services...)
 }
+
 func (c *Config) EffectiveSchedule(service string) string {
 	if s, ok := c.Schedules.Services[service]; ok && s.Schedule != "" && s.Schedule != "inherit" {
 		return s.Schedule
@@ -235,39 +289,11 @@ func (c *Config) EffectiveSchedule(service string) string {
 	}
 	return c.Schedules.Global
 }
+
 func ValidateServiceName(s string) bool { return serviceRE.MatchString(s) }
-func AtomicWrite(path string, c *Config) error {
-	if err := c.Validate(); err != nil {
-		return err
-	}
-	b, err := yaml.Marshal(c)
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(path)
-	if err = os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".config-*.yaml")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if err = f.Chmod(0600); err != nil {
-		return err
-	}
-	if _, err = f.Write(b); err != nil {
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
+
+// AtomicWrite удалена отсюда, находится в save.go
+
 func CheckSecurePermissions(path string) error {
 	st, err := os.Stat(path)
 	if err != nil {
@@ -282,6 +308,7 @@ func CheckSecurePermissions(path string) error {
 	}
 	return nil
 }
+
 func MaskSecret(s string) string {
 	if s == "" {
 		return ""
@@ -291,6 +318,7 @@ func MaskSecret(s string) string {
 	}
 	return "••••••••" + s[len(s)-4:]
 }
+
 func ParseIntEnv(k string, dst *int) {
 	if v := os.Getenv(k); v != "" {
 		if n, e := strconv.Atoi(v); e == nil {
