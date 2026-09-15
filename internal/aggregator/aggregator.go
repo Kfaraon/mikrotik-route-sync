@@ -5,14 +5,196 @@ import (
 	"math/big"
 	"net/netip"
 	"sort"
-
-	"github.com/Kfaraon/mikrotik-route-sync/pkg/cidrutil"
+	"strings"
 )
+
+// ============================== CIDR Utilities ==============================
+
+// RemoveContained удаляет префиксы, которые полностью содержатся в других префиксах.
+// Например, если есть 192.168.0.0/16 и 192.168.1.0/24, то /24 будет удалён.
+func RemoveContained(prefixes []netip.Prefix) []netip.Prefix {
+	if len(prefixes) <= 1 {
+		return prefixes
+	}
+
+	// Сортируем по размеру маски (широкие префиксы первыми)
+	sorted := make([]netip.Prefix, len(prefixes))
+	copy(sorted, prefixes)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Bits() != sorted[j].Bits() {
+			return sorted[i].Bits() < sorted[j].Bits()
+		}
+		return sorted[i].Addr().Compare(sorted[j].Addr()) < 0
+	})
+
+	// Удаляем дубликаты
+	unique := make([]netip.Prefix, 0, len(sorted))
+	seen := make(map[netip.Prefix]bool)
+	for _, p := range sorted {
+		masked := p.Masked()
+		if !seen[masked] {
+			seen[masked] = true
+			unique = append(unique, masked)
+		}
+	}
+
+	// Фильтруем вложенные префиксы
+	result := make([]netip.Prefix, 0, len(unique))
+	for i, p := range unique {
+		contained := false
+		for j := 0; j < i; j++ {
+			if ContainsPrefix(unique[j], p) {
+				contained = true
+				break
+			}
+		}
+		if !contained {
+			result = append(result, p)
+		}
+	}
+
+	return result
+}
+
+// ContainsPrefix проверяет, содержит ли префикс outer префикс inner.
+func ContainsPrefix(outer, inner netip.Prefix) bool {
+	outer = outer.Masked()
+	inner = inner.Masked()
+
+	if !outer.IsValid() || !inner.IsValid() {
+		return false
+	}
+
+	if outer.Addr().Is4() != inner.Addr().Is4() {
+		return false
+	}
+
+	if outer.Bits() > inner.Bits() {
+		return false
+	}
+
+	if outer.Bits() == inner.Bits() {
+		return outer == inner
+	}
+
+	maskedInner := netip.PrefixFrom(inner.Addr(), outer.Bits()).Masked()
+	return maskedInner == outer
+}
+
+// NormalizeAll парсит список CIDR-строк и возвращает нормализованные префиксы.
+func NormalizeAll(raw []string) ([]netip.Prefix, error) {
+	result := make([]netip.Prefix, 0, len(raw))
+	
+	for _, s := range raw {
+		s = strings.TrimSpace(s)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+
+		prefix, err := netip.ParsePrefix(s)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(s)
+			if addrErr != nil {
+				return nil, err
+			}
+			bits := 32
+			if addr.Is6() {
+				bits = 128
+			}
+			prefix = netip.PrefixFrom(addr, bits)
+		}
+
+		prefix = prefix.Masked()
+		if !prefix.IsValid() {
+			continue
+		}
+
+		result = append(result, prefix)
+	}
+
+	return result, nil
+}
+
+// ============================== Validation ==============================
+
+// Минимальная длина маски: /9 и уже — ок, /8 и шире — отклоняем для IPv4
+const minV4Bits = 9
+const minV6Bits = 32
+
+var reservedV4 = func() []netip.Prefix {
+	raw := []string{
+		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+		"169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24",
+		"192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
+		"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
+	}
+	out := make([]netip.Prefix, 0, len(raw))
+	for _, s := range raw {
+		out = append(out, netip.MustParsePrefix(s))
+	}
+	return out
+}()
+
+var reservedV6 = func() []netip.Prefix {
+	raw := []string{
+		"::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96",
+		"100::/64", "2001:db8::/32", "fc00::/7", "fe80::/10", "ff00::/8",
+	}
+	out := make([]netip.Prefix, 0, len(raw))
+	for _, s := range raw {
+		out = append(out, netip.MustParsePrefix(s))
+	}
+	return out
+}()
+
+// Validate проверяет префикс на валидность и отсутствие пересечений с зарезервированными диапазонами.
+func Validate(p netip.Prefix) error {
+	if !p.IsValid() {
+		return fmt.Errorf("invalid prefix")
+	}
+	p = p.Masked()
+	if p.Addr().Is4() {
+		if p.Bits() < minV4Bits {
+			return fmt.Errorf("prefix %s too wide (min /%d)", p, minV4Bits)
+		}
+		for _, r := range reservedV4 {
+			if r.Overlaps(p) {
+				return fmt.Errorf("prefix %s overlaps reserved %s", p, r)
+			}
+		}
+		return nil
+	}
+	if p.Bits() < minV6Bits {
+		return fmt.Errorf("prefix %s too wide (min /%d)", p, minV6Bits)
+	}
+	for _, r := range reservedV6 {
+		if r.Overlaps(p) {
+			return fmt.Errorf("prefix %s overlaps reserved %s", p, r)
+		}
+	}
+	return nil
+}
+
+// FilterValid фильтрует список префиксов, возвращая только валидные.
+func FilterValid(in []netip.Prefix) ([]netip.Prefix, []error) {
+	out := make([]netip.Prefix, 0, len(in))
+	var errs []error
+	for _, p := range in {
+		if err := Validate(p); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		out = append(out, p.Masked())
+	}
+	return out, errs
+}
+
+// ============================== Aggregation ==============================
 
 // Aggregate выполняет безопасную агрегацию CIDR-префиксов.
 // Алгоритм:
 // 1. Удаляет вложенные префиксы
-// 2. Повторяет объединение sibling-префиксов (префиксы с одинаковой маской, отличающиеся только последним битом)
+// 2. Повторяет объединение sibling-префиксов
 // 3. Проверяет инварианты:
 //    - Сумма адресов до агрегации = сумма адресов после агрегации
 //    - Каждый исходный префикс полностью покрыт результирующим набором
@@ -22,7 +204,7 @@ func Aggregate(in []netip.Prefix) ([]netip.Prefix, error) {
 	}
 
 	// Удаляем вложенные префиксы
-	in = cidrutil.RemoveContained(in)
+	in = RemoveContained(in)
 	if len(in) == 0 {
 		return []netip.Prefix{}, nil
 	}
@@ -44,7 +226,6 @@ func Aggregate(in []netip.Prefix) ([]netip.Prefix, error) {
 		out := make([]netip.Prefix, 0, len(cur))
 
 		for i := 0; i < len(cur); {
-			// Проверяем, являются ли cur[i] и cur[i+1] siblings
 			if i+1 < len(cur) {
 				if p, ok := siblings(cur[i], cur[i+1]); ok {
 					out = append(out, p)
@@ -57,8 +238,7 @@ func Aggregate(in []netip.Prefix) ([]netip.Prefix, error) {
 			i++
 		}
 
-		// Удаляем вложенные префиксы после объединения
-		cur = cidrutil.RemoveContained(out)
+		cur = RemoveContained(out)
 
 		if !changed {
 			break
@@ -79,35 +259,43 @@ func Aggregate(in []netip.Prefix) ([]netip.Prefix, error) {
 	return cur, nil
 }
 
-// siblings проверяет, являются ли два префикса siblings (могут быть объединены в родительский префикс).
-// Два префикса являются siblings, если:
-// - У них одинаковая маска
-// - Маска не равна 0 (нельзя объединить /0)
-// - Они принадлежат одной адресной семье (IPv4 или IPv6)
-// - Они отличаются только последним битом маски
-// - Они не равны друг другу
+// AggregateStrings — обёртка для работы со строками.
+func AggregateStrings(prefixes []string) ([]string, error) {
+	normalized, err := NormalizeAll(prefixes)
+	if err != nil {
+		return nil, err
+	}
+
+	aggregated, err := Aggregate(normalized)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]string, len(aggregated))
+	for i, p := range aggregated {
+		result[i] = p.String()
+	}
+	return result, nil
+}
+
+// siblings проверяет, являются ли два префикса siblings.
 func siblings(a, b netip.Prefix) (netip.Prefix, bool) {
-	// Проверяем, что маски одинаковые и не равны 0
 	if a.Bits() != b.Bits() || a.Bits() == 0 {
 		return netip.Prefix{}, false
 	}
 
-	// Проверяем, что адресные семейства одинаковые (IPv4 и IPv6 имеют разную длину адреса)
 	if a.Addr().BitLen() != b.Addr().BitLen() {
 		return netip.Prefix{}, false
 	}
 
-	// Проверяем, что префиксы не равны
 	if a == b {
 		return netip.Prefix{}, false
 	}
 
-	// Вычисляем родительский префикс (маска на 1 меньше)
 	parentBits := a.Bits() - 1
 	pa := netip.PrefixFrom(a.Addr(), parentBits).Masked()
 	pb := netip.PrefixFrom(b.Addr(), parentBits).Masked()
 
-	// Если родительские префиксы совпадают, то a и b являются siblings
 	if pa != pb {
 		return netip.Prefix{}, false
 	}
@@ -115,12 +303,12 @@ func siblings(a, b netip.Prefix) (netip.Prefix, bool) {
 	return pa, true
 }
 
-// coverageInvariant проверяет, что каждый исходный префикс полностью покрыт результирующим набором.
+// coverageInvariant проверяет, что каждый исходный префикс покрыт результирующим набором.
 func coverageInvariant(src, dst []netip.Prefix) bool {
 	for _, s := range src {
 		covered := false
 		for _, d := range dst {
-			if cidrutil.ContainsPrefix(d, s) {
+			if ContainsPrefix(d, s) {
 				covered = true
 				break
 			}
@@ -133,22 +321,17 @@ func coverageInvariant(src, dst []netip.Prefix) bool {
 }
 
 // countAddresses вычисляет общее количество IP-адресов в наборе префиксов.
-// Использует big.Int для поддержки больших наборов адресов.
 func countAddresses(prefixes []netip.Prefix) *big.Int {
 	total := big.NewInt(0)
 
 	for _, p := range prefixes {
-		// Количество адресов в префиксе = 2^(address_bits - mask_bits)
-		// Для IPv4: address_bits = 32, для IPv6: address_bits = 128
 		addrBits := p.Addr().BitLen()
 		hostBits := addrBits - p.Bits()
 
 		if hostBits < 0 {
-			// Некорректный префикс (маска больше длины адреса)
 			continue
 		}
 
-		// Вычисляем 2^hostBits
 		count := new(big.Int).Lsh(big.NewInt(1), uint(hostBits))
 		total.Add(total, count)
 	}
