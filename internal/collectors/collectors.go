@@ -1,119 +1,111 @@
 package collectors
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
-	"time"
 )
 
+// HTTP обёртка над http.Client с лимитами.
 type HTTP struct {
-	Client   *http.Client
-	MaxBytes int64
+	Client    *http.Client
+	MaxBytes  int64
 }
 
-func NewHTTP(timeout time.Duration, maxMB int) *HTTP {
-	tr := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: timeout}).DialContext, TLSHandshakeTimeout: timeout}
-	c := &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 3 {
-			return http.ErrUseLastResponse
-		}
-		return nil
-	}}
-	return &HTTP{Client: c, MaxBytes: int64(maxMB) << 20}
-}
-func (h *HTTP) FetchLines(ctx context.Context, rawURL string) ([]string, error) {
-	u, e := url.Parse(rawURL)
-	if e != nil || !(u.Scheme == "https" || u.Scheme == "http") {
-		return nil, fmt.Errorf("unsafe url")
+// NewHTTP создаёт HTTP-клиент с указанными таймаутами.
+func NewHTTP(client *http.Client, maxMB int) *HTTP {
+	if client == nil {
+		client = http.DefaultClient
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	resp, e := h.Client.Do(req)
-	if e != nil {
-		return nil, e
+	if maxMB <= 0 {
+		maxMB = 50
+	}
+	return &HTTP{
+		Client:   client,
+		MaxBytes: int64(maxMB) << 20,
+	}
+}
+
+// limitedReader ограничивает размер читаемого тела ответа.
+func limitedReader(r io.Reader, limit int64) io.Reader {
+	return io.LimitReader(r, limit)
+}
+
+// FetchLines загружает текстовый ресурс и разбивает на строки.
+//
+// Используется для статических списков (antifilter, static_url).
+// Возвращает непустые строки без комментариев.
+func (h *HTTP) FetchLines(ctx context.Context, u string) ([]string, error) {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return nil, fmt.Errorf("parse url: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := h.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", u, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("source status %s", resp.Status)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch %s: %d", u, resp.StatusCode)
 	}
-	r := io.LimitReader(resp.Body, h.MaxBytes)
-	var out []string
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		s := strings.TrimSpace(sc.Text())
-		if s == "" || strings.HasPrefix(s, "#") {
-			continue
-		}
-		if _, e := netip.ParsePrefix(s); e == nil {
-			out = append(out, s)
+
+	body, err := io.ReadAll(limitedReader(resp.Body, h.MaxBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	lines := make([]string, 0)
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
 		}
 	}
-	return out, sc.Err()
+
+	return lines, nil
 }
-func (h *HTTP) FetchFastly(ctx context.Context) ([]string, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.fastly.com/public-ip-list", nil)
-	resp, e := h.Client.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer resp.Body.Close()
-	var v struct {
-		Addresses     []string `json:"addresses"`
-		IPv6Addresses []string `json:"ipv6_addresses"`
-	}
-	if e = json.NewDecoder(io.LimitReader(resp.Body, h.MaxBytes)).Decode(&v); e != nil {
-		return nil, e
-	}
-	return append(v.Addresses, v.IPv6Addresses...), nil
-}
-func DNS(ctx context.Context, domains []string, resolverAddr string) ([]string, error) {
-	d := net.Dialer{Timeout: 5 * time.Second}
-	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-		return d.DialContext(ctx, "udp", resolverAddr)
-	}}
-	seen := map[string]bool{}
-	var out []string
-	for _, domain := range domains {
-		ips, e := r.LookupNetIP(ctx, "ip", domain)
-		if e != nil {
-			continue
-		}
-		for _, ip := range ips {
-			bits := 32
-			if ip.Is6() {
-				bits = 128
-			}
-			p := netip.PrefixFrom(ip, bits).String()
-			if !seen[p] {
-				seen[p] = true
-				out = append(out, p)
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("dns returned no addresses")
-	}
-	return out, nil
-}
+
+// BGPViewASN возвращает префиксы для ASN через BGPView API.
+//
+// API: https://api.bgpview.io/asn/{asn}/prefixes
+// Ответ: {"data":{"ipv4_prefixes":[{"prefix":"1.2.3.0/24"}], ...}}
 func BGPViewASN(ctx context.Context, h *HTTP, asn string) ([]string, error) {
 	id := strings.TrimPrefix(strings.ToUpper(asn), "AS")
+	if id == "" {
+		return nil, fmt.Errorf("invalid ASN %q", asn)
+	}
+
 	u := "https://api.bgpview.io/asn/" + id + "/prefixes"
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	resp, e := h.Client.Do(req)
-	if e != nil {
-		return nil, e
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("bgpview: create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := h.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("bgpview: request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("bgpview status %s", resp.Status)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("bgpview: returned %d", resp.StatusCode)
 	}
+
 	var v struct {
 		Data struct {
 			IPv4Prefixes []struct {
@@ -124,9 +116,12 @@ func BGPViewASN(ctx context.Context, h *HTTP, asn string) ([]string, error) {
 			} `json:"ipv6_prefixes"`
 		} `json:"data"`
 	}
-	if e = json.NewDecoder(io.LimitReader(resp.Body, h.MaxBytes)).Decode(&v); e != nil {
-		return nil, e
+
+	decoder := json.NewDecoder(limitedReader(resp.Body, h.MaxBytes))
+	if err := decoder.Decode(&v); err != nil {
+		return nil, fmt.Errorf("bgpview: decode: %w", err)
 	}
+
 	out := make([]string, 0, len(v.Data.IPv4Prefixes)+len(v.Data.IPv6Prefixes))
 	for _, p := range v.Data.IPv4Prefixes {
 		out = append(out, p.Prefix)
@@ -134,8 +129,10 @@ func BGPViewASN(ctx context.Context, h *HTTP, asn string) ([]string, error) {
 	for _, p := range v.Data.IPv6Prefixes {
 		out = append(out, p.Prefix)
 	}
+
 	if len(out) == 0 {
-		return nil, fmt.Errorf("bgpview returned no prefixes")
+		return nil, fmt.Errorf("bgpview: no prefixes for %s", asn)
 	}
+
 	return out, nil
 }
