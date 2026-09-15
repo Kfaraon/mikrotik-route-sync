@@ -1,78 +1,98 @@
 {{define "schedules.html"}}
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <title>Расписания — MikroTik Route Sync</title>
-    <link rel="stylesheet" href="/static/pico.min.css">
-    <script src="/static/htmx.min.js"></script>
+  <meta charset="utf-8">
+  <title>MikroTik Route Sync — Расписания</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
 </head>
 <body>
-<main class="container">
+  <nav class="container-fluid">
+    <ul>
+      <li><a href="/">🏠 Дашборд</a></li>
+      <li><a href="/services">📦 Сервисы</a></li>
+      <li><a href="/schedules" aria-current="page">📅 Расписания</a></li>
+      <li><a href="/settings">⚙️ Настройки</a></li>
+      <li><a href="/logs">📜 Логи</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
     <h1>📅 Расписания</h1>
-    <nav><a href="/">← Дашборд</a></nav>
+    <p class="muted">Приоритет: сервис → группа → глобальное</p>
 
     <table>
-        <thead>
-            <tr><th>Сервис</th><th>Расписание</th><th>Действия</th></tr>
-        </thead>
-        <tbody>
-            {{range .Schedules}}
-            <tr>
-                <td>{{.Service}}</td>
-                <td>
-                    <span class="schedule-display">{{.Schedule}}</span>
-                    <input type="text" class="schedule-input" style="display:none" value="{{.Schedule}}">
-                </td>
-                <td>
-                    <button class="btn-edit-schedule" onclick="editSchedule(this)">✏️</button>
-                    <button class="btn-save-schedule" style="display:none" hx-post="/actions/schedule/update" hx-swap="outerHTML">💾</button>
-                    <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-                    <input type="hidden" name="service" value="{{.Service}}">
-                    <input type="hidden" name="schedule" class="schedule-value" value="{{.Schedule}}">
-                </td>
-            </tr>
-            {{end}}
-        </tbody>
+      <thead>
+        <tr>
+          <th>Сервис</th>
+          <th>Эффективное расписание</th>
+          <th>Изменить</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Services }}
+        <tr>
+          <td>{{ . }}</td>
+          <td><code>{{ effectiveSchedule . }}</code></td>
+          <td>
+            <button class="outline" onclick="editSchedule('{{ . }}')">✏️</button>
+          </td>
+        </tr>
+        {{ else }}
+        <tr><td colspan="3" class="muted">Нет сервисов</td></tr>
+        {{ end }}
+      </tbody>
     </table>
+  </main>
 
-    <button hx-post="/actions/reload-config" hx-swap="outerHTML">🔄 Перечитать конфиг</button>
-</main>
-<script>
-function editSchedule(btn) {
-    const row = btn.closest('tr');
-    const display = row.querySelector('.schedule-display');
-    const input = row.querySelector('.schedule-input');
-    const editBtn = row.querySelector('.btn-edit-schedule');
-    const saveBtn = row.querySelector('.btn-save-schedule');
-    const valueInput = row.querySelector('.schedule-value');
+  <!-- Модальное окно редактирования -->
+  <dialog id="schedule-modal">
+    <article>
+      <h3>Изменить расписание</h3>
+      <form id="schedule-form">
+        <input type="hidden" name="csrf_token" value="{{ .CSRF }}">
+        <label for="svc-name">Сервис</label>
+        <input type="text" id="svc-name" name="service" readonly>
+        <label for="svc-schedule">Расписание (cron / every Xh / manual)</label>
+        <input type="text" id="svc-schedule" name="schedule" required
+               placeholder="every 6h | 0 */6 * * * | manual">
+        <div role="group">
+          <button type="submit">💾 Сохранить</button>
+          <button type="button" class="secondary" onclick="closeModal()">Отмена</button>
+        </div>
+      </form>
+    </article>
+  </dialog>
 
-    display.style.display = 'none';
-    input.style.display = 'inline';
-    editBtn.style.display = 'none';
-    saveBtn.style.display = 'inline';
-
-    saveBtn.onclick = function() {
-        valueInput.value = input.value;
-        display.textContent = input.value;
-        display.style.display = 'inline';
-        input.style.display = 'none';
-        editBtn.style.display = 'inline';
-        saveBtn.style.display = 'none';
-
-        // Отправить через HTMX
-        htmx.ajax('POST', '/actions/schedule/update', {
-            target: row,
-            swap: 'outerHTML',
-            values: {
-                csrf_token: '{{.CSRF}}',
-                service: '{{.Service}}',
-                schedule: input.value
-            }
-        });
-    };
-}
-</script>
+  <script>
+    function editSchedule(svc) {
+      document.getElementById('svc-name').value = svc;
+      document.getElementById('svc-schedule').value = '';
+      document.getElementById('schedule-modal').showModal();
+    }
+    function closeModal() {
+      document.getElementById('schedule-modal').close();
+    }
+    document.getElementById('schedule-form').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const svc = document.getElementById('svc-name').value;
+      const schedule = document.getElementById('svc-schedule').value;
+      fetch('/api/v1/schedules/' + encodeURIComponent(svc), {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': this.csrf_token.value
+        },
+        body: JSON.stringify({schedule: schedule})
+      }).then(r => r.json()).then(data => {
+        if (data.status === 'updated') location.reload();
+        else alert('Ошибка: ' + (data.error || 'неизвестная'));
+      });
+    });
+  </script>
 </body>
 </html>
 {{end}}
