@@ -129,6 +129,7 @@ type ExternalConfig struct {
 	HTTPTimeout   time.Duration `yaml:"http_timeout" mapstructure:"http_timeout"`
 	MaxResponseMB int           `yaml:"max_response_mb" mapstructure:"max_response_mb"`
 	BGPViewAPIKey string        `yaml:"bgpview_api_key" mapstructure:"bgpview_api_key"`
+	AkamaiAPIKey   string        `yaml:"akamai_api_key"`
 	RDAPTimeout   time.Duration `yaml:"rdap_timeout" mapstructure:"rdap_timeout"`
 	Resolver      string        `yaml:"resolver" mapstructure:"resolver"`
 }
