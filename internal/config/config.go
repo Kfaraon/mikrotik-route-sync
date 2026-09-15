@@ -1,336 +1,300 @@
 package config
 
 import (
+	"errors"
 	"fmt"
-	"net/url"
+	"net"
 	"os"
 	"path/filepath"
-	"sort"
+	"regexp"
+	"strconv"
 	"strings"
-	"sync"
+	"time"
 
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
+var serviceRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
 type Config struct {
-	Timezone  string                     `mapstructure:"timezone" yaml:"timezone"`
-	Logging   LoggingConfig              `mapstructure:"logging" yaml:"logging"`
-	MikroTik  MikroTikConfig             `mapstructure:"mikrotik" yaml:"mikrotik"`
-	Telegram  TelegramConfig             `mapstructure:"telegram" yaml:"telegram"`
-	Web       WebConfig                  `mapstructure:"web" yaml:"web"`
-	Scheduler SchedulerConfig            `mapstructure:"scheduler" yaml:"scheduler"`
-	External  ExternalConfig             `mapstructure:"external" yaml:"external"`
-	Schedules SchedulesConfig            `mapstructure:"schedules" yaml:"schedules"`
-	Services  []string                   `mapstructure:"services" yaml:"services"`
-	Overrides map[string]ServiceOverride `mapstructure:"overrides" yaml:"overrides"`
-	path      string
-	mu        sync.RWMutex
+	Timezone  string              `yaml:"timezone"`
+	Logging   Logging             `yaml:"logging"`
+	MikroTik  MikroTik            `yaml:"mikrotik"`
+	Telegram  Telegram            `yaml:"telegram"`
+	Web       Web                 `yaml:"web"`
+	Scheduler Scheduler           `yaml:"scheduler"`
+	Safety    Safety              `yaml:"safety"`
+	Retry     Retry               `yaml:"retry"`
+	External  External            `yaml:"external"`
+	Snapshots Snapshots           `yaml:"snapshots"`
+	Schedules Schedules           `yaml:"schedules"`
+	Services  []string            `yaml:"services"`
+	Overrides map[string]Override `yaml:"overrides"`
 }
-
-type LoggingConfig struct {
-	Level      string `mapstructure:"level" yaml:"level"`
-	File       string `mapstructure:"file" yaml:"file"`
-	MaxSizeMB  int    `mapstructure:"max_size_mb" yaml:"max_size_mb"`
-	MaxFiles   int    `mapstructure:"max_files" yaml:"max_files"`
-	MaxTotalMB int    `mapstructure:"max_total_mb" yaml:"max_total_mb"`
-	Compress   bool   `mapstructure:"compress" yaml:"compress"`
-	Stdout     bool   `mapstructure:"also_stdout" yaml:"also_stdout"`
+type Logging struct {
+	Level      string `yaml:"level"`
+	File       string `yaml:"file"`
+	MaxSizeMB  int    `yaml:"max_size_mb"`
+	MaxFiles   int    `yaml:"max_files"`
+	MaxTotalMB int    `yaml:"max_total_mb"`
+	Compress   bool   `yaml:"compress"`
+	AlsoStdout bool   `yaml:"also_stdout"`
 }
-
-type MikroTikConfig struct {
-	Host          string `mapstructure:"host" yaml:"host"`
-	Port          int    `mapstructure:"port" yaml:"port"`
-	Username      string `mapstructure:"username" yaml:"username"`
-	Password      string `mapstructure:"password" yaml:"password"`
-	UseSSL        bool   `mapstructure:"use_ssl" yaml:"use_ssl"`
-	VerifySSL     bool   `mapstructure:"verify_ssl" yaml:"verify_ssl"`
-	Gateway       string `mapstructure:"gateway" yaml:"gateway"`
-	RoutingTable  string `mapstructure:"routing_table" yaml:"routing_table"`
-	Distance      int    `mapstructure:"distance" yaml:"distance"`
-	CommentPrefix string `mapstructure:"comment_prefix" yaml:"comment_prefix"`
-	Timeout       string `mapstructure:"timeout" yaml:"timeout"`
+type MikroTik struct {
+	Host          string        `yaml:"host"`
+	Port          int           `yaml:"port"`
+	Username      string        `yaml:"username"`
+	Password      string        `yaml:"password"`
+	UseSSL        bool          `yaml:"use_ssl"`
+	VerifySSL     bool          `yaml:"verify_ssl"`
+	Timeout       time.Duration `yaml:"-"`
+	TimeoutText   string        `yaml:"timeout"`
+	Gateway       string        `yaml:"gateway"`
+	RoutingTable  string        `yaml:"routing_table"`
+	Distance      int           `yaml:"distance"`
+	CommentPrefix string        `yaml:"comment_prefix"`
+	RateLimit     int           `yaml:"rate_limit"`
 }
-
-type TelegramConfig struct {
-	Enabled           bool     `mapstructure:"enabled" yaml:"enabled"`
-	BotToken          string   `mapstructure:"bot_token" yaml:"bot_token"`
-	ChatID            string   `mapstructure:"chat_id" yaml:"chat_id"`
-	AuthorizedChatIDs []string `mapstructure:"authorized_chat_ids" yaml:"authorized_chat_ids"`
-	WeeklyReport      string   `mapstructure:"weekly_report" yaml:"weekly_report"`
-	Buttons           struct {
-		Enabled             bool `mapstructure:"enabled" yaml:"enabled"`
-		MaxSelectedServices int  `mapstructure:"max_selected_services" yaml:"max_selected_services"`
-	} `mapstructure:"buttons" yaml:"buttons"`
+type Telegram struct {
+	Enabled           bool     `yaml:"enabled"`
+	BotToken          string   `yaml:"bot_token"`
+	ChatID            string   `yaml:"chat_id"`
+	AuthorizedChatIDs []string `yaml:"authorized_chat_ids"`
+	RateLimit         int      `yaml:"rate_limit"`
 }
-
-type WebConfig struct {
-	Enabled        bool     `mapstructure:"enabled" yaml:"enabled"`
-	Listen         string   `mapstructure:"listen" yaml:"listen"`
-	SessionTimeout string   `mapstructure:"session_timeout" yaml:"session_timeout"`
-	AllowedCIDRs   []string `mapstructure:"allowed_cidrs" yaml:"allowed_cidrs"`
-	Auth           struct {
-		Enabled  bool   `mapstructure:"enabled" yaml:"enabled"`
-		Username string `mapstructure:"username" yaml:"username"`
-		Password string `mapstructure:"password" yaml:"password"`
-	} `mapstructure:"auth" yaml:"auth"`
+type Web struct {
+	Enabled            bool     `yaml:"enabled"`
+	Listen             string   `yaml:"listen"`
+	AllowedCIDRs       []string `yaml:"allowed_cidrs"`
+	TrustedProxies     []string `yaml:"trusted_proxies"`
+	Auth               WebAuth  `yaml:"auth"`
+	SessionTimeoutText string   `yaml:"session_timeout"`
+	CSRFEnabled        bool     `yaml:"csrf_enabled"`
+	SecurityHeaders    bool     `yaml:"security_headers"`
 }
-
-type SchedulerConfig struct {
-	Parallel       bool   `mapstructure:"parallel" yaml:"parallel"`
-	MaxConcurrent  int    `mapstructure:"max_concurrent" yaml:"max_concurrent"`
-	ReloadInterval string `mapstructure:"reload_interval" yaml:"reload_interval"`
-	CacheTTL       string `mapstructure:"cache_ttl" yaml:"cache_ttl"`
-	CachePurge     string `mapstructure:"cache_purge" yaml:"cache_purge"`
+type WebAuth struct {
+	Enabled  bool   `yaml:"enabled"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
-
-type ExternalConfig struct {
-	BGPViewBase  string `mapstructure:"bgpview_base" yaml:"bgpview_base"`
-	RIPEStatBase string `mapstructure:"ripestat_base" yaml:"ripestat_base"`
-	UserAgent    string `mapstructure:"user_agent" yaml:"user_agent"`
+type Scheduler struct {
+	Parallel       bool   `yaml:"parallel"`
+	MaxConcurrent  int    `yaml:"max_concurrent"`
+	ReloadInterval string `yaml:"reload_interval"`
+	CacheTTL       string `yaml:"cache_ttl"`
+	CachePurge     string `yaml:"cache_purge"`
 }
-
-type SchedulesConfig struct {
-	Global   string                     `mapstructure:"global" yaml:"global"`
-	Groups   map[string]GroupSchedule   `mapstructure:"groups" yaml:"groups"`
-	Services map[string]ServiceSchedule `mapstructure:"services" yaml:"services"`
+type Safety struct {
+	MaxDeleteRatio          float64 `yaml:"max_delete_ratio"`
+	RequireConfirmationOver int     `yaml:"require_confirmation_over"`
+	MinPrefixV4             int     `yaml:"min_prefix_v4"`
+	MinPrefixV6             int     `yaml:"min_prefix_v6"`
+	AllowHostRoutes         bool    `yaml:"allow_host_routes"`
+	MaxASNPrefixes          int     `yaml:"max_asn_prefixes"`
 }
-
+type Retry struct {
+	MaxAttempts int    `yaml:"max_attempts"`
+	BaseDelay   string `yaml:"base_delay"`
+	MaxDelay    string `yaml:"max_delay"`
+	Jitter      bool   `yaml:"jitter"`
+}
+type External struct {
+	HTTPTimeout   string `yaml:"http_timeout"`
+	MaxResponseMB int    `yaml:"max_response_mb"`
+	BGPViewAPIKey string `yaml:"bgpview_api_key"`
+	RDAPTimeout   string `yaml:"rdap_timeout"`
+	Resolver      string `yaml:"resolver"`
+}
+type Snapshots struct {
+	Enabled  bool   `yaml:"enabled"`
+	TTL      string `yaml:"ttl"`
+	MaxCount int    `yaml:"max_count"`
+}
+type Schedules struct {
+	Global   string                     `yaml:"global"`
+	Groups   map[string]GroupSchedule   `yaml:"groups"`
+	Services map[string]ServiceSchedule `yaml:"services"`
+}
 type GroupSchedule struct {
-	Schedule string   `mapstructure:"schedule" yaml:"schedule"`
-	Services []string `mapstructure:"services" yaml:"services"`
+	Schedule string   `yaml:"schedule"`
+	Services []string `yaml:"services"`
 }
-
 type ServiceSchedule struct {
-	Schedule string `mapstructure:"schedule" yaml:"schedule"`
+	Schedule string `yaml:"schedule"`
+}
+type Override struct {
+	Method         string   `yaml:"method"`
+	Domains        []string `yaml:"domains"`
+	StaticURL      string   `yaml:"static_url"`
+	MaxASNPrefixes int      `yaml:"max_asn_prefixes"`
+	MaxPrefixes    int      `yaml:"max_prefixes"`
+	Exclude        []string `yaml:"exclude"`
+	IncludeOnly    []string `yaml:"include_only"`
+	AlsoCDN        []string `yaml:"also_cdn"`
 }
 
-type ServiceOverride struct {
-	Domains        []string `mapstructure:"domains" yaml:"domains"`
-	ASN            int      `mapstructure:"asn" yaml:"asn"`
-	Method         string   `mapstructure:"method" yaml:"method"`
-	StaticURL      string   `mapstructure:"static_url" yaml:"static_url"`
-	MaxASNPrefixes int      `mapstructure:"max_asn_prefixes" yaml:"max_asn_prefixes"`
-	Exclude        []string `mapstructure:"exclude" yaml:"exclude"`
-	Include        []string `mapstructure:"include" yaml:"include"`
+func defaults() Config {
+	return Config{Timezone: "UTC", Logging: Logging{Level: "info", File: "/var/log/mikrotik-sync/app.log", MaxSizeMB: 10, MaxFiles: 5, MaxTotalMB: 50, Compress: true, AlsoStdout: true}, MikroTik: MikroTik{Port: 443, UseSSL: true, VerifySSL: true, TimeoutText: "30s", RoutingTable: "main", Distance: 2, CommentPrefix: "AUTO", RateLimit: 20}, Web: Web{Listen: "127.0.0.1:8080", SessionTimeoutText: "24h", CSRFEnabled: true, SecurityHeaders: true}, Scheduler: Scheduler{Parallel: true, MaxConcurrent: 3, ReloadInterval: "1m", CacheTTL: "24h", CachePurge: "every 1h"}, Safety: Safety{MaxDeleteRatio: .5, RequireConfirmationOver: 100, MinPrefixV4: 8, MinPrefixV6: 16, MaxASNPrefixes: 100}, Retry: Retry{MaxAttempts: 3, BaseDelay: "1s", MaxDelay: "30s", Jitter: true}, External: External{HTTPTimeout: "15s", MaxResponseMB: 50, RDAPTimeout: "10s", Resolver: "1.1.1.1:53"}, Snapshots: Snapshots{Enabled: true, TTL: "168h", MaxCount: 50}, Overrides: map[string]Override{}, Schedules: Schedules{Global: "every 6h", Groups: map[string]GroupSchedule{}, Services: map[string]ServiceSchedule{}}}
 }
 
 func Load(path string) (*Config, error) {
-	v := viper.New()
-	v.SetConfigFile(path)
-	v.SetConfigType("yaml")
-	v.SetEnvPrefix("MRS")
-	v.AutomaticEnv()
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
-	_ = v.BindEnv("mikrotik.password", "MRS_MIKROTIK_PASSWORD")
-	_ = v.BindEnv("telegram.bot_token", "MRS_TELEGRAM_BOT_TOKEN")
-	_ = v.BindEnv("web.auth.password", "MRS_WEB_PASSWORD")
-	setDefaults(v)
-	if err := v.ReadInConfig(); err != nil {
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("read config: %w", err)
-		}
-	} else {
-		// The config contains credentials by design. Keep permissions restrictive
-		// even when the file was created manually with a permissive umask.
-		if err := os.Chmod(path, 0o600); err != nil {
-			return nil, fmt.Errorf("chmod config: %w", err)
-		}
-	}
-	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal config: %w", err)
-	}
-	cfg.path = path
-	if err := cfg.Validate(); err != nil {
+	if err := CheckSecurePermissions(path); err != nil {
 		return nil, err
+	}
+	cfg := defaults()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err = yaml.Unmarshal(b, &cfg); err != nil {
+		return nil, fmt.Errorf("parse yaml: %w", err)
+	}
+	applyEnv(&cfg)
+	if err = cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if d, err := time.ParseDuration(cfg.MikroTik.TimeoutText); err == nil {
+		cfg.MikroTik.Timeout = d
+	} else {
+		return nil, fmt.Errorf("mikrotik.timeout: %w", err)
 	}
 	return &cfg, nil
 }
-
-func setDefaults(v *viper.Viper) {
-	v.SetDefault("timezone", "UTC")
-	v.SetDefault("mikrotik.port", 443)
-	v.SetDefault("mikrotik.routing_table", "main")
-	v.SetDefault("mikrotik.distance", 2)
-	v.SetDefault("mikrotik.comment_prefix", "AUTO")
-	v.SetDefault("mikrotik.timeout", "30s")
-	v.SetDefault("scheduler.max_concurrent", 3)
-	v.SetDefault("scheduler.reload_interval", "1m")
-	v.SetDefault("scheduler.cache_ttl", "24h")
-	v.SetDefault("external.bgpview_base", "https://api.bgpview.io")
-	v.SetDefault("external.ripestat_base", "https://stat.ripe.net/data")
-	v.SetDefault("external.user_agent", "mikrotik-route-sync/1.0")
-	v.SetDefault("web.listen", ":8080")
+func applyEnv(c *Config) {
+	env := func(k string) *string {
+		if f := os.Getenv(k + "_FILE"); f != "" {
+			if b, e := os.ReadFile(f); e == nil {
+				s := strings.TrimSpace(string(b))
+				return &s
+			}
+		}
+		if v, ok := os.LookupEnv(k); ok {
+			return &v
+		}
+		return nil
+	}
+	if v := env("MRS_MIKROTIK_PASSWORD"); v != nil {
+		c.MikroTik.Password = *v
+	}
+	if v := env("MRS_TELEGRAM_BOT_TOKEN"); v != nil {
+		c.Telegram.BotToken = *v
+	}
+	if v := env("MRS_WEB_PASSWORD"); v != nil {
+		c.Web.Auth.Password = *v
+	}
+	if v := env("MRS_BGPVIEW_API_KEY"); v != nil {
+		c.External.BGPViewAPIKey = *v
+	}
 }
-
 func (c *Config) Validate() error {
 	if c.MikroTik.Host == "" {
-		return fmt.Errorf("mikrotik.host is required")
+		return errors.New("mikrotik.host is required")
 	}
-	if c.MikroTik.Username == "" {
-		return fmt.Errorf("mikrotik.username is required")
+	if c.MikroTik.Password == "CHANGE_ME" || c.Web.Auth.Password == "CHANGE_ME" || c.Telegram.BotToken == "CHANGE_ME" {
+		return errors.New("default CHANGE_ME secrets are forbidden")
 	}
-	if c.MikroTik.Gateway == "" {
-		return fmt.Errorf("mikrotik.gateway is required")
+	if c.Safety.MaxDeleteRatio < 0 || c.Safety.MaxDeleteRatio > 1 {
+		return errors.New("safety.max_delete_ratio must be 0..1")
 	}
-	if c.MikroTik.CommentPrefix == "" {
-		c.MikroTik.CommentPrefix = "AUTO"
+	if c.Scheduler.MaxConcurrent < 1 {
+		return errors.New("scheduler.max_concurrent must be >=1")
 	}
-	if c.Schedules.Groups == nil {
-		c.Schedules.Groups = map[string]GroupSchedule{}
-	}
-	if c.Schedules.Services == nil {
-		c.Schedules.Services = map[string]ServiceSchedule{}
-	}
-	if c.Overrides == nil {
-		c.Overrides = map[string]ServiceOverride{}
-	}
-	seen := map[string]struct{}{}
-	for i, s := range c.Services {
-		s = NormalizeService(s)
-		if s == "" {
-			return fmt.Errorf("services[%d] is empty", i)
+	seen := map[string]bool{}
+	for _, s := range c.Services {
+		if !serviceRE.MatchString(s) {
+			return fmt.Errorf("invalid service name %q", s)
 		}
-		if _, ok := seen[s]; ok {
+		if seen[s] {
 			return fmt.Errorf("duplicate service %q", s)
 		}
-		seen[s] = struct{}{}
-		c.Services[i] = s
+		seen[s] = true
+	}
+	if _, e := time.LoadLocation(c.Timezone); e != nil {
+		return fmt.Errorf("timezone: %w", e)
+	}
+	for _, x := range append(append([]string{}, c.Web.AllowedCIDRs...), c.Web.TrustedProxies...) {
+		if _, _, e := net.ParseCIDR(x); e != nil {
+			return fmt.Errorf("invalid CIDR %q", x)
+		}
 	}
 	return nil
 }
-
-func NormalizeService(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	// A user may paste a URL even though the service identity is its host.
-	if strings.Contains(s, "://") {
-		if u, err := url.Parse(s); err == nil && u.Hostname() != "" {
-			s = u.Hostname()
-		}
-	}
-	s = strings.TrimSpace(strings.TrimSuffix(s, "."))
-	s = strings.TrimSuffix(s, "/")
-	return strings.ToLower(s)
+func (c *Config) ServicesInGroup(name string) []string {
+	return append([]string(nil), c.Schedules.Groups[name].Services...)
 }
-
-func (c *Config) Comment(service string) string {
-	return c.MikroTik.CommentPrefix + ":" + NormalizeService(service)
-}
-
-func (c *Config) ScheduleFor(service string) string {
-	service = NormalizeService(service)
-	if v, ok := c.Schedules.Services[service]; ok {
-		s := strings.TrimSpace(strings.ToLower(v.Schedule))
-		if s != "" && s != "inherit" {
-			return v.Schedule
-		}
+func (c *Config) EffectiveSchedule(service string) string {
+	if s, ok := c.Schedules.Services[service]; ok && s.Schedule != "" && s.Schedule != "inherit" {
+		return s.Schedule
 	}
-	groups := make([]string, 0, len(c.Schedules.Groups))
-	for name := range c.Schedules.Groups {
-		groups = append(groups, name)
-	}
-	sort.Strings(groups)
-	for _, name := range groups {
-		g := c.Schedules.Groups[name]
-		for _, s := range g.Services {
-			if NormalizeService(s) == service && strings.TrimSpace(g.Schedule) != "" {
+	for _, g := range c.Schedules.Groups {
+		for _, x := range g.Services {
+			if x == service && g.Schedule != "" && g.Schedule != "inherit" {
 				return g.Schedule
 			}
 		}
 	}
-	if strings.TrimSpace(c.Schedules.Global) == "" {
-		return "manual"
-	}
 	return c.Schedules.Global
 }
-
-func (c *Config) ServicesInGroup(group string) []string {
-	if g, ok := c.Schedules.Groups[group]; ok {
-		return append([]string(nil), g.Services...)
-	}
-	return nil
-}
-
-func (c *Config) HasService(service string) bool {
-	service = NormalizeService(service)
-	for _, s := range c.Services {
-		if s == service {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Config) AddService(service string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	service = NormalizeService(service)
-	if service == "" {
-		return fmt.Errorf("empty service")
-	}
-	for _, s := range c.Services {
-		if s == service {
-			return nil
-		}
-	}
-	c.Services = append(c.Services, service)
-	sort.Strings(c.Services)
-	return c.saveLocked()
-}
-
-func (c *Config) RemoveService(service string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	service = NormalizeService(service)
-	out := c.Services[:0]
-	for _, s := range c.Services {
-		if s != service {
-			out = append(out, s)
-		}
-	}
-	c.Services = out
-	delete(c.Schedules.Services, service)
-	delete(c.Overrides, service)
-	for name, g := range c.Schedules.Groups {
-		ss := g.Services[:0]
-		for _, s := range g.Services {
-			if NormalizeService(s) != service {
-				ss = append(ss, s)
-			}
-		}
-		g.Services = ss
-		c.Schedules.Groups[name] = g
-	}
-	return c.saveLocked()
-}
-
-func (c *Config) Save() error { c.mu.Lock(); defer c.mu.Unlock(); return c.saveLocked() }
-func (c *Config) saveLocked() error {
-	if c.path == "" {
-		return fmt.Errorf("config path not set")
-	}
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil && filepath.Dir(c.path) != "." {
+func ValidateServiceName(s string) bool { return serviceRE.MatchString(s) }
+func AtomicWrite(path string, c *Config) error {
+	if err := c.Validate(); err != nil {
 		return err
 	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
 		return err
 	}
-	tmp := c.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	dir := filepath.Dir(path)
+	if err = os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp, 0o600); err != nil {
+	f, err := os.CreateTemp(dir, ".config-*.yaml")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, c.path)
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err = f.Chmod(0600); err != nil {
+		return err
+	}
+	if _, err = f.Write(b); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
-
-func IsSecret(key string) bool {
-	key = strings.ToLower(key)
-	return strings.Contains(key, "password") || strings.Contains(key, "token") || strings.Contains(key, "secret")
+func CheckSecurePermissions(path string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if st.Mode().Perm()&0077 != 0 {
+		return fmt.Errorf("config %s permissions must be 0600 or stricter", path)
+	}
+	dst, err := os.Stat(filepath.Dir(path))
+	if err == nil && dst.Mode().Perm()&0077 != 0 {
+		return fmt.Errorf("config directory permissions must be 0700 or stricter")
+	}
+	return nil
+}
+func MaskSecret(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 4 {
+		return "••••"
+	}
+	return "••••••••" + s[len(s)-4:]
+}
+func ParseIntEnv(k string, dst *int) {
+	if v := os.Getenv(k); v != "" {
+		if n, e := strconv.Atoi(v); e == nil {
+			*dst = n
+		}
+	}
 }

@@ -1,83 +1,78 @@
-timezone: Europe/Brussels
-
+timezone: Europe/Moscow
 logging:
   level: info
-  file: /var/log/mikrotik-route-sync/app.log
+  file: /var/log/mikrotik-sync/app.log
   max_size_mb: 10
   max_files: 5
   max_total_mb: 50
   compress: true
   also_stdout: true
-
 mikrotik:
   host: 192.168.88.1
   port: 443
   username: api
-  password: CHANGE_ME
+  password: "SET_A_SECRET"
   use_ssl: true
-  verify_ssl: false
+  verify_ssl: true
+  timeout: 30s
   gateway: wg-cz-vpn
   routing_table: main
   distance: 2
   comment_prefix: AUTO
-  timeout: 30s
-
+  rate_limit: 20
 telegram:
   enabled: false
-  bot_token: CHANGE_ME
-  chat_id: "123456789"
-  authorized_chat_ids: ["123456789"]
-  weekly_report: "weekly on monday at 09:00"
-  buttons:
-    enabled: true
-    max_selected_services: 10
-
+  bot_token: ""
+  chat_id: ""
+  authorized_chat_ids: []
+  rate_limit: 1
 web:
   enabled: true
-  listen: ":8080"
-  session_timeout: 24h
-  allowed_cidrs: ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
+  listen: 127.0.0.1:8080
+  allowed_cidrs: [127.0.0.0/8, 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12]
+  trusted_proxies: []
   auth:
     enabled: true
     username: admin
-    password: CHANGE_ME
-
+    password: "SET_A_SECRET"
+  session_timeout: 24h
+  csrf_enabled: true
+  security_headers: true
 scheduler:
   parallel: true
   max_concurrent: 3
   reload_interval: 1m
   cache_ttl: 24h
-  cache_purge: "every 1h"
-
+  cache_purge: every 1h
+safety:
+  max_delete_ratio: 0.5
+  require_confirmation_over: 100
+  min_prefix_v4: 8
+  min_prefix_v6: 16
+  allow_host_routes: false
+  max_asn_prefixes: 100
+retry:
+  max_attempts: 3
+  base_delay: 1s
+  max_delay: 30s
+  jitter: true
 external:
-  bgpview_base: https://api.bgpview.io
-  ripestat_base: https://stat.ripe.net/data
-  user_agent: mikrotik-route-sync/1.0
-
+  http_timeout: 15s
+  max_response_mb: 50
+  bgpview_api_key: ""
+  rdap_timeout: 10s
+  resolver: 1.1.1.1:53
+snapshots:
+  enabled: true
+  ttl: 168h
+  max_count: 50
 schedules:
-  global: "every 6h"
+  global: every 6h
   groups:
     social:
-      schedule: "daily at 03:00"
+      schedule: daily at 03:00
       services: [instagram, telegram]
-    video:
-      schedule: "every 12h"
-      services: [youtube]
-    torrents:
-      schedule: "weekly on sunday at 05:00"
-      services: [rutor]
   services:
-    instagram: {schedule: "every 4h"}
-    cloudflare: {schedule: "every 1h"}
-    rutor: {schedule: manual}
-
-services: [instagram, youtube, cloudflare, rutor, telegram]
-
-overrides:
-  rutor:
-    domains: [rutor.info, rutor.org]
-    max_asn_prefixes: 50
-    exclude: [1.2.3.0/24]
-  example-static:
-    method: static_url
-    static_url: https://example.org/prefixes.txt
+    cloudflare: {schedule: every 1h}
+services: [cloudflare]
+overrides: {}

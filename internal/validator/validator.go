@@ -3,62 +3,98 @@ package validator
 import (
 	"fmt"
 	"net/netip"
-	"sort"
+	"strings"
+
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/pkg/cidrutil"
 )
 
-func Prefixes(in []string, exclude []string) ([]netip.Prefix, error) {
-	ex := map[string]bool{}
-	for _, s := range exclude {
-		if p, e := netip.ParsePrefix(s); e == nil {
-			ex[p.Masked().String()] = true
-		}
+type Validator struct{ Safety config.Safety }
+
+var blocked = mustPrefixes([]string{"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32", "::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "100::/64", "2001:db8::/32", "fc00::/7", "fe80::/10", "ff00::/8"})
+
+func mustPrefixes(xs []string) []netip.Prefix {
+	r := make([]netip.Prefix, 0, len(xs))
+	for _, s := range xs {
+		r = append(r, netip.MustParsePrefix(s))
 	}
-	seen := map[netip.Prefix]struct{}{}
-	out := make([]netip.Prefix, 0, len(in))
-	for _, s := range in {
-		p, err := netip.ParsePrefix(s)
-		if err != nil {
-			if a, e := netip.ParseAddr(s); e == nil {
-				if a.Is4() {
-					p = netip.PrefixFrom(a, 32)
-				} else {
-					p = netip.PrefixFrom(a, 128)
-				}
-			} else {
-				return nil, fmt.Errorf("invalid prefix %q", s)
-			}
-		}
-		p = p.Masked()
-		if ex[p.String()] {
-			continue
-		}
-		if reject(p) {
-			continue
-		}
-		if _, ok := seen[p]; ok {
-			continue
-		}
-		seen[p] = struct{}{}
-		out = append(out, p)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if c := out[i].Addr().Compare(out[j].Addr()); c != 0 {
-			return c < 0
-		}
-		return out[i].Bits() < out[j].Bits()
-	})
-	return out, nil
+	return r
 }
-func reject(p netip.Prefix) bool {
-	a := p.Addr()
-	if !a.IsValid() || a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsUnspecified() {
-		return true
-	}
-	if a.Is4() && p.Bits() < 10 {
-		return true
-	}
-	if a.Is6() && p.Bits() < 16 {
-		return true
+func overlapsBlocked(p netip.Prefix) bool {
+	for _, b := range blocked {
+		if b.Addr().BitLen() != p.Addr().BitLen() {
+			continue
+		}
+		if b.Contains(p.Addr()) || p.Contains(b.Addr()) {
+			return true
+		}
 	}
 	return false
+}
+func (v Validator) Validate(raw []string, ov config.Override) ([]netip.Prefix, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("collector returned zero prefixes")
+	}
+	norm, err := cidrutil.NormalizeAll(raw)
+	if err != nil {
+		return nil, err
+	}
+	excludes, _ := cidrutil.NormalizeAll(ov.Exclude)
+	includes, _ := cidrutil.NormalizeAll(ov.IncludeOnly)
+	out := make([]netip.Prefix, 0, len(norm))
+	for _, p := range norm {
+		if overlapsBlocked(p) {
+			continue
+		}
+		if p.Addr().Is4() {
+			if p.Bits() < v.Safety.MinPrefixV4 || (!v.Safety.AllowHostRoutes && p.Bits() == 32) {
+				continue
+			}
+		} else {
+			if p.Bits() < v.Safety.MinPrefixV6 || (!v.Safety.AllowHostRoutes && p.Bits() == 128) {
+				continue
+			}
+		}
+		skip := false
+		for _, x := range excludes {
+			if cidrutil.ContainsPrefix(x, p) || cidrutil.ContainsPrefix(p, x) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		if len(includes) > 0 {
+			ok := false
+			for _, x := range includes {
+				if cidrutil.ContainsPrefix(x, p) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	out = cidrutil.RemoveContained(out)
+	limit := ov.MaxPrefixes
+	if limit == 0 {
+		limit = 10000
+	}
+	if len(out) > limit {
+		return nil, fmt.Errorf("validated prefix count %d exceeds limit %d", len(out), limit)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("all prefixes rejected by validation")
+	}
+	return out, nil
+}
+func SanitizeComment(s string) error {
+	if strings.ContainsAny(s, "\"\\\n\r") {
+		return fmt.Errorf("unsafe service/comment characters")
+	}
+	return nil
 }

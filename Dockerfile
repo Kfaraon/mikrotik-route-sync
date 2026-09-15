@@ -1,17 +1,12 @@
-FROM golang:1.27.1-alpine AS builder
-RUN apk add --no-cache ca-certificates git
+FROM golang:1.27-alpine AS build
 WORKDIR /src
-COPY go.mod ./
-RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/app
-
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/app
 FROM scratch
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /out/app /app
-WORKDIR /data
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=build /out/app /app
 USER 65534:65534
-VOLUME ["/data", "/var/log/mikrotik-route-sync"]
-EXPOSE 8080
-ENTRYPOINT ["/app", "--config", "/data/config.yaml", "--cache", "/data/cache.db"]
-CMD ["web"]
+WORKDIR /data
+ENTRYPOINT ["/app"]
+CMD ["daemon","--config","/data/config.yaml"]

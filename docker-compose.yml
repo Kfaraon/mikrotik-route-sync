@@ -1,15 +1,16 @@
 services:
-  mikrotik-route-sync:
+  mrs:
     build: .
     restart: unless-stopped
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./config.yaml:/data/config.yaml
-      - ./data:/data
-      - ./logs:/var/log/mikrotik-route-sync
     read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 1.0
+    volumes:
+      - ./config.yaml:/data/config.yaml:ro
+      - ./data:/data
+      - ./logs:/var/log/mikrotik-sync
+    ports:
+      - "127.0.0.1:8080:8080"

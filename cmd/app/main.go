@@ -1,381 +1,206 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
-	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/bot"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/mikrotik"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 	webui "github.com/Kfaraon/mikrotik-route-sync/internal/web"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
-var configPath string
-var cachePath string
+var version = "dev"
 
 func main() {
-	root := &cobra.Command{Use: "app", Short: "Automatic per-service MikroTik RouterOS v7 route synchronizer"}
-	root.PersistentFlags().StringVarP(&configPath, "config", "c", "config.yaml", "path to config.yaml")
-	root.PersistentFlags().StringVar(&cachePath, "cache", "/var/lib/mikrotik-route-sync/cache.db", "path to bbolt cache")
-	root.AddCommand(syncCmd(), addCmd(), removeCmd(), infoCmd(), listCmd(), scheduleCmd(), botCmd(), webCmd(), configCmd(), logsCmd(), testTelegramCmd(), testMikrotikCmd())
-	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	if e := newRoot().Execute(); e != nil {
+		fmt.Fprintln(os.Stderr, e)
 		os.Exit(1)
 	}
 }
-func load() (*config.Config, error) { return config.Load(configPath) }
-func runtime(cfg *config.Config) (*storage.Cache, *core.Syncer, notifier.Notifier, error) {
-	cache, err := storage.Open(cachePath)
-	if err != nil {
-		return nil, nil, nil, err
+func newRoot() *cobra.Command {
+	var cfgPath string
+	root := &cobra.Command{Use: "app", Short: "Secure MikroTik RouterOS v7 route synchronizer"}
+	root.PersistentFlags().StringVar(&cfgPath, "config", "config.yaml", "config path")
+	load := func() (*config.Config, error) {
+		c, e := config.Load(cfgPath)
+		if e != nil {
+			return nil, e
+		}
+		return c, nil
 	}
-	log := logging.New(cfg.Logging)
-	n := notifier.FromConfig(cfg.Telegram, log)
-	return cache, core.NewSyncer(cfg, log, cache, n), n, nil
-}
-func ctxSignal() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-}
-func syncCmd() *cobra.Command {
+	withSyncer := func(fn func(context.Context, *config.Config, *core.Syncer) error) error {
+		c, e := load()
+		if e != nil {
+			return e
+		}
+		cache, e := storage.Open("cache.db")
+		if e != nil {
+			return e
+		}
+		defer cache.Close()
+		log := logging.New(c.Logging)
+		s := core.NewSyncer(c, log, cache, notifier.FromConfig(c.Telegram, log))
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		return fn(ctx, c, s)
+	}
 	var service, group string
-	var dry bool
-	c := &cobra.Command{Use: "sync", Short: "Synchronize routes", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		cache, s, _, err := runtime(cfg)
-		if err != nil {
-			return err
-		}
-		defer cache.Close()
-		var list []string
-		switch {
-		case service != "":
-			list = []string{service}
-		case group != "":
-			list = cfg.ServicesInGroup(group)
-		default:
-			list = cfg.Services
-		}
-		if len(list) == 0 {
-			return fmt.Errorf("no services selected")
-		}
-		ctx, cancel := ctxSignal()
-		defer cancel()
-		return s.SyncMany(ctx, list, dry)
+	var dry, force bool
+	syncCmd := &cobra.Command{Use: "sync", RunE: func(cmd *cobra.Command, args []string) error {
+		return withSyncer(func(ctx context.Context, c *config.Config, s *core.Syncer) error {
+			var names []string
+			if service != "" {
+				names = []string{service}
+			} else if group != "" {
+				names = c.ServicesInGroup(group)
+			} else {
+				names = c.Services
+			}
+			if force && len(names) != 1 {
+				return fmt.Errorf("--force requires exactly one service")
+			}
+			if force {
+				r, e := s.SyncService(ctx, names[0], dry, true)
+				printJSON(r)
+				return e
+			}
+			return s.SyncMany(ctx, names, dry)
+		})
 	}}
-	c.Flags().StringVar(&service, "service", "", "one service")
-	c.Flags().StringVar(&group, "group", "", "service group")
-	c.Flags().BoolVar(&dry, "dry-run", false, "calculate changes without applying")
-	return c
-}
-func addCmd() *cobra.Command {
-	return &cobra.Command{Use: "add-service <service>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		cache, s, _, err := runtime(cfg)
-		if err != nil {
-			return err
-		}
-		defer cache.Close()
-		return s.AddService(cmd.Context(), args[0])
-	}}
-}
-func removeCmd() *cobra.Command {
-	return &cobra.Command{Use: "remove-service <service>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		cache, s, _, err := runtime(cfg)
-		if err != nil {
-			return err
-		}
-		defer cache.Close()
-		return s.RemoveService(cmd.Context(), args[0])
-	}}
-}
-func infoCmd() *cobra.Command {
-	return &cobra.Command{Use: "info <service>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		cache, s, _, err := runtime(cfg)
-		if err != nil {
-			return err
-		}
-		defer cache.Close()
-		return s.Info(cmd.Context(), args[0], cmd.OutOrStdout())
-	}}
-}
-func listCmd() *cobra.Command {
-	return &cobra.Command{Use: "list", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		for _, v := range cfg.Services {
-			cmd.Printf("%-24s %s\n", v, cfg.ScheduleFor(v))
-		}
-		return nil
-	}}
-}
-func scheduleCmd() *cobra.Command {
-	c := &cobra.Command{Use: "schedule"}
-	c.AddCommand(&cobra.Command{Use: "list", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		for _, v := range cfg.Services {
-			cmd.Printf("%-24s %s\n", v, cfg.ScheduleFor(v))
-		}
-		return nil
-	}}, &cobra.Command{Use: "reload", Run: func(cmd *cobra.Command, args []string) {
-		cmd.Println("Config is reloaded automatically on next command; running daemon accepts SIGHUP by restart policy.")
+	syncCmd.Flags().StringVar(&service, "service", "", "service")
+	syncCmd.Flags().StringVar(&group, "group", "", "group")
+	syncCmd.Flags().BoolVar(&dry, "dry-run", false, "calculate only")
+	syncCmd.Flags().BoolVar(&force, "force", false, "override safe-delete ratio after review")
+	root.AddCommand(syncCmd)
+	root.AddCommand(&cobra.Command{Use: "diff <service>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return withSyncer(func(ctx context.Context, c *config.Config, s *core.Syncer) error {
+			r, e := s.SyncService(ctx, args[0], true, false)
+			printJSON(r)
+			return e
+		})
 	}})
-	return c
-}
-func botCmd() *cobra.Command {
-	return &cobra.Command{Use: "bot", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
+	root.AddCommand(&cobra.Command{Use: "list", RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := load()
+		if e != nil {
+			return e
 		}
-		cache, s, n, err := runtime(cfg)
-		if err != nil {
-			return err
-		}
-		defer cache.Close()
-		log := logging.New(cfg.Logging)
-		sched := scheduler.New(cfg, s, n, log)
-		sched.Start()
-		ctx, cancel := ctxSignal()
-		defer cancel()
-		defer sched.Stop(context.Background())
-		return bot.Run(ctx, cfg, s, log)
-	}}
-}
-func webCmd() *cobra.Command {
-	return &cobra.Command{Use: "web", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		cache, s, n, err := runtime(cfg)
-		if err != nil {
-			return err
-		}
-		defer cache.Close()
-		log := logging.New(cfg.Logging)
-		sched := scheduler.New(cfg, s, n, log)
-		sched.Start()
-		ctx, cancel := ctxSignal()
-		defer cancel()
-		defer sched.Stop(context.Background())
-		return webui.Run(ctx, cfg, s, sched, log, configPath)
-	}}
-}
-func testTelegramCmd() *cobra.Command {
-	return &cobra.Command{Use: "test-telegram", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		return notifier.FromConfig(cfg.Telegram, logging.New(cfg.Logging)).Test(cmd.Context())
-	}}
-}
-func testMikrotikCmd() *cobra.Command {
-	return &cobra.Command{Use: "test-mikrotik", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		cache, s, _, err := runtime(cfg)
-		if err != nil {
-			return err
-		}
-		defer cache.Close()
-		ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-		defer cancel()
-		if err := s.RouterPing(ctx); err != nil {
-			return err
-		}
-		cmd.Println("OK")
-		return nil
-	}}
-}
-func configCmd() *cobra.Command {
-	c := &cobra.Command{Use: "config"}
-	c.AddCommand(&cobra.Command{Use: "get <key>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		v, err := yamlGet(configPath, args[0])
-		if err != nil {
-			return err
-		}
-		if config.IsSecret(args[0]) {
-			cmd.Println("••••••••")
-		} else {
-			cmd.Println(v)
+		for _, s := range c.Services {
+			fmt.Printf("%s\t%s\n", s, c.EffectiveSchedule(s))
 		}
 		return nil
-	}}, &cobra.Command{Use: "set <key> <value>", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error { return yamlSet(configPath, args[0], args[1]) }}, &cobra.Command{Use: "edit", RunE: func(cmd *cobra.Command, args []string) error {
-		ed := os.Getenv("EDITOR")
-		if ed == "" {
-			ed = "vi"
-		}
-		x := exec.Command(ed, configPath)
-		x.Stdin = os.Stdin
-		x.Stdout = os.Stdout
-		x.Stderr = os.Stderr
-		return x.Run()
-	}}, &cobra.Command{Use: "reload", Run: func(cmd *cobra.Command, args []string) {
-		cmd.Println("Reload is effective on the next invocation; daemon deployments should send SIGHUP/restart through supervisor.")
 	}})
-	return c
-}
-func yamlGet(path, key string) (any, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]any
-	if err = yaml.Unmarshal(b, &m); err != nil {
-		return nil, err
-	}
-	var cur any = m
-	for _, p := range strings.Split(key, ".") {
-		mm, ok := cur.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("%s not found", key)
+	root.AddCommand(&cobra.Command{Use: "info <service>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := load()
+		if e != nil {
+			return e
 		}
-		cur, ok = mm[p]
-		if !ok {
-			return nil, fmt.Errorf("%s not found", key)
+		fmt.Printf("service: %s\nschedule: %s\noverride: %+v\n", args[0], c.EffectiveSchedule(args[0]), c.Overrides[args[0]])
+		return nil
+	}})
+	root.AddCommand(&cobra.Command{Use: "schedule", RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := load()
+		if e != nil {
+			return e
 		}
-	}
-	return cur, nil
-}
-func yamlSet(path, key, value string) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var m map[string]any
-	if err = yaml.Unmarshal(b, &m); err != nil {
-		return err
-	}
-	parts := strings.Split(key, ".")
-	cur := m
-	for _, p := range parts[:len(parts)-1] {
-		v, ok := cur[p].(map[string]any)
-		if !ok {
-			v = map[string]any{}
-			cur[p] = v
-		}
-		cur = v
-	}
-	var decoded any
-	if json.Unmarshal([]byte(value), &decoded) != nil {
-		decoded = value
-	}
-	cur[parts[len(parts)-1]] = decoded
-	out, err := yaml.Marshal(m)
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err = os.WriteFile(tmp, out, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-func logsCmd() *cobra.Command {
-	c := &cobra.Command{Use: "logs"}
-	var n int
-	var follow bool
-	tail := &cobra.Command{Use: "tail", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		if cfg.Logging.File == "" {
-			return fmt.Errorf("logging.file is empty")
-		}
-		return tailFile(cmd.OutOrStdout(), cfg.Logging.File, n, follow)
-	}}
-	tail.Flags().IntVarP(&n, "lines", "n", 100, "number of lines")
-	tail.Flags().BoolVarP(&follow, "follow", "f", false, "follow file")
-	c.AddCommand(tail, &cobra.Command{Use: "clear", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(cfg.Logging.File, nil, 0o600)
-	}}, &cobra.Command{Use: "size", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := load()
-		if err != nil {
-			return err
-		}
-		matches, _ := filepath.Glob(cfg.Logging.File + "*")
-		var total int64
-		for _, p := range matches {
-			if st, e := os.Stat(p); e == nil {
-				total += st.Size()
+		for _, s := range c.Services {
+			spec := c.EffectiveSchedule(s)
+			if e := scheduler.Validate(spec); e != nil {
+				fmt.Printf("%s\tINVALID\t%s\n", s, e)
+			} else {
+				fmt.Printf("%s\t%s\n", s, spec)
 			}
 		}
-		cmd.Printf("files=%d bytes=%d\n", len(matches), total)
 		return nil
 	}})
-	return c
+	root.AddCommand(&cobra.Command{Use: "test-mikrotik", RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := load()
+		if e != nil {
+			return e
+		}
+		return mikrotik.New(c.MikroTik).Ping(cmd.Context())
+	}})
+	root.AddCommand(&cobra.Command{Use: "config-validate", RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := load()
+		if e != nil {
+			return e
+		}
+		return c.Validate()
+	}})
+	root.AddCommand(&cobra.Command{Use: "web", RunE: func(cmd *cobra.Command, args []string) error {
+		return withSyncer(func(ctx context.Context, c *config.Config, s *core.Syncer) error {
+			return webui.New(c, s, logging.New(c.Logging)).Run(ctx)
+		})
+	}})
+	root.AddCommand(&cobra.Command{Use: "daemon", RunE: func(cmd *cobra.Command, args []string) error {
+		return withSyncer(func(ctx context.Context, c *config.Config, s *core.Syncer) error {
+			return webui.New(c, s, logging.New(c.Logging)).Run(ctx)
+		})
+	}})
+	root.AddCommand(&cobra.Command{Use: "version", Run: func(cmd *cobra.Command, args []string) { fmt.Println(version) }})
+
+	root.AddCommand(&cobra.Command{Use: "add-service <name>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := load()
+		if e != nil {
+			return e
+		}
+		cache, e := storage.Open("cache.db")
+		if e != nil {
+			return e
+		}
+		defer cache.Close()
+		log := logging.New(c.Logging)
+		sy := core.NewSyncer(c, log, cache, notifier.FromConfig(c.Telegram, log))
+		if e = sy.AddService(cmd.Context(), args[0]); e != nil {
+			return e
+		}
+		return config.AtomicWrite(cfgPath, c)
+	}})
+	var removeForce bool
+	removeCmd := &cobra.Command{Use: "remove-service <name>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return withSyncer(func(ctx context.Context, c *config.Config, sy *core.Syncer) error {
+			if e := sy.RemoveService(ctx, args[0], removeForce); e != nil {
+				return e
+			}
+			out := c.Services[:0]
+			for _, x := range c.Services {
+				if x != args[0] {
+					out = append(out, x)
+				}
+			}
+			c.Services = out
+			return config.AtomicWrite(cfgPath, c)
+		})
+	}}
+	removeCmd.Flags().BoolVar(&removeForce, "force", false, "confirm large removal")
+	root.AddCommand(removeCmd)
+	root.AddCommand(&cobra.Command{Use: "backup <service>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return withSyncer(func(ctx context.Context, c *config.Config, sy *core.Syncer) error {
+			r, e := sy.Backup(ctx, args[0])
+			if e != nil {
+				return e
+			}
+			printJSON(r)
+			return nil
+		})
+	}})
+	root.AddCommand(&cobra.Command{Use: "test-telegram", RunE: func(cmd *cobra.Command, args []string) error {
+		c, e := load()
+		if e != nil {
+			return e
+		}
+		log := logging.New(c.Logging)
+		return notifier.FromConfig(c.Telegram, log).Send(cmd.Context(), "✅ mikrotik-route-sync: Telegram test")
+	}})
+	return root
 }
-func tailFile(w io.Writer, path string, n int, follow bool) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	var lines []string
-	for sc.Scan() {
-		lines = append(lines, sc.Text())
-		if len(lines) > n {
-			lines = lines[1:]
-		}
-	}
-	for _, v := range lines {
-		fmt.Fprintln(w, v)
-	}
-	if !follow {
-		return sc.Err()
-	}
-	for {
-		if sc.Scan() {
-			fmt.Fprintln(w, sc.Text())
-			continue
-		}
-		if err := sc.Err(); err != nil {
-			return err
-		}
-		time.Sleep(time.Second)
-	}
-}
+func printJSON(v any) { b, _ := json.MarshalIndent(v, "", "  "); fmt.Println(string(b)) }
