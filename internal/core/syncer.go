@@ -349,3 +349,41 @@ func (s *Syncer) SetServiceSchedule(name string, schedule string) error {
 	// Пока возвращаем ошибку "не реализовано"
 	return fmt.Errorf("SetServiceSchedule not implemented yet")
 }
+
+// === Методы для работы со snapshots ===
+
+// CreateSnapshot создаёт snapshot текущих маршрутов сервиса
+func (s *Syncer) CreateSnapshot(ctx context.Context, service string) (string, error) {
+	routes, err := s.mt.ListServiceRoutes(ctx, service)
+	if err != nil {
+		return "", fmt.Errorf("list routes: %w", err)
+	}
+
+	snapshotID, err := s.cache.CreateSnapshot(service, routes)
+	if err != nil {
+		return "", fmt.Errorf("create snapshot: %w", err)
+	}
+
+	s.log.Info("snapshot created", "service", service, "snapshot_id", snapshotID, "routes", len(routes))
+	return snapshotID, nil
+}
+
+// ListSnapshots возвращает список snapshots для сервиса
+func (s *Syncer) ListSnapshots(ctx context.Context, service string) ([]storage.SnapshotInfo, error) {
+	return s.cache.ListSnapshots(service)
+}
+
+// GetSnapshot получает snapshot по ID
+func (s *Syncer) GetSnapshot(ctx context.Context, service, snapshotID string, v any) error {
+	return s.cache.GetSnapshot(service, snapshotID, v)
+}
+
+// DeleteSnapshot удаляет snapshot
+func (s *Syncer) DeleteSnapshot(ctx context.Context, service, snapshotID string) error {
+	return s.cache.DeleteSnapshot(service, snapshotID)
+}
+
+// CleanupSnapshots удаляет snapshots старше TTL
+func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.Duration) (int, error) {
+	return s.cache.CleanupExpiredSnapshots(ttl)
+}
