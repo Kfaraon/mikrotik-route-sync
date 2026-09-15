@@ -204,3 +204,8 @@ func newRoot() *cobra.Command {
 	return root
 }
 func printJSON(v any) { b, _ := json.MarshalIndent(v, "", "  "); fmt.Println(string(b)) }
+
+// Новые команды для работы со snapshots
+root.AddCommand(newBackupCmd())
+root.AddCommand(newRestoreCmd())
+root.AddCommand(newSnapshotsCmd())
