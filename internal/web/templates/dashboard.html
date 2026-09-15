@@ -1,21 +1,75 @@
+{{define "dashboard.html"}}
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8"><title>MikroTik Route Sync</title>
+  <meta charset="utf-8">
+  <title>MikroTik Route Sync — Дашборд</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js"></script>
 </head>
 <body>
-  <nav><a href="/">🏠 Дашборд</a><a href="/settings">⚙️ Настройки</a><a href="/logs">📜 Логи</a></nav>
-  <h1>MikroTik Route Sync</h1>
-  <p class="muted">Время: <span id="clock"></span> | TZ: {{ .Timezone }}</p>
-  <section id="status" hx-get="/partials/status" hx-trigger="load, every 10s" hx-swap="innerHTML"><article><p>Загрузка статуса…</p></article></section>
-  <section><h2>Сервисы</h2><div id="services" hx-get="/partials/services" hx-trigger="load, every 15s" hx-swap="innerHTML"><p class="muted">Загрузка…</p></div></section>
-  <section><h2>Расписания</h2><div id="schedules" hx-get="/partials/schedules" hx-trigger="load, every 30s" hx-swap="innerHTML"><p class="muted">Загрузка…</p></div></section>
+  <nav class="container-fluid">
+    <ul>
+      <li><a href="/" aria-current="page">🏠 Дашборд</a></li>
+      <li><a href="/services">📦 Сервисы</a></li>
+      <li><a href="/schedules">📅 Расписания</a></li>
+      <li><a href="/settings">⚙️ Настройки</a></li>
+      <li><a href="/logs">📜 Логи</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    <h1>MikroTik Route Sync</h1>
+    <p class="muted">Часовой пояс: {{ .Timezone }}</p>
+
+    <!-- Live-статус через HTMX -->
+    <div id="status"
+         hx-get="/partials/status"
+         hx-trigger="load, every 10s"
+         hx-swap="innerHTML">
+      <p>Загрузка статуса…</p>
+    </div>
+
+    <hr>
+
+    <h2>Сервисы ({{ .ServiceCount }})</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Сервис</th>
+          <th>Расписание</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Services }}
+        <tr>
+          <td>{{ . }}</td>
+          <td>{{ effectiveSchedule . }}</td>
+        </tr>
+        {{ else }}
+        <tr><td colspan="2" class="muted">Сервисы не настроены</td></tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </main>
+
   <script>
-    setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleString(); }, 1000);
-    document.body.addEventListener('htmx:configRequest', (e) => { e.detail.headers['X-CSRF-Token'] = "{{ .CSRF }}"; });
+    // WebSocket для live-обновлений
+    (function() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(proto + '://' + location.host + '/api/v1/ws');
+      ws.onmessage = function(e) {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'sync_done') {
+          document.getElementById('status')?.dispatchEvent(new Event('htmx:refresh'));
+          htmx.trigger('#status', 'htmx:refresh');
+        }
+      };
+      ws.onclose = function() { setTimeout(arguments.callee, 5000); };
+    })();
   </script>
 </body>
 </html>
+{{end}}
