@@ -1,0 +1,45 @@
+# === Бинарные файлы и артефакты сборки ===
+mikrotik-route-sync
+app
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# === Конфигурация и секреты (КРИТИЧНО) ===
+config.yaml
+.env
+.env.local
+*.pem
+*.key
+*.crt
+
+# === Данные, кэш и состояние (bbolt) ===
+*.db
+data/
+cache.db
+*.snap
+
+# === Логи ===
+*.log
+logs/
+/var/log/mikrotik-route-sync/
+
+# === Тесты и покрытие ===
+coverage.out
+coverage.html
+*.test
+
+# === IDE и редакторы ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === Docker (локальные переопределения) ===
+docker-compose.override.yml
