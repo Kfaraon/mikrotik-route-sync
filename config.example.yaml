@@ -60,6 +60,7 @@ external:
   http_timeout: 15s
   max_response_mb: 50
   bgpview_api_key: ""
+  akamai_api_key: ""
   rdap_timeout: 10s
   resolver: 1.1.1.1:53
 snapshots:
