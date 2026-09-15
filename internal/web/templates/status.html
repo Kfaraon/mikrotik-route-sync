@@ -1,7 +1,11 @@
+{{define "status.html"}}
 <div class="grid">
   <article>
     <h3>MikroTik</h3>
-    <p class="status-{{ .MikroTikStatus }}">{{ .MikroTikStatus }}</p>
+    <p class="status-{{ .MikroTikStatus }}">
+      {{ if eq .MikroTikStatus "ok" }}✅{{ else }}❌{{ end }}
+      {{ .MikroTikStatus }}
+    </p>
   </article>
   <article>
     <h3>Сервисов</h3>
@@ -12,6 +16,12 @@
     <p>{{ .RouteCount }}</p>
   </article>
 </div>
-<button hx-post="/actions/sync-all" hx-confirm="Запустить синхронизацию всех сервисов?">
-  🔄 Синхронизировать всё
-</button>
+
+<div role="group">
+  <button hx-post="/actions/sync-all"
+          hx-headers='{"X-CSRF-Token":"{{ .CSRF }}"}'
+          hx-confirm="Запустить синхронизацию всех сервисов?">
+    🔄 Синхронизировать всё
+  </button>
+</div>
+{{end}}
