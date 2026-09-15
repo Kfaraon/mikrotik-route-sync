@@ -1,2 +1,55 @@
-<h1>Логи</h1>
-<pre id="logs" hx-get="/partials/logs" hx-trigger="load, every 5s" hx-swap="innerHTML">{{ .Lines }}</pre>
+{{define "logs.html"}}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>MikroTik Route Sync — Логи</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <nav class="container-fluid">
+    <ul>
+      <li><a href="/">🏠 Дашборд</a></li>
+      <li><a href="/services">📦 Сервисы</a></li>
+      <li><a href="/schedules">📅 Расписания</a></li>
+      <li><a href="/settings">⚙️ Настройки</a></li>
+      <li><a href="/logs" aria-current="page">📜 Логи</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    <h1>📜 Логи</h1>
+
+    <div role="group">
+      <select id="log-level" onchange="refreshLogs()">
+        <option value="">Все уровни</option>
+        <option value="error">ERROR</option>
+        <option value="warn">WARN</option>
+        <option value="info">INFO</option>
+        <option value="debug">DEBUG</option>
+      </select>
+      <button onclick="refreshLogs()">🔄 Обновить</button>
+      <button onclick="clearLogs()" class="secondary">🗑 Очистить экран</button>
+    </div>
+
+    <pre id="log-output"
+         hx-get="/partials/logs"
+         hx-trigger="load, every 5s"
+         hx-swap="innerHTML"
+         style="max-height: 600px; overflow-y: auto; background: #1a1a2e; color: #0f0; padding: 1rem; border-radius: 8px; font-size: 0.85rem;">{{ .Lines }}</pre>
+  </main>
+
+  <script>
+    function refreshLogs() {
+      htmx.trigger('#log-output', 'htmx:refresh');
+    }
+    function clearLogs() {
+      document.getElementById('log-output').innerHTML = '';
+    }
+  </script>
+</body>
+</html>
+{{end}}
