@@ -331,3 +331,21 @@ func (s *Syncer) Restore(ctx context.Context, name string, routes []mikrotik.Rou
 	}
 	return nil
 }
+
+// ListServices возвращает список всех сервисов из конфигурации
+func (s *Syncer) ListServices() []string {
+	return s.cfg.Services
+}
+
+// SyncOne синхронизирует один сервис (обёртка для SyncService)
+func (s *Syncer) SyncOne(ctx context.Context, name string) error {
+	_, err := s.SyncService(ctx, name, false, false)
+	return err
+}
+
+// SetServiceSchedule устанавливает расписание для сервиса
+// TODO: Реализовать сохранение в конфиг и hot-reload
+func (s *Syncer) SetServiceSchedule(name string, schedule string) error {
+	// Пока возвращаем ошибку "не реализовано"
+	return fmt.Errorf("SetServiceSchedule not implemented yet")
+}
