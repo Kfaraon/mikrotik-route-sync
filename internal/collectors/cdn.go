@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"time"
+	"strings"
 )
 
 type CDNCollector struct {
