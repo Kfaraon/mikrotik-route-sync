@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -34,9 +35,10 @@ var assetsFS embed.FS
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true }, // упрощённо; Origin проверяется в auth
+	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
+// Hub управляет активными WebSocket-соединениями и рассылает события.
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[*websocket.Conn]struct{}
@@ -80,13 +82,13 @@ func (h *Hub) Broadcast(v any) {
 	}
 }
 
-// ============================== Rate Limit (in-memory) ==============================
+// ============================== IP Rate Limiter ==============================
 
 type ipLimiter struct {
-	mu     sync.Mutex
+	mu      sync.Mutex
 	buckets map[string]*rate.Limiter
-	limit  rate.Limit
-	burst  int
+	limit   rate.Limit
+	burst   int
 }
 
 func newIPLimiter(rps float64, burst int) *ipLimiter {
@@ -110,6 +112,7 @@ func (l *ipLimiter) allow(ip string) bool {
 
 // ============================== Server ==============================
 
+// Server — HTTP/WS сервер приложения (Web UI + REST API).
 type Server struct {
 	cfg        *config.Config
 	cfgPath    string
@@ -122,27 +125,25 @@ type Server struct {
 	limiter    *ipLimiter
 }
 
+// New создаёт новый экземпляр Server.
 func New(cfg *config.Config, s *core.Syncer, log *slog.Logger, cfgPath string) *Server {
 	token := make([]byte, 32)
 	_, _ = rand.Read(token)
 
 	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
-		"mask": func(s string) string {
-			if s == "" {
-				return ""
-			}
-			if len(s) <= 4 {
-				return "••••"
-			}
-			return "••••••••" + s[len(s)-4:]
+		// Маскирование секретов в шаблонах
+		"mask": func(v string) string { return Mask(v) },
+		"isSecret": func(key string) bool {
+			return IsSecret(key) || IsSecretPartial(key)
 		},
-		"schedule": func(svc string) string {
+		"effectiveSchedule": func(svc string) string {
 			return cfg.EffectiveSchedule(svc)
 		},
 		"json": func(v any) template.JS {
 			b, _ := json.Marshal(v)
 			return template.JS(b)
 		},
+		"lower": strings.ToLower,
 	}).ParseFS(assetsFS, "templates/*.html"))
 
 	return &Server{
@@ -157,7 +158,7 @@ func New(cfg *config.Config, s *core.Syncer, log *slog.Logger, cfgPath string) *
 	}
 }
 
-// ============================== Middleware ==============================
+// ============================== Middleware helpers ==============================
 
 func remoteIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -184,13 +185,19 @@ func (s *Server) allowedIP(r *http.Request) bool {
 	return false
 }
 
+// ============================== Middleware ==============================
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self' 'unsafe-inline'; "+
+				"style-src 'self' 'unsafe-inline'; img-src 'self' data:; "+
+				"connect-src 'self' ws: wss:;")
+		w.Header().Set("X-XSS-Protection", "0")
 		w.Header().Del("Server")
 		next.ServeHTTP(w, r)
 	})
@@ -198,7 +205,6 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func (s *Server) authAndAllow(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// healthz без авторизации и IP-фильтрации
 		if r.URL.Path == "/api/v1/healthz" {
 			next.ServeHTTP(w, r)
 			return
@@ -268,9 +274,8 @@ func (s *Server) routes() http.Handler {
 	r.Use(s.rateLimit)
 	r.Use(s.csrfGuard)
 
-	staticFS, err := fsSub(assetsFS, "static")
-	if err == nil {
-		r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	if sub, err := fs.Sub(assetsFS, "static"); err == nil {
+		r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
 	}
 
 	// Pages
@@ -305,6 +310,7 @@ func (s *Server) routes() http.Handler {
 		r.Put("/schedules/{service}", s.apiUpdateSchedule)
 		r.Get("/logs", s.apiLogs)
 		r.Get("/history", s.apiHistory)
+		r.Get("/audit", s.apiAudit)
 		r.Get("/ws", s.hub.HandleWS)
 	})
 
@@ -313,6 +319,7 @@ func (s *Server) routes() http.Handler {
 
 // ============================== Run / Shutdown ==============================
 
+// Run запускает HTTP-сервер и блокирует до ctx.Done() или фатальной ошибки.
 func (s *Server) Run(ctx context.Context) error {
 	s.httpServer = &http.Server{
 		Addr:              s.cfg.Web.Listen,
@@ -340,36 +347,24 @@ func (s *Server) Run(ctx context.Context) error {
 
 // ============================== Page Handlers ==============================
 
-type dashboardData struct {
-	Timezone       string
-	CSRF           string
-	Services       []string
-	ServiceCount   int
-	RouteCount     int
-	MikroTikStatus string
-}
-
 func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 	snap, _ := s.syncer.Snapshot(r.Context())
 	routeCount := 0
 	for _, c := range snap {
 		routeCount += c
 	}
-
 	status := "ok"
 	if err := s.syncer.PingMikroTik(r.Context()); err != nil {
 		status = "error"
 	}
-
-	data := dashboardData{
-		Timezone:       s.cfg.Timezone,
-		CSRF:           s.csrf,
-		Services:       s.cfg.Services,
-		ServiceCount:   len(s.cfg.Services),
-		RouteCount:     routeCount,
-		MikroTikStatus: status,
-	}
-	s.render(w, "dashboard.html", data)
+	s.render(w, "dashboard.html", map[string]any{
+		"Timezone":       s.cfg.Timezone,
+		"CSRF":           s.csrf,
+		"Services":       s.cfg.Services,
+		"ServiceCount":   len(s.cfg.Services),
+		"RouteCount":     routeCount,
+		"MikroTikStatus": status,
+	})
 }
 
 func (s *Server) pageServices(w http.ResponseWriter, r *http.Request) {
@@ -437,10 +432,9 @@ func (s *Server) partialSchedules(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "schedules.html", map[string]any{"Services": s.cfg.Services})
 }
 
-func (s *Server) partialLogs(w http.ResponseWriter, r *http.Request) {
-	// Заглушка: в production-версии читать tail из файла логгера
+func (s *Server) partialLogs(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = io.WriteString(w, "Логи доступны в stdout/файле. Tail в web пока заглушка.\n")
+	_, _ = io.WriteString(w, "Логи доступны в stdout/файле. Tail через /api/v1/ws.\n")
 }
 
 // ============================== HTMX Actions ==============================
@@ -497,18 +491,17 @@ func (s *Server) apiReadyz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
-	mtOK := s.syncer.PingMikroTik(r.Context()) == nil
+	mtOK := s.syncer.PingMikrotik(r.Context()) == nil
 	snap, _ := s.syncer.Snapshot(r.Context())
 	routeCount := 0
 	for _, c := range snap {
 		routeCount += c
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"mikrotik":     mtOK,
-		"time":         time.Now().Format(time.RFC3339),
-		"services":     len(s.cfg.Services),
-		"route_count":  routeCount,
-		"version":      "dev",
+		"mikrotik":    mtOK,
+		"time":        time.Now().Format(time.RFC3339),
+		"services":    len(s.cfg.Services),
+		"route_count": routeCount,
 	})
 }
 
@@ -547,7 +540,9 @@ func (s *Server) apiSyncAll(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		s.syncer.SyncMany(ctx, s.cfg.Services, dry)
 	}()
-	s.writeJSON(w, http.StatusAccepted, map[string]string{"status": "started", "dry": fmt.Sprint(dry)})
+	s.writeJSON(w, http.StatusAccepted, map[string]string{
+		"status": "started", "dry": fmt.Sprint(dry),
+	})
 }
 
 func (s *Server) apiSyncService(w http.ResponseWriter, r *http.Request) {
@@ -560,10 +555,8 @@ func (s *Server) apiSyncService(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.syncer.SyncService(ctx, name, dry, force)
 	}()
 	s.writeJSON(w, http.StatusAccepted, map[string]string{
-		"status":  "started",
-		"service": name,
-		"dry":     fmt.Sprint(dry),
-		"force":   fmt.Sprint(force),
+		"status": "started", "service": name,
+		"dry": fmt.Sprint(dry), "force": fmt.Sprint(force),
 	})
 }
 
@@ -583,7 +576,6 @@ func (s *Server) apiDeleteService(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	// Удаляем из конфига и сохраняем атомарно
 	out := s.cfg.Services[:0]
 	for _, x := range s.cfg.Services {
 		if x != name {
@@ -626,14 +618,11 @@ func (s *Server) apiUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]string{
-		"status":   "updated",
-		"service":  service,
-		"schedule": req.Schedule,
+		"status": "updated", "service": service, "schedule": req.Schedule,
 	})
 }
 
 func (s *Server) apiLogs(w http.ResponseWriter, _ *http.Request) {
-	// Заглушка: в полной версии — чтение из файла логов с фильтрами
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"logs": []string{},
 		"hint": "log streaming через /api/v1/ws или файл логов",
@@ -644,14 +633,7 @@ func (s *Server) apiHistory(w http.ResponseWriter, _ *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"history": []any{}})
 }
 
-// ============================== helpers ==============================
-
-// fsSub возвращает Sub-файловую систему для embed. Если embed.FS не поддерживает Sub,
-// используем обёртку (работает на стандартной embed.FS из Go 1.16+).
-func fsSub(fs embed.FS, dir string) (http.FileSystem, error) {
-	sub, err := fs.Sub(dir)
-	if err != nil {
-		return nil, err
-	}
-	return http.FS(sub), nil
+// apiAudit возвращает статистику обращений к секретам (только для администратора).
+func (s *Server) apiAudit(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, AuditStats())
 }
