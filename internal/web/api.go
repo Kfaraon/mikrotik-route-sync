@@ -14,23 +14,28 @@ func (s *Server) writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func (s *Server) apiListServices(w http.ResponseWriter, r *http.Request) {
-	svcs := s.app.ListServices()
+	// Используем syncer для получения списка сервисов из конфига
+	svcs := s.syncer.ListServices()
 	s.writeJSON(w, http.StatusOK, svcs)
 }
 
 func (s *Server) apiSyncOne(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	if err := s.app.SyncOne(r.Context(), name); err != nil {
+	
+	// Используем SyncService вместо SyncOne
+	if err := s.syncer.SyncService(r.Context(), name, false, false); err != nil {
 		s.writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
-	s.hub.Broadcast(map[string]any{"type": "service_synced", "service": name})
+	
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": name})
 }
 
 func (s *Server) apiDeleteService(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	if err := s.app.RemoveService(r.Context(), name); err != nil {
+	
+	// Используем RemoveService с force=true для API
+	if err := s.syncer.RemoveService(r.Context(), name, true); err != nil {
 		s.writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
@@ -46,9 +51,10 @@ func (s *Server) apiSetSchedule(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := s.app.SetServiceSchedule(name, body.Schedule); err != nil {
-		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	
+	// TODO: Реализовать SetServiceSchedule в syncer
+	// Пока возвращаем ошибку
+	s.writeJSON(w, http.StatusNotImplemented, map[string]string{
+		"error": "SetServiceSchedule not implemented yet"
+	})
 }
