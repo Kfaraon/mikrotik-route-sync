@@ -11,6 +11,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,6 +27,7 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 	webui "github.com/Kfaraon/mikrotik-route-sync/internal/web"
+	"github.com/hpcloud/tail"
 	"github.com/spf13/cobra"
 )
 
@@ -42,12 +46,15 @@ func main() {
 // loadConfig загружает конфигурацию и проверяет права доступа к файлу.
 func loadConfig() (*config.Config, error) {
 	// Проверка прав доступа к файлу конфигурации (должны быть 0600)
-	if fi, err := os.Stat(cfgPath); err == nil {
-		if fi.Mode().Perm() != 0600 {
-			return nil, fmt.Errorf("config file %s must have 0600 permissions, got %o", cfgPath, fi.Mode().Perm())
+	// Пропускаем проверку на Windows, где используется ACL
+	if runtime.GOOS != "windows" {
+		if fi, err := os.Stat(cfgPath); err == nil {
+			if fi.Mode().Perm() != 0600 {
+				return nil, fmt.Errorf("config file %s must have 0600 permissions, got %o", cfgPath, fi.Mode().Perm())
+			}
+		} else {
+			return nil, fmt.Errorf("cannot stat config file: %w", err)
 		}
-	} else {
-		return nil, fmt.Errorf("cannot stat config file: %w", err)
 	}
 	return config.Load(cfgPath)
 }
@@ -116,7 +123,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(syncCmd)
 
 	root.AddCommand(&cobra.Command{
-		Use:   "diff ",
+		Use:   "diff <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, c *config.Config, s *core.Syncer) error {
@@ -142,7 +149,7 @@ func newRoot() *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
-		Use:   "info ",
+		Use:   "info <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, e := loadConfig()
@@ -155,8 +162,6 @@ func newRoot() *cobra.Command {
 				"schedule": c.EffectiveSchedule(svc),
 				"override": c.Overrides[svc],
 			}
-			// Если есть возможность, можно добавить получение количества маршрутов
-			// через withSyncer, но для простоты ограничимся конфигом.
 			printJSON(info)
 			return nil
 		},
@@ -186,10 +191,22 @@ func newRoot() *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
-		Use:   "test-dns ",
+		Use:   "test-dns <domain>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ips, err := net.LookupIP(args[0])
+			c, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			// Используем настроенный resolver вместо системного
+			resolver := &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					d := net.Dialer{Timeout: 5 * time.Second}
+					return d.DialContext(ctx, "udp", c.External.Resolver)
+				},
+			}
+			ips, err := resolver.LookupIP(cmd.Context(), "ip", args[0])
 			if err != nil {
 				return err
 			}
@@ -298,7 +315,7 @@ func newRoot() *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
-		Use:   "add-service ",
+		Use:   "add-service <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, c *config.Config, sy *core.Syncer) error {
@@ -313,7 +330,7 @@ func newRoot() *cobra.Command {
 
 	var removeForce bool
 	removeCmd := &cobra.Command{
-		Use:   "remove-service ",
+		Use:   "remove-service <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, c *config.Config, sy *core.Syncer) error {
@@ -336,7 +353,7 @@ func newRoot() *cobra.Command {
 
 	var backupOut, backupSnap string
 	backupCmd := &cobra.Command{
-		Use:   "backup ",
+		Use:   "backup <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, c *config.Config, sy *core.Syncer) error {
@@ -366,7 +383,7 @@ func newRoot() *cobra.Command {
 	var restoreFile, restoreSnap string
 	var restoreForce bool
 	restoreCmd := &cobra.Command{
-		Use:   "restore ",
+		Use:   "restore <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, c *config.Config, sy *core.Syncer) error {
@@ -402,7 +419,7 @@ func newRoot() *cobra.Command {
 
 	snapshotsCmd := &cobra.Command{Use: "snapshots", Short: "Управление snapshots"}
 	snapshotsCmd.AddCommand(&cobra.Command{
-		Use:   "list ",
+		Use:   "list <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, c *config.Config, sy *core.Syncer) error {
@@ -418,7 +435,7 @@ func newRoot() *cobra.Command {
 		},
 	})
 	snapshotsCmd.AddCommand(&cobra.Command{
-		Use:   "delete  ",
+		Use:   "delete <service> <id>",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, c *config.Config, sy *core.Syncer) error {
@@ -428,7 +445,7 @@ func newRoot() *cobra.Command {
 	})
 	var ttlHours int
 	cleanupCmd := &cobra.Command{
-		Use:   "cleanup ",
+		Use:   "cleanup <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, c *config.Config, sy *core.Syncer) error {
@@ -556,17 +573,21 @@ func newRoot() *cobra.Command {
 		},
 	})
 	configCmd.AddCommand(&cobra.Command{
-		Use:   "get ",
+		Use:   "get <key>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := loadConfig()
 			if err != nil {
 				return err
 			}
-			// TODO: реализовать получение конкретного ключа.
-			// Пока выводим весь конфиг, но это не соответствует промпту.
-			b, _ := json.MarshalIndent(c, "", "  ")
-			fmt.Println(string(b))
+			key := args[0]
+			value, err := getConfigValue(c, key)
+			if err != nil {
+				return err
+			}
+			// Маскируем чувствительные значения
+			value = redactSensitive(key, value)
+			fmt.Printf("%s: %v\n", key, value)
 			return nil
 		},
 	})
@@ -580,35 +601,119 @@ func printJSON(v any) {
 	fmt.Println(string(b))
 }
 
+// getConfigValue получает значение конфигурации по пути (например, "mikrotik.host")
+func getConfigValue(c *config.Config, path string) (any, error) {
+	parts := strings.Split(path, ".")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("empty path")
+	}
+
+	v := reflect.ValueOf(c)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	for i, part := range parts {
+		if !v.IsValid() || v.Kind() != reflect.Struct {
+			return nil, fmt.Errorf("invalid path: %s", path)
+		}
+
+		field := v.FieldByNameFunc(func(name string) bool {
+			return strings.EqualFold(name, part)
+		})
+
+		if !field.IsValid() {
+			return nil, fmt.Errorf("field %q not found in path %s", part, path)
+		}
+
+		v = field
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+
+		// Если это последний элемент, возвращаем значение
+		if i == len(parts)-1 {
+			return v.Interface(), nil
+		}
+	}
+
+	return nil, fmt.Errorf("invalid path: %s", path)
+}
+
+// redactSensitive маскирует чувствительные значения
+func redactSensitive(key string, value any) any {
+	sensitivePatterns := []string{
+		"password",
+		"token",
+		"secret",
+		"key",
+	}
+
+	keyLower := strings.ToLower(key)
+	for _, pattern := range sensitivePatterns {
+		if strings.Contains(keyLower, pattern) {
+			return "[REDACTED]"
+		}
+	}
+
+	return value
+}
+
+// tailLog читает лог-файл с поддержкой ротации
 func tailLog(path string, n int, follow bool) error {
-	f, err := os.Open(path)
+	// Если не follow, просто читаем последние n строк
+	if !follow {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		sc := bufio.NewScanner(f)
+		buf := make([]string, 0, n)
+		for sc.Scan() {
+			if len(buf) == n {
+				buf = buf[1:]
+			}
+			buf = append(buf, sc.Text())
+		}
+		for _, l := range buf {
+			fmt.Println(l)
+		}
+		return nil
+	}
+
+	// Используем hpcloud/tail для поддержки ротации
+	t, err := tail.TailFile(path, tail.Config{
+		Follow:    true,
+		ReOpen:    true, // Критично для ротации — переоткрывает файл при изменении inode
+		MustExist: false,
+		Poll:      true,
+		Logger:    tail.DiscardingLogger,
+	})
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
-	sc := bufio.NewScanner(f)
-	buf := make([]string, 0, n)
-	for sc.Scan() {
-		if len(buf) == n {
-			buf = buf[1:]
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Горутина для чтения строк
+	go func() {
+		for line := range t.Lines {
+			if line == nil {
+				return
+			}
+			fmt.Println(line.Text)
 		}
-		buf = append(buf, sc.Text())
-	}
-	for _, l := range buf {
-		fmt.Println(l)
-	}
-	if !follow {
-		return nil
-	}
-	pos, _ := f.Seek(0, io.SeekEnd)
-	for {
-		sc := bufio.NewScanner(f)
-		f.Seek(pos, io.SeekStart)
-		for sc.Scan() {
-			fmt.Println(sc.Text())
-			pos += int64(len(sc.Text()) + 1)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+	}()
+
+	// Ждем сигнала завершения
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+	cancel()
+	t.Stop()
+
+	return nil
 }
