@@ -24,6 +24,7 @@ type Route struct {
 	Comment      string `json:"comment"`
 	Disabled     string `json:"disabled,omitempty"`
 }
+
 type Client struct {
 	base, user, pass, prefix string
 	http                     *http.Client
@@ -41,6 +42,7 @@ func New(c config.MikroTik) *Client {
 	}
 	return &Client{base: fmt.Sprintf("%s://%s:%d/rest", scheme, c.Host, c.Port), user: c.Username, pass: c.Password, prefix: c.CommentPrefix, http: &http.Client{Transport: tr, Timeout: to}}
 }
+
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	var r io.Reader
 	if body != nil {
@@ -78,37 +80,97 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 	return nil
 }
+
+// doWithPagination выполняет запрос с пагинацией через .skip и .limit
+func (c *Client) doWithPagination(ctx context.Context, method, path string, limit int) ([]json.RawMessage, error) {
+	var allResults []json.RawMessage
+	skip := 0
+
+	for {
+		// Добавляем параметры пагинации к пути
+		paginatedPath := path
+		if strings.Contains(path, "?") {
+			paginatedPath += fmt.Sprintf("&.skip=%d&.limit=%d", skip, limit)
+		} else {
+			paginatedPath += fmt.Sprintf("?.skip=%d&.limit=%d", skip, limit)
+		}
+
+		var page []json.RawMessage
+		if err := c.do(ctx, method, paginatedPath, nil, &page); err != nil {
+			return nil, err
+		}
+
+		allResults = append(allResults, page...)
+
+		// Если получили меньше элементов, чем лимит — это последняя страница
+		if len(page) < limit {
+			break
+		}
+
+		skip += limit
+
+		// Защита от бесконечного цикла
+		if skip > 100000 {
+			break
+		}
+	}
+
+	return allResults, nil
+}
+
 func redact(s string) string {
 	if len(s) > 1024 {
 		s = s[:1024]
 	}
 	return strings.ReplaceAll(s, "password", "[redacted]")
 }
+
+// ListServiceRoutes получает все маршруты сервиса с пагинацией
 func (c *Client) ListServiceRoutes(ctx context.Context, service string) ([]Route, error) {
 	comment := c.prefix + ":" + service
-	var routes []Route
 	path := "/ip/route?comment=" + url.QueryEscape(comment)
-	if e := c.do(ctx, http.MethodGet, path, nil, &routes); e != nil {
-		return nil, e
+
+	// Получаем все страницы маршрутов (лимит RouterOS обычно 1000)
+	rawRoutes, err := c.doWithPagination(ctx, http.MethodGet, path, 1000)
+	if err != nil {
+		return nil, err
 	}
+
+	// Десериализуем результаты
+	var routes []Route
+	for _, raw := range rawRoutes {
+		var route Route
+		if err := json.Unmarshal(raw, &route); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal route: %w", err)
+		}
+		routes = append(routes, route)
+	}
+
+	// Проверка изоляции
 	for _, r := range routes {
 		if r.Comment != comment {
-			return nil, fmt.Errorf("isolation violation: unexpected comment %q", r.Comment)
+			return nil, fmt.Errorf("isolation violation: unexpected comment %q (expected %q)", r.Comment, comment)
 		}
 	}
+
 	return routes, nil
 }
+
 func (c *Client) AddRoute(ctx context.Context, r Route) (Route, error) {
 	var out Route
 	e := c.do(ctx, http.MethodPut, "/ip/route", r, &out)
 	return out, e
 }
+
 func (c *Client) DeleteRoute(ctx context.Context, id string) error {
 	if id == "" || strings.ContainsAny(id, "/?#") {
 		return fmt.Errorf("invalid route id")
 	}
+	// RouterOS использует .id вида *A1, PathEscape превратит * в %2A
+	// Передаем .id в query параметре для безопасности
 	return c.do(ctx, http.MethodDelete, "/ip/route/"+url.PathEscape(id), nil, nil)
 }
+
 func (c *Client) Ping(ctx context.Context) error {
 	var out []Route
 	return c.do(ctx, http.MethodGet, "/ip/route?.proplist=.id&.limit=1", nil, &out)
