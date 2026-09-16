@@ -50,8 +50,6 @@ type Syncer struct {
 }
 
 // NewSyncer создаёт новый синхронизатор.
-// ИСПРАВЛЕНО: создаётся http.Client с таймаутом вместо передачи
-// time.Duration напрямую в NewHTTP (который ожидает *http.Client).
 func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, n notifier.Notifier) *Syncer {
 	to := cfg.External.HTTPTimeout
 	if to == 0 {
@@ -117,9 +115,9 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, confirm bool
 		return res, fmt.Errorf("diff: %w", err)
 	}
 	res.Added = len(diff.Add)
-	res.Removed = len(diff.Delete)
-	res.Total = len(existing) + len(diff.Add) - len(diff.Delete)
-	res.Changed = len(diff.Add) > 0 || len(diff.Delete) > 0
+	res.Removed = len(diff.Remove)
+	res.Total = len(existing) + len(diff.Add) - len(diff.Remove)
+	res.Changed = len(diff.Add) > 0 || len(diff.Remove) > 0
 	if dry {
 		log.Info("dry-run completed", "added", res.Added, "removed", res.Removed, "total", res.Total, "changed", res.Changed)
 		return res, nil
@@ -133,38 +131,35 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, confirm bool
 		}
 	}
 	if len(existing) > 0 {
-		ratio := float64(len(diff.Delete)) / float64(len(existing))
+		ratio := float64(len(diff.Remove)) / float64(len(existing))
 		if ratio > s.cfg.Safety.MaxDeleteRatio {
 			res.Error = fmt.Sprintf("delete ratio %.2f exceeds maximum %.2f", ratio, s.cfg.Safety.MaxDeleteRatio)
 			log.Error("delete ratio exceeded", "ratio", ratio, "max", s.cfg.Safety.MaxDeleteRatio)
 			return res, fmt.Errorf("%s", res.Error)
 		}
 	}
-	tx := mikrotik.NewTransaction(s.mt, name, s.cfg.MikroTik.CommentPrefix)
-	tx.Begin(ctx)
+
+	// ИСПРАВЛЕНО: создаем транзакцию с правильными параметрами
+	tx := mikrotik.NewTransaction(s.mt, s.cfg, name, log)
+	
+	// Преобразуем diff.Add в []mikrotik.Route
+	toAdd := make([]mikrotik.Route, 0, len(diff.Add))
 	for _, k := range diff.Add {
-		r := mikrotik.Route{DstAddress: k.CIDR, Gateway: k.Gateway, RoutingTable: k.Table, Distance: strconv.Itoa(k.Distance)}
-		if err := s.mt.AddRoute(ctx, r); err != nil {
-			tx.Rollback(ctx)
-			res.Error = err.Error()
-			log.Error("add route failed, rolled back", "route", k.CIDR, "err", err)
-			return res, fmt.Errorf("add route: %w", err)
-		}
+		toAdd = append(toAdd, mikrotik.Route{
+			DstAddress:   k.CIDR,
+			Gateway:      k.Gateway,
+			RoutingTable: k.Table,
+			Distance:     strconv.Itoa(k.Distance),
+		})
 	}
-	for _, k := range diff.Delete {
-		r := mikrotik.Route{DstAddress: k.CIDR, Gateway: k.Gateway, RoutingTable: k.Table, Distance: strconv.Itoa(k.Distance)}
-		if err := s.mt.DeleteRoute(ctx, r); err != nil {
-			tx.Rollback(ctx)
-			res.Error = err.Error()
-			log.Error("delete route failed, rolled back", "route", k.CIDR, "err", err)
-			return res, fmt.Errorf("delete route: %w", err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
+
+	// ИСПРАВЛЕНО: используем Apply вместо Begin/Commit
+	if err := tx.Apply(ctx, toAdd, diff.Remove); err != nil {
 		res.Error = err.Error()
-		log.Error("commit failed", "err", err)
-		return res, fmt.Errorf("commit: %w", err)
+		log.Error("transaction failed", "err", err)
+		return res, fmt.Errorf("transaction: %w", err)
 	}
+
 	elapsed := time.Since(start)
 	logging.LogSyncResult(log, res, elapsed)
 	s.notify.Notify(ctx, res)
@@ -226,7 +221,8 @@ func (s *Syncer) collect(ctx context.Context, name string) ([]RouteKey, error) {
 	case classifier.Static:
 		raw, err = collectors.NewStatic(s.http).Collect(ctx, name, ov)
 	case classifier.Dynamic:
-		raw, err = collectors.NewDynamic(s.http, resolver.New(s.cfg.External)).Collect(ctx, name, ov)
+		// ИСПРАВЛЕНО: передаем правильные параметры в resolver.NewResolver
+		raw, err = collectors.NewDynamic(s.http, resolver.NewResolver(s.cfg.External.Resolver, s.http)).Collect(ctx, name, ov)
 	default:
 		return nil, fmt.Errorf("unknown classifier %s", class)
 	}
@@ -277,6 +273,7 @@ func (s *Syncer) AddService(ctx context.Context, name string, prefixes []string,
 		s.cfg.Overrides = make(map[string]config.ServiceOverride)
 	}
 	s.cfg.Overrides[name] = override
+	// ИСПРАВЛЕНО: используем новый метод Save
 	return s.cfg.Save()
 }
 
@@ -302,7 +299,8 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 			return fmt.Errorf("list routes: %w", err)
 		}
 		for _, r := range routes {
-			if err := s.mt.DeleteRoute(ctx, r); err != nil {
+			// ИСПРАВЛЕНО: передаем ID маршрута вместо самой структуры
+			if err := s.mt.DeleteRoute(ctx, r.ID); err != nil {
 				s.log.Warn("failed to delete route on removal", "service", name, "route", r.DstAddress, "err", err)
 			}
 		}
@@ -331,7 +329,7 @@ func (s *Syncer) Restore(ctx context.Context, name string, id string) error {
 		return fmt.Errorf("load backup: %w", err)
 	}
 	for _, r := range routes {
-		if err := s.mt.AddRoute(ctx, r); err != nil {
+		if _, err := s.mt.AddRoute(ctx, r); err != nil {
 			return fmt.Errorf("restore route %s: %w", r.DstAddress, err)
 		}
 	}
@@ -426,8 +424,6 @@ func (s *Syncer) createSnapshot(ctx context.Context, name string, desired []Rout
 // ======================== ДОБАВЛЕННЫЕ МЕТОДЫ (Этап 1) ========================
 
 // Snapshot возвращает карту количества маршрутов по каждому сервису.
-// Используется в Web UI для отображения общей статистики.
-// ДОБАВЛЕНО: метод вызывался в server.go, но отсутствовал.
 func (s *Syncer) Snapshot(ctx context.Context) (map[string]int, error) {
 	result := make(map[string]int, len(s.cfg.Services))
 	for _, name := range s.cfg.Services {
@@ -443,21 +439,16 @@ func (s *Syncer) Snapshot(ctx context.Context) (map[string]int, error) {
 }
 
 // PingMikroTik проверяет доступность MikroTik RouterOS.
-// Возвращает nil, если соединение установлено успешно.
-// ДОБАВЛЕНО: метод вызывался в server.go (с опечаткой), но отсутствовал.
 func (s *Syncer) PingMikroTik(ctx context.Context) error {
 	return s.mt.Ping(ctx)
 }
 
 // SyncOneResult синхронизирует один сервис и возвращает Result.
-// Используется в REST API для dry-run операций.
-// ДОБАВЛЕНО: метод вызывался в server.go, но отсутствовал.
 func (s *Syncer) SyncOneResult(ctx context.Context, name string, dry bool) (Result, error) {
 	return s.SyncService(ctx, name, dry, false)
 }
 
 // RouteCount возвращает общее количество синхронизированных маршрутов.
-// ДОБАВЛЕНО: вспомогательный метод для Web UI.
 func (s *Syncer) RouteCount(ctx context.Context) (int, error) {
 	snap, err := s.Snapshot(ctx)
 	if err != nil {
