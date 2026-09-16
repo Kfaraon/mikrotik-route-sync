@@ -21,41 +21,40 @@ func NewCDNCollector(asn int) Collector {
 
 func (c *CDNCollector) Name() string { return "cdn" }
 
-// Словарь известных CDN провайдеров и их источников IP
+// cdnURLs содержит маппинг известных ASN CDN-провайдеров на их публичные списки IP.
+// Примечание: Akamai (AS20940) намеренно исключён из этого списка.
+// Согласно архитектуре, для Akamai следует использовать метод "asn" (BGPView/RIPEstat).
 var cdnURLs = map[int]string{
-	13335: "https://www.cloudflare.com/ips-v4",                // Cloudflare
-	16509: "https://ip-ranges.amazonaws.com/ip-ranges.json",   // AWS CloudFront
-	15169: "https://www.gstatic.com/ipranges/goog.json",       // Google
-	20940: "akamai",                                           // Akamai (специальный обработчик)
+	13335: "https://www.cloudflare.com/ips-v4",              // Cloudflare
+	16509: "https://ip-ranges.amazonaws.com/ip-ranges.json", // AWS CloudFront
+	15169: "https://www.gstatic.com/ipranges/goog.json",     // Google
 }
 
 func (c *CDNCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
 	url, ok := cdnURLs[c.asn]
 	if !ok {
-		return nil, fmt.Errorf("no CDN URL for ASN %d", c.asn)
-	}
-
-	// Специальная обработка для Akamai
-	if c.asn == 20940 {
-		akamaiCollector := NewAkamaiCollector("") // передаем пустой ключ, будет использован публичный список
-		return akamaiCollector.Collect(ctx, service, opts)
+		return nil, fmt.Errorf("no static CDN URL for ASN %d (use 'asn' method instead)", c.asn)
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read body: %w", err)
 	}
 
 	var prefixes []string
@@ -137,7 +136,6 @@ func splitLines(s string) []string {
 
 func trimLine(s string) string {
 	s = strings.TrimSpace(s)
-	// Удаляем комментарии
 	if idx := strings.Index(s, "#"); idx >= 0 {
 		s = strings.TrimSpace(s[:idx])
 	}
