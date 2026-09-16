@@ -5,13 +5,22 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/pkg/cidrutil"
 )
 
-type Validator struct{ Safety config.Safety }
+type Validator struct {
+	Safety config.SafetyConfig
+}
 
-var blocked = mustPrefixes([]string{"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32", "::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "100::/64", "2001:db8::/32", "fc00::/7", "fe80::/10", "ff00::/8"})
+var blocked = mustPrefixes([]string{
+	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+	"169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24",
+	"192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
+	"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
+	"::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96",
+	"100::/64", "2001:db8::/32", "fc00::/7", "fe80::/10", "ff00::/8",
+})
 
 func mustPrefixes(xs []string) []netip.Prefix {
 	r := make([]netip.Prefix, 0, len(xs))
@@ -20,27 +29,30 @@ func mustPrefixes(xs []string) []netip.Prefix {
 	}
 	return r
 }
+
 func overlapsBlocked(p netip.Prefix) bool {
 	for _, b := range blocked {
 		if b.Addr().BitLen() != p.Addr().BitLen() {
 			continue
 		}
-		if b.Contains(p.Addr()) || p.Contains(b.Addr()) {
+		if b.Overlaps(p) {
 			return true
 		}
 	}
 	return false
 }
-func (v Validator) Validate(raw []string, ov config.Override) ([]netip.Prefix, error) {
+
+func (v Validator) Validate(raw []string, ov config.ServiceOverride) ([]netip.Prefix, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("collector returned zero prefixes")
 	}
-	norm, err := cidrutil.NormalizeAll(raw)
+	norm, err := aggregator.NormalizeAll(raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("normalize: %w", err)
 	}
-	excludes, _ := cidrutil.NormalizeAll(ov.Exclude)
-	includes, _ := cidrutil.NormalizeAll(ov.IncludeOnly)
+	excludes, _ := aggregator.NormalizeAll(ov.Exclude)
+	includes, _ := aggregator.NormalizeAll(ov.IncludeOnly)
+
 	out := make([]netip.Prefix, 0, len(norm))
 	for _, p := range norm {
 		if overlapsBlocked(p) {
@@ -57,7 +69,7 @@ func (v Validator) Validate(raw []string, ov config.Override) ([]netip.Prefix, e
 		}
 		skip := false
 		for _, x := range excludes {
-			if cidrutil.ContainsPrefix(x, p) || cidrutil.ContainsPrefix(p, x) {
+			if aggregator.ContainsPrefix(x, p) || aggregator.ContainsPrefix(p, x) {
 				skip = true
 				break
 			}
@@ -68,7 +80,7 @@ func (v Validator) Validate(raw []string, ov config.Override) ([]netip.Prefix, e
 		if len(includes) > 0 {
 			ok := false
 			for _, x := range includes {
-				if cidrutil.ContainsPrefix(x, p) {
+				if aggregator.ContainsPrefix(x, p) {
 					ok = true
 					break
 				}
@@ -79,7 +91,7 @@ func (v Validator) Validate(raw []string, ov config.Override) ([]netip.Prefix, e
 		}
 		out = append(out, p)
 	}
-	out = cidrutil.RemoveContained(out)
+	out = aggregator.RemoveContained(out)
 	limit := ov.MaxPrefixes
 	if limit == 0 {
 		limit = 10000
@@ -92,8 +104,9 @@ func (v Validator) Validate(raw []string, ov config.Override) ([]netip.Prefix, e
 	}
 	return out, nil
 }
+
 func SanitizeComment(s string) error {
-	if strings.ContainsAny(s, "\"\\\n\r") {
+	if strings.ContainsAny(s, "\\"\\\\"\\"\\n\\r") {
 		return fmt.Errorf("unsafe service/comment characters")
 	}
 	return nil
