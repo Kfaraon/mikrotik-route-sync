@@ -1,0 +1,478 @@
+openapi: 3.1.0
+info:
+  title: MikroTik Route Sync API
+  description: REST API для управления маршрутами на MikroTik RouterOS
+  version: 1.0.0
+  contact:
+    name: MikroTik Route Sync
+    url: https://github.com/Kfaraon/mikrotik-route-sync
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Локальный сервер разработки
+
+security:
+  - basicAuth: []
+  - cookieAuth: []
+
+paths:
+  /status:
+    get:
+      summary: Получить общий статус системы
+      tags: [System]
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+
+  /services:
+    get:
+      summary: Получить список всех сервисов
+      tags: [Services]
+      responses:
+        '200':
+          description: Список сервисов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Service'
+
+  /services/sync:
+    post:
+      summary: Запустить синхронизацию набора сервисов
+      tags: [Services]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                services:
+                  type: array
+                  items:
+                    type: string
+                force:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Синхронизация запущена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResponse'
+        '400':
+          description: Ошибка валидации
+        '409':
+          description: Конфликт (синхронизация уже запущена)
+
+  /services/{name}/sync:
+    post:
+      summary: Синхронизировать конкретный сервис
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Синхронизация завершена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResponse'
+        '404':
+          description: Сервис не найден
+
+  /services/{name}/dry-run:
+    post:
+      summary: Получить план изменений без применения
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: План изменений
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DryRunResponse'
+
+  /services/{name}:
+    delete:
+      summary: Удалить сервис и его маршруты
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Сервис удалён
+        '404':
+          description: Сервис не найден
+
+  /schedules:
+    get:
+      summary: Получить все расписания
+      tags: [Schedules]
+      responses:
+        '200':
+          description: Расписания
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Schedules'
+
+  /schedules/{service}:
+    put:
+      summary: Изменить расписание сервиса
+      tags: [Schedules]
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                schedule:
+                  type: string
+      responses:
+        '200':
+          description: Расписание обновлено
+        '400':
+          description: Невалидное расписание
+
+  /logs:
+    get:
+      summary: Получить логи
+      tags: [Logs]
+      parameters:
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [debug, info, warn, error]
+        - name: service
+          in: query
+          schema:
+            type: string
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 10000
+      responses:
+        '200':
+          description: Список логов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+
+  /history:
+    get:
+      summary: Получить историю синхронизаций
+      tags: [History]
+      parameters:
+        - name: service
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: История синхронизаций
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HistoryEntry'
+
+  /healthz:
+    get:
+      summary: Liveness probe
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Сервис жив
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Сервис готов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+        '503':
+          description: Сервис не готов
+
+  /ws:
+    get:
+      summary: WebSocket для live-обновлений
+      tags: [WebSocket]
+      responses:
+        '101':
+          description: Switching Protocols
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session_id
+
+  schemas:
+    StatusResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          type: object
+          properties:
+            version:
+              type: string
+            uptime:
+              type: string
+            mikrotik_status:
+              type: string
+              enum: [connected, disconnected, error]
+            bot_status:
+              type: string
+              enum: [connected, disconnected]
+            services_count:
+              type: integer
+            routes_count:
+              type: integer
+            last_sync:
+              type: string
+              format: date-time
+            next_sync:
+              type: string
+              format: date-time
+
+    Service:
+      type: object
+      properties:
+        name:
+          type: string
+        method:
+          type: string
+        routes_count:
+          type: integer
+        last_sync:
+          type: string
+          format: date-time
+        next_sync:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [ok, degraded, error]
+        last_duration_ms:
+          type: integer
+
+    SyncResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          type: object
+          properties:
+            services:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  status:
+                    type: string
+                  added:
+                    type: integer
+                  removed:
+                    type: integer
+                  unchanged:
+                    type: integer
+                  error:
+                    type: string
+        error:
+          type: string
+
+    DryRunResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          type: object
+          properties:
+            service:
+              type: string
+            method:
+              type: string
+            collected:
+              type: integer
+            aggregated:
+              type: integer
+            existing:
+              type: integer
+            to_add:
+              type: integer
+            to_remove:
+              type: integer
+            unchanged:
+              type: integer
+
+    Schedules:
+      type: object
+      properties:
+        global:
+          type: string
+        groups:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              schedule:
+                type: string
+              services:
+                type: array
+                items:
+                  type: string
+        services:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              schedule:
+                type: string
+
+    HistoryEntry:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        service:
+          type: string
+        method:
+          type: string
+        collected:
+          type: integer
+        aggregated:
+          type: integer
+        added:
+          type: integer
+        removed:
+          type: integer
+        status:
+          type: string
+        duration_ms:
+          type: integer
+        error:
+          type: string
+
+tags:
+  - name: System
+    description: Системные операции
+  - name: Services
+    description: Управление сервисами
+  - name: Schedules
+    description: Управление расписаниями
+  - name: Logs
+    description: Просмотр логов
+  - name: History
+    description: История синхронизаций
+  - name: Health
+    description: Health checks
+  - name: WebSocket
+    description: WebSocket соединения
