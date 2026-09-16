@@ -9,8 +9,8 @@ services:
     mem_limit: 128m
     cpus: 1.0
     volumes:
-      - ./config.yaml:/data/config.yaml:ro
-      - ./data:/data
-      - ./logs:/var/log/mikrotik-sync
+     - ./config.yaml:/data/config.yaml:ro
+     - cache_volume:/data/cache.db
+     - ./logs:/var/log/mikrotik-route-sync
     ports:
       - "127.0.0.1:8080:8080"
