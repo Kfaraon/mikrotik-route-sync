@@ -1,7 +1,6 @@
 package aggregator
 
 import (
-	"fmt"
 	"math/big"
 	"net/netip"
 	"sort"
@@ -89,7 +88,6 @@ func (t *RadixTree) Collect() []netip.Prefix {
 		}
 	}
 
-	// Separate IPv4 and IPv6
 	walk(t.root, [16]byte{}, 0, false)
 	return result
 }
@@ -98,7 +96,6 @@ func canMerge(a, b netip.Prefix) (netip.Prefix, bool) {
 	if a.Bits() != b.Bits() || a.Bits() == 0 || a.Addr().Is4() != b.Addr().Is4() {
 		return netip.Prefix{}, false
 	}
-	// Check if they differ only in the last bit of the parent
 	parentBits := a.Bits() - 1
 	parentA := netip.PrefixFrom(a.Addr(), parentBits).Masked()
 	parentB := netip.PrefixFrom(b.Addr(), parentBits).Masked()
@@ -106,60 +103,6 @@ func canMerge(a, b netip.Prefix) (netip.Prefix, bool) {
 		return parentA, true
 	}
 	return netip.Prefix{}, false
-}
-
-func Aggregate(prefixes []netip.Prefix) ([]string, error) {
-	if len(prefixes) == 0 {
-		return nil, nil
-	}
-
-	// Validate and mask all prefixes
-	masked := make([]netip.Prefix, 0, len(prefixes))
-	for _, p := range prefixes {
-		if !p.IsValid() {
-			continue
-		}
-		masked = append(masked, p.Masked())
-	}
-
-	if len(masked) == 0 {
-		return nil, nil
-	}
-
-	// Sort by bits (longer prefixes first) then by address
-	sort.Slice(masked, func(i, j int) bool {
-		if masked[i].Bits() != masked[j].Bits() {
-			return masked[i].Bits() > masked[j].Bits()
-		}
-		return masked[i].Addr().Less(masked[j].Addr())
-	})
-
-	// Build tree
-	tree := New()
-	for _, p := range masked {
-		tree.Insert(p)
-	}
-
-	// Collect unique prefixes from tree (handles overlapping)
-	collected := tree.Collect()
-
-	// Merge adjacent networks iteratively
-	merged := mergeAdjacent(collected)
-
-	// Convert to strings
-	result := make([]string, len(merged))
-	for i, p := range merged {
-		result[i] = p.String()
-	}
-
-	// Validate: sum of addresses should match
-	originalSum := sumAddresses(masked)
-	mergedSum := sumAddresses(merged)
-	if originalSum.Cmp(mergedSum) != 0 {
-		return nil, fmt.Errorf("aggregation validation failed: original=%s, merged=%s", originalSum.String(), mergedSum.String())
-	}
-
-	return result, nil
 }
 
 func mergeAdjacent(prefixes []netip.Prefix) []netip.Prefix {
@@ -172,7 +115,6 @@ func mergeAdjacent(prefixes []netip.Prefix) []netip.Prefix {
 
 	for changed {
 		changed = false
-		// Group by prefix length
 		byLen := make(map[int][]netip.Prefix)
 		for _, p := range current {
 			byLen[p.Bits()] = append(byLen[p.Bits()], p)
@@ -184,7 +126,6 @@ func mergeAdjacent(prefixes []netip.Prefix) []netip.Prefix {
 				next = append(next, group...)
 				continue
 			}
-			// Sort group
 			sort.Slice(group, func(i, j int) bool {
 				return group[i].Addr().Less(group[j].Addr())
 			})
