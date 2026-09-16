@@ -4,32 +4,34 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"strings"
 	"time"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
-// Config представляет основную конфигурацию приложения.
 type Config struct {
-	path     string `yaml:"-" mapstructure:"-"` // Путь к файлу конфигурации (не сериализуется)
-	Timezone string `yaml:"timezone" mapstructure:"timezone"`
-	CachePath string `yaml:"cache_path" mapstructure:"cache_path"` // Путь к файлу кэша
-	Logging  LoggingConfig  `yaml:"logging" mapstructure:"logging"`
-	MikroTik MikroTikConfig `yaml:"mikrotik" mapstructure:"mikrotik"`
-	Telegram TelegramConfig `yaml:"telegram" mapstructure:"telegram"`
-	Web      WebConfig      `yaml:"web" mapstructure:"web"`
-	Scheduler SchedulerConfig `yaml:"scheduler" mapstructure:"scheduler"`
-	Safety    SafetyConfig    `yaml:"safety" mapstructure:"safety"`
-	Retry     RetryConfig     `yaml:"retry" mapstructure:"retry"`
-	External  ExternalConfig  `yaml:"external" mapstructure:"external"`
-	Snapshots SnapshotsConfig `yaml:"snapshots" mapstructure:"snapshots"`
-	Schedules SchedulesConfig `yaml:"schedules" mapstructure:"schedules"`
-	Services  []string        `yaml:"services" mapstructure:"services"`
-	Overrides map[string]ServiceOverride `yaml:"overrides" mapstructure:"overrides"`
+	path      string                       `yaml:"-" mapstructure:"-"`
+	Timezone  string                       `yaml:"timezone" mapstructure:"timezone"`
+	CachePath string                       `yaml:"cache_path" mapstructure:"cache_path"`
+	Logging   LoggingConfig                `yaml:"logging" mapstructure:"logging"`
+	MikroTik  MikroTikConfig               `yaml:"mikrotik" mapstructure:"mikrotik"`
+	Telegram  TelegramConfig               `yaml:"telegram" mapstructure:"telegram"`
+	Web       WebConfig                    `yaml:"web" mapstructure:"web"`
+	Scheduler SchedulerConfig              `yaml:"scheduler" mapstructure:"scheduler"`
+	Safety    SafetyConfig                 `yaml:"safety" mapstructure:"safety"`
+	Retry     RetryConfig                  `yaml:"retry" mapstructure:"retry"`
+	External  ExternalConfig               `yaml:"external" mapstructure:"external"`
+	Snapshots SnapshotsConfig              `yaml:"snapshots" mapstructure:"snapshots"`
+	Schedules SchedulesConfig              `yaml:"schedules" mapstructure:"schedules"`
+	Services  []string                     `yaml:"services" mapstructure:"services"`
+	Overrides map[string]ServiceOverride   `yaml:"overrides" mapstructure:"overrides"`
 }
 
-// LoggingConfig ...
 type LoggingConfig struct {
 	Level      string `yaml:"level" mapstructure:"level"`
 	File       string `yaml:"file" mapstructure:"file"`
@@ -40,65 +42,58 @@ type LoggingConfig struct {
 	AlsoStdout bool   `yaml:"also_stdout" mapstructure:"also_stdout"`
 }
 
-// MikroTikConfig ...
 type MikroTikConfig struct {
-	Host          string `yaml:"host" mapstructure:"host"`
-	Port          int    `yaml:"port" mapstructure:"port"`
-	Username      string `yaml:"username" mapstructure:"username"`
-	Password      string `yaml:"password" mapstructure:"password"`
-	UseSSL        bool   `yaml:"use_ssl" mapstructure:"use_ssl"`
-	VerifySSL     bool   `yaml:"verify_ssl" mapstructure:"verify_ssl"`
+	Host          string        `yaml:"host" mapstructure:"host"`
+	Port          int           `yaml:"port" mapstructure:"port"`
+	Username      string        `yaml:"username" mapstructure:"username"`
+	Password      string        `yaml:"password" mapstructure:"password"`
+	UseSSL        bool          `yaml:"use_ssl" mapstructure:"use_ssl"`
+	VerifySSL     bool          `yaml:"verify_ssl" mapstructure:"verify_ssl"`
 	Timeout       time.Duration `yaml:"timeout" mapstructure:"timeout"`
-	Gateway       string `yaml:"gateway" mapstructure:"gateway"`
-	RoutingTable  string `yaml:"routing_table" mapstructure:"routing_table"`
-	Distance      int    `yaml:"distance" mapstructure:"distance"`
-	CommentPrefix string `yaml:"comment_prefix" mapstructure:"comment_prefix"`
-	RateLimit     int    `yaml:"rate_limit" mapstructure:"rate_limit"`
+	Gateway       string        `yaml:"gateway" mapstructure:"gateway"`
+	RoutingTable  string        `yaml:"routing_table" mapstructure:"routing_table"`
+	Distance      int           `yaml:"distance" mapstructure:"distance"`
+	CommentPrefix string        `yaml:"comment_prefix" mapstructure:"comment_prefix"`
+	RateLimit     int           `yaml:"rate_limit" mapstructure:"rate_limit"`
 }
 
-// TelegramConfig ...
 type TelegramConfig struct {
-	Enabled           bool     `yaml:"enabled" mapstructure:"enabled"`
-	BotToken          string   `yaml:"bot_token" mapstructure:"bot_token"`
-	ChatID            string   `yaml:"chat_id" mapstructure:"chat_id"`
-	AuthorizedChatIDs []string `yaml:"authorized_chat_ids" mapstructure:"authorized_chat_ids"`
-	RateLimit         int      `yaml:"rate_limit" mapstructure:"rate_limit"`
+	Enabled           bool               `yaml:"enabled" mapstructure:"enabled"`
+	BotToken          string             `yaml:"bot_token" mapstructure:"bot_token"`
+	ChatID            string             `yaml:"chat_id" mapstructure:"chat_id"`
+	AuthorizedChatIDs []string           `yaml:"authorized_chat_ids" mapstructure:"authorized_chat_ids"`
+	RateLimit         int                `yaml:"rate_limit" mapstructure:"rate_limit"`
 	WeeklyReport      WeeklyReportConfig `yaml:"weekly_report" mapstructure:"weekly_report"`
 	Buttons           ButtonsConfig      `yaml:"buttons" mapstructure:"buttons"`
 }
 
-// WeeklyReportConfig ...
 type WeeklyReportConfig struct {
 	Enabled  bool   `yaml:"enabled" mapstructure:"enabled"`
 	Schedule string `yaml:"schedule" mapstructure:"schedule"`
 }
 
-// ButtonsConfig ...
 type ButtonsConfig struct {
 	Enabled             bool `yaml:"enabled" mapstructure:"enabled"`
 	MaxSelectedServices int  `yaml:"max_selected_services" mapstructure:"max_selected_services"`
 }
 
-// WebConfig ...
 type WebConfig struct {
-	Enabled         bool     `yaml:"enabled" mapstructure:"enabled"`
-	Listen          string   `yaml:"listen" mapstructure:"listen"`
-	AllowedCIDRs    []string `yaml:"allowed_cidrs" mapstructure:"allowed_cidrs"`
-	TrustedProxies  []string `yaml:"trusted_proxies" mapstructure:"trusted_proxies"`
+	Enabled         bool          `yaml:"enabled" mapstructure:"enabled"`
+	Listen          string        `yaml:"listen" mapstructure:"listen"`
+	AllowedCIDRs    []string      `yaml:"allowed_cidrs" mapstructure:"allowed_cidrs"`
+	TrustedProxies  []string      `yaml:"trusted_proxies" mapstructure:"trusted_proxies"`
 	Auth            WebAuthConfig `yaml:"auth" mapstructure:"auth"`
 	SessionTimeout  time.Duration `yaml:"session_timeout" mapstructure:"session_timeout"`
 	CSRFEnabled     bool          `yaml:"csrf_enabled" mapstructure:"csrf_enabled"`
 	SecurityHeaders bool          `yaml:"security_headers" mapstructure:"security_headers"`
 }
 
-// WebAuthConfig ...
 type WebAuthConfig struct {
 	Enabled  bool   `yaml:"enabled" mapstructure:"enabled"`
 	Username string `yaml:"username" mapstructure:"username"`
 	Password string `yaml:"password" mapstructure:"password"`
 }
 
-// SchedulerConfig ...
 type SchedulerConfig struct {
 	Parallel       bool          `yaml:"parallel" mapstructure:"parallel"`
 	MaxConcurrent  int           `yaml:"max_concurrent" mapstructure:"max_concurrent"`
@@ -107,7 +102,6 @@ type SchedulerConfig struct {
 	CachePurge     string        `yaml:"cache_purge" mapstructure:"cache_purge"`
 }
 
-// SafetyConfig ...
 type SafetyConfig struct {
 	MaxDeleteRatio          float64 `yaml:"max_delete_ratio" mapstructure:"max_delete_ratio"`
 	RequireConfirmationOver int     `yaml:"require_confirmation_over" mapstructure:"require_confirmation_over"`
@@ -117,7 +111,6 @@ type SafetyConfig struct {
 	MaxASNPrefixes          int     `yaml:"max_asn_prefixes" mapstructure:"max_asn_prefixes"`
 }
 
-// RetryConfig ...
 type RetryConfig struct {
 	MaxAttempts int           `yaml:"max_attempts" mapstructure:"max_attempts"`
 	BaseDelay   time.Duration `yaml:"base_delay" mapstructure:"base_delay"`
@@ -125,54 +118,48 @@ type RetryConfig struct {
 	Jitter      bool          `yaml:"jitter" mapstructure:"jitter"`
 }
 
-// ExternalConfig ...
 type ExternalConfig struct {
 	HTTPTimeout   time.Duration `yaml:"http_timeout" mapstructure:"http_timeout"`
 	MaxResponseMB int           `yaml:"max_response_mb" mapstructure:"max_response_mb"`
 	BGPViewAPIKey string        `yaml:"bgpview_api_key" mapstructure:"bgpview_api_key"`
-	AkamaiAPIKey   string        `yaml:"akamai_api_key"`
+	AkamaiAPIKey  string        `yaml:"akamai_api_key" mapstructure:"akamai_api_key"`
 	RDAPTimeout   time.Duration `yaml:"rdap_timeout" mapstructure:"rdap_timeout"`
 	Resolver      string        `yaml:"resolver" mapstructure:"resolver"`
 }
 
-// SnapshotsConfig ...
 type SnapshotsConfig struct {
 	Enabled  bool          `yaml:"enabled" mapstructure:"enabled"`
 	TTL      time.Duration `yaml:"ttl" mapstructure:"ttl"`
 	MaxCount int           `yaml:"max_count" mapstructure:"max_count"`
 }
 
-// SchedulesConfig ...
 type SchedulesConfig struct {
-	Global   string                 `yaml:"global" mapstructure:"global"`
-	Groups   map[string]GroupConfig `yaml:"groups" mapstructure:"groups"`
+	Global   string                     `yaml:"global" mapstructure:"global"`
+	Groups   map[string]GroupConfig     `yaml:"groups" mapstructure:"groups"`
 	Services map[string]ServiceSchedule `yaml:"services" mapstructure:"services"`
 }
 
-// GroupConfig ...
 type GroupConfig struct {
 	Schedule string   `yaml:"schedule" mapstructure:"schedule"`
 	Services []string `yaml:"services" mapstructure:"services"`
 }
 
-// ServiceSchedule ...
 type ServiceSchedule struct {
 	Schedule string `yaml:"schedule" mapstructure:"schedule"`
 }
 
-// ServiceOverride ...
 type ServiceOverride struct {
 	Method          string   `yaml:"method" mapstructure:"method"`
 	Domains         []string `yaml:"domains" mapstructure:"domains"`
 	StaticURL       string   `yaml:"static_url" mapstructure:"static_url"`
 	AlsoCDN         []string `yaml:"also_cdn" mapstructure:"also_cdn"`
 	MaxASNPrefixes  int      `yaml:"max_asn_prefixes" mapstructure:"max_asn_prefixes"`
+	MaxPrefixes     int      `yaml:"max_prefixes" mapstructure:"max_prefixes"`
 	Exclude         []string `yaml:"exclude" mapstructure:"exclude"`
 	IncludeOnly     []string `yaml:"include_only" mapstructure:"include_only"`
 	RefreshInterval string   `yaml:"refresh_interval" mapstructure:"refresh_interval"`
 }
 
-// Load загружает конфигурацию из файла по указанному пути.
 func Load(path string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigFile(path)
@@ -183,11 +170,19 @@ func Load(path string) (*Config, error) {
 
 	var c Config
 	c.path = path
-	if err := v.Unmarshal(&c); err != nil {
+
+	// DecodeHook для корректного парсинга time.Duration из строк ("30s", "5m")
+	decoderConfig := viper.DecodeHook(
+		mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			mapstructure.StringToSliceHookFunc(","),
+		),
+	)
+
+	if err := v.Unmarshal(&c, decoderConfig); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	// Проверка прав доступа к файлу конфигурации
 	if fi, err := os.Stat(path); err == nil {
 		if fi.Mode().Perm() != 0600 {
 			return nil, fmt.Errorf("config file %s must have 0600 permissions", path)
@@ -196,7 +191,6 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("cannot stat config file: %w", err)
 	}
 
-	// Установка значений по умолчанию
 	setDefaults(&c)
 
 	if err := c.Validate(); err != nil {
@@ -206,7 +200,6 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
-// setDefaults устанавливает значения по умолчанию для полей конфигурации.
 func setDefaults(c *Config) {
 	if c.CachePath == "" {
 		c.CachePath = "cache.db"
@@ -217,10 +210,35 @@ func setDefaults(c *Config) {
 	if c.Safety.MaxDeleteRatio == 0 {
 		c.Safety.MaxDeleteRatio = 0.5
 	}
-	// ... другие значения по умолчанию
+	if c.Safety.MinPrefixV4 == 0 {
+		c.Safety.MinPrefixV4 = 9
+	}
+	if c.Safety.MinPrefixV6 == 0 {
+		c.Safety.MinPrefixV6 = 32
+	}
+	if c.MikroTik.Distance == 0 {
+		c.MikroTik.Distance = 1
+	}
+	if c.MikroTik.CommentPrefix == "" {
+		c.MikroTik.CommentPrefix = "AUTO"
+	}
+	if c.External.MaxResponseMB == 0 {
+		c.External.MaxResponseMB = 50
+	}
+	if c.Snapshots.MaxCount == 0 {
+		c.Snapshots.MaxCount = 10
+	}
+	if c.Snapshots.TTL == 0 {
+		c.Snapshots.TTL = 7 * 24 * time.Hour
+	}
+	if c.Web.SessionTimeout == 0 {
+		c.Web.SessionTimeout = 30 * time.Minute
+	}
+	if c.Timezone == "" {
+		c.Timezone = "UTC"
+	}
 }
 
-// Validate проверяет корректность конфигурации.
 func (c *Config) Validate() error {
 	if c.MikroTik.Host == "" {
 		return fmt.Errorf("mikrotik.host is required")
@@ -228,33 +246,27 @@ func (c *Config) Validate() error {
 	if c.MikroTik.Username == "" {
 		return fmt.Errorf("mikrotik.username is required")
 	}
-	// Проверка расписаний
 	if err := c.Schedules.validate(); err != nil {
 		return fmt.Errorf("schedules validation failed: %w", err)
 	}
-	// Проверка прав доступа к директории конфига
-	dir := filepath.Dir(c.Logging.File)
-	if fi, err := os.Stat(dir); err == nil {
-		if fi.Mode().Perm() != 0700 {
-			return fmt.Errorf("config directory %s must have 0700 permissions", dir)
+	if c.Logging.File != "" {
+		dir := filepath.Dir(c.Logging.File)
+		if fi, err := os.Stat(dir); err == nil {
+			if fi.Mode().Perm()&0077 != 0 {
+				return fmt.Errorf("config directory %s permissions too open (%o)", dir, fi.Mode().Perm())
+			}
 		}
 	}
 	return nil
 }
 
-// SchedulesConfig.validate проверяет корректность расписаний.
 func (s *SchedulesConfig) validate() error {
-	// TODO: Реализовать парсинг и валидацию cron-выражений и
-	// человекочитаемых расписаний (например, "every 6h").
-	// Пока просто проверяем, что они не пустые.
 	if s.Global == "" {
 		return fmt.Errorf("global schedule is required")
 	}
 	return nil
 }
 
-// EffectiveSchedule возвращает эффективное расписание для сервиса
-// с учетом приоритета: сервис -> группа -> глобальное.
 func (c *Config) EffectiveSchedule(service string) string {
 	if s, ok := c.Schedules.Services[service]; ok && s.Schedule != "" {
 		return s.Schedule
@@ -269,7 +281,6 @@ func (c *Config) EffectiveSchedule(service string) string {
 	return c.Schedules.Global
 }
 
-// ServicesInGroup возвращает список сервисов, входящих в указанную группу.
 func (c *Config) ServicesInGroup(group string) []string {
 	if g, ok := c.Schedules.Groups[group]; ok {
 		return g.Services
@@ -277,15 +288,91 @@ func (c *Config) ServicesInGroup(group string) []string {
 	return nil
 }
 
-// AtomicWrite атомарно записывает конфигурацию в файл.
-func AtomicWrite(path string, c *Config) error {
-	data, err := yaml.Marshal(c)
-	if err != nil {
-		return err
+func (c *Config) ScheduleFor(service string) string {
+	return c.EffectiveSchedule(service)
+}
+
+var serviceNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+
+func ValidateServiceName(name string) bool {
+	if name == "" || len(name) > 128 {
+		return false
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return err
+	return serviceNameRE.MatchString(name)
+}
+
+func (c *Config) Set(path string, value any) error {
+	if path == "" {
+		return fmt.Errorf("empty path")
 	}
-	return os.Rename(tmp, path)
+
+	switch {
+	case strings.HasPrefix(path, "schedules.services."):
+		parts := strings.Split(path, ".")
+		if len(parts) != 4 || parts[3] != "schedule" {
+			return fmt.Errorf("unsupported path: %s", path)
+		}
+		serviceName := parts[2]
+		schedule, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("value must be a string for schedule")
+		}
+		if c.Schedules.Services == nil {
+			c.Schedules.Services = make(map[string]ServiceSchedule)
+		}
+		c.Schedules.Services[serviceName] = ServiceSchedule{Schedule: schedule}
+		return nil
+
+	case path == "web.listen":
+		s, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("value must be a string")
+		}
+		c.Web.Listen = s
+		return nil
+
+	case path == "web.enabled":
+		b, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("value must be a bool")
+		}
+		c.Web.Enabled = b
+		return nil
+
+	default:
+		return setByReflection(c, path, value)
+	}
+}
+
+func setByReflection(obj any, path string, value any) error {
+	v := reflect.ValueOf(obj)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if !v.IsValid() || v.Kind() != reflect.Struct {
+		return fmt.Errorf("unsupported object type")
+	}
+
+	parts := strings.Split(path, ".")
+	current := v
+
+	for _, part := range parts {
+		if current.Kind() == reflect.Ptr {
+			current = current.Elem()
+		}
+		field := current.FieldByNameFunc(func(name string) bool {
+			return strings.EqualFold(name, part)
+		})
+		if !field.IsValid() || !field.CanSet() {
+			return fmt.Errorf("field %q not found or not settable", part)
+		}
+		current = field
+	}
+
+	newVal := reflect.ValueOf(value)
+	if !newVal.Type().AssignableTo(current.Type()) {
+		return fmt.Errorf("cannot assign %T to %s", value, current.Type())
+	}
+	current.Set(newVal)
+	return nil
 }
