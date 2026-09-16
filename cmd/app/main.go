@@ -711,6 +711,7 @@ func tailLog(path string, n int, follow bool) error {
 	// Ждем сигнала завершения
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	<-sigCh
 	cancel()
 	t.Stop()
