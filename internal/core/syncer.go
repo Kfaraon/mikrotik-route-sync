@@ -4,22 +4,39 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/netip"
+	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/audit"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/history"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/mikrotik"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/validator"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
 )
+
+type Result struct {
+	Service   string    `json:"service"`
+	Changed   bool      `json:"changed"`
+	DryRun    bool      `json:"dry_run"`
+	Added     int       `json:"added"`
+	Removed   int       `json:"removed"`
+	Total     int       `json:"total"`
+	Desired   int       `json:"desired"`
+	Error     string    `json:"error,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
 
 type Syncer struct {
 	cfg    *config.Config
@@ -28,371 +45,13 @@ type Syncer struct {
 	notify notifier.Notifier
 	mt     *mikrotik.Client
 	http   *collectors.HTTP
-	mu     sync.Mutex
 	locks  map[string]*sync.Mutex
-}
-type Result struct {
-	Service, Method, Status                                    string
-	Collected, Aggregated, Existing, Added, Removed, Unchanged int
-	Duration                                                   time.Duration
-	Error                                                      string
+	mu     sync.Mutex
 }
 
-func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, n notifier.Notifier) *Syncer {
-	to, _ := time.ParseDuration(cfg.External.HTTPTimeout)
-	if to == 0 {
-		to = 15 * time.Second
-	}
-	return &Syncer{cfg: cfg, log: log, cache: cache, notify: n, mt: mikrotik.New(cfg.MikroTik), http: collectors.NewHTTP(to, cfg.External.MaxResponseMB), locks: map[string]*sync.Mutex{}}
-}
-func (s *Syncer) lockFor(name string) *sync.Mutex {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	m := s.locks[name]
-	if m == nil {
-		m = &sync.Mutex{}
-		s.locks[name] = m
-	}
-	return m
-}
-func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool) error {
-	sem := make(chan struct{}, s.cfg.Scheduler.MaxConcurrent)
-	var wg sync.WaitGroup
-	var first error
-	var em sync.Mutex
-	for _, name := range services {
-		name := name
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-			defer func() { <-sem }()
-			r, e := s.SyncService(ctx, name, dry, false)
-			s.log.Info("sync result", "service", name, "status", r.Status, "added", r.Added, "removed", r.Removed, "unchanged", r.Unchanged, "duration_ms", r.Duration.Milliseconds())
-			if e != nil {
-				em.Lock()
-				if first == nil {
-					first = e
-				}
-				em.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-	return first
-}
-func (s *Syncer) collect(ctx context.Context, name string) ([]string, string, error) {
-	ov := s.cfg.Overrides[name]
-	cl := classifier.Classify(name, ov.Method)
-	domains := ov.Domains
-	if len(domains) == 0 {
-		domains = cl.Domains
-	}
-	var all []string
-	methods := []string{}
-	for _, m := range cl.Methods {
-		methods = append(methods, m)
-		switch m {
-		case "cdn", "static_url":
-			urls := cl.StaticURLs
-			if ov.StaticURL != "" {
-				urls = []string{ov.StaticURL}
-			}
-			for _, u := range urls {
-				x, e := s.http.FetchLines(ctx, u)
-				if e != nil && strings.Contains(u, "fastly") {
-					x, e = s.http.FetchFastly(ctx)
-				}
-				if e != nil {
-					return nil, strings.Join(methods, "+"), e
-				}
-				all = append(all, x...)
-			}
-		case "dynamic":
-			x, e := collectors.DNS(ctx, domains, s.cfg.External.Resolver)
-			if e != nil {
-				return nil, strings.Join(methods, "+"), e
-			}
-			all = append(all, x...)
-		case "asn", "whois":
-			asn := cl.ASN
-			if asn == "" && strings.HasPrefix(strings.ToUpper(name), "AS") {
-				asn = strings.ToUpper(name)
-			}
-			if asn == "" {
-				return nil, strings.Join(methods, "+"), fmt.Errorf("ASN resolution for %s requires explicit ASN/known service in this build", name)
-			}
-			x, e := collectors.BGPViewASN(ctx, s.http, asn)
-			if e != nil {
-				return nil, strings.Join(methods, "+"), e
-			}
-			limit := ov.MaxASNPrefixes
-			if limit == 0 {
-				limit = s.cfg.Safety.MaxASNPrefixes
-			}
-			if limit > 0 && len(x) > limit {
-				return nil, strings.Join(methods, "+"), fmt.Errorf("ASN prefix count %d exceeds safety limit %d", len(x), limit)
-			}
-			all = append(all, x...)
-		default:
-			return nil, strings.Join(methods, "+"), fmt.Errorf("unsupported collector %s", m)
-		}
-	}
-	return all, strings.Join(methods, "+"), nil
-}
-func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) (res Result, err error) {
-	start := time.Now()
-	res.Service = name
-	defer func() {
-		res.Duration = time.Since(start)
-		if err != nil {
-			res.Status = "error"
-			res.Error = err.Error()
-		} else if res.Status == "" {
-			res.Status = "ok"
-		}
-		rec := history.Record{Time: time.Now(), Service: name, Method: res.Method, Status: res.Status, Error: res.Error, Collected: res.Collected, Aggregated: res.Aggregated, Added: res.Added, Removed: res.Removed, Unchanged: res.Unchanged, DurationMS: res.Duration.Milliseconds()}
-		_ = s.cache.Put("history", fmt.Sprintf("%020d:%s", time.Now().UnixNano(), name), rec)
-	}()
-	if !config.ValidateServiceName(name) {
-		return res, fmt.Errorf("invalid service name")
-	}
-	m := s.lockFor(name)
-	m.Lock()
-	defer m.Unlock()
-	if err = validator.SanitizeComment(name); err != nil {
-		return res, err
-	}
-	raw, method, e := s.collect(ctx, name)
-	if e != nil {
-		return res, e
-	}
-	res.Method = method
-	res.Collected = len(raw)
-	v := validator.Validator{Safety: s.cfg.Safety}
-	valid, e := v.Validate(raw, s.cfg.Overrides[name])
-	if e != nil {
-		return res, e
-	}
-	agg, e := aggregator.Aggregate(valid)
-	if e != nil {
-		s.log.Error("aggregation failed; using validated list", "service", name, "error", e)
-		agg = valid
-	}
-	res.Aggregated = len(agg)
-	if len(agg) == 0 {
-		return res, fmt.Errorf("fail-closed: desired route set is empty")
-	}
-	existing, e := s.mt.ListServiceRoutes(ctx, name)
-	if e != nil {
-		return res, e
-	}
-	res.Existing = len(existing)
-	desired := make([]RouteKey, 0, len(agg))
-	for _, p := range agg {
-		desired = append(desired, RouteKey{CIDR: p.String(), Gateway: s.cfg.MikroTik.Gateway, Table: s.cfg.MikroTik.RoutingTable, Distance: s.cfg.MikroTik.Distance})
-	}
-	d, e := ComputeDiff(desired, existing)
-	if e != nil {
-		return res, e
-	}
-	res.Added, res.Removed, res.Unchanged = len(d.Add), len(d.Remove), d.Unchanged
-	if len(existing) > 0 && len(desired) == 0 {
-		return res, fmt.Errorf("fail-closed: existing routes present but desired is empty")
-	}
-	ratio := 0.0
-	if len(existing) > 0 {
-		ratio = float64(len(d.Remove)) / float64(len(existing))
-	}
-	if !force && ratio > s.cfg.Safety.MaxDeleteRatio {
-		return res, fmt.Errorf("safe-diff blocked removal of %d/%d routes (%.1f%% > %.1f%%); use --force after dry-run", len(d.Remove), len(existing), 100*ratio, 100*s.cfg.Safety.MaxDeleteRatio)
-	}
-	if dry {
-		res.Status = "dry-run"
-		return res, nil
-	}
-	snapshotKey := fmt.Sprintf("%s:%020d", name, time.Now().UnixNano())
-	_ = s.cache.Put("snapshots", snapshotKey, existing)
-	comment := s.cfg.MikroTik.CommentPrefix + ":" + name
-	added := []mikrotik.Route{}
-	removed := []mikrotik.Route{}
-	rollback := func(cause error) error {
-		var rerr error
-		for _, r := range added {
-			if r.ID != "" {
-				if e := s.mt.DeleteRoute(ctx, r.ID); e != nil {
-					rerr = e
-				}
-			}
-		}
-		for _, r := range removed {
-			r.ID = ""
-			if _, e := s.mt.AddRoute(ctx, r); e != nil {
-				rerr = e
-			}
-		}
-		if rerr != nil {
-			return fmt.Errorf("apply failed: %v; rollback degraded: %v", cause, rerr)
-		}
-		return fmt.Errorf("apply failed and rolled back: %w", cause)
-	}
-	for _, k := range d.Add {
-		r, e := s.mt.AddRoute(ctx, mikrotik.Route{DstAddress: k.CIDR, Gateway: k.Gateway, RoutingTable: k.Table, Distance: strconv.Itoa(k.Distance), Comment: comment})
-		if e != nil {
-			return res, rollback(e)
-		}
-		added = append(added, r)
-	}
-	for _, r := range d.Remove {
-		if e := s.mt.DeleteRoute(ctx, r.ID); e != nil {
-			return res, rollback(e)
-		}
-		removed = append(removed, r)
-	}
-	_ = s.notify.Send(ctx, fmt.Sprintf("✅ %s: +%d -%d =%d", name, res.Added, res.Removed, res.Unchanged))
-	return res, nil
-}
-func (s *Syncer) AddService(ctx context.Context, name string) error {
-	if !config.ValidateServiceName(name) {
-		return fmt.Errorf("invalid service")
-	}
-	for _, x := range s.cfg.Services {
-		if x == name {
-			return fmt.Errorf("service already exists")
-		}
-	}
-	if _, e := s.SyncService(ctx, name, true, false); e != nil {
-		return fmt.Errorf("preflight: %w", e)
-	}
-	s.cfg.Services = append(s.cfg.Services, name)
-	return nil
-}
-func PrefixesToStrings(ps []netip.Prefix) []string {
-	out := make([]string, len(ps))
-	for i, p := range ps {
-		out[i] = p.String()
-	}
-	return out
-}
-
-func (s *Syncer) RemoveService(ctx context.Context, name string, force bool) error {
-	if !config.ValidateServiceName(name) {
-		return fmt.Errorf("invalid service")
-	}
-	routes, err := s.mt.ListServiceRoutes(ctx, name)
-	if err != nil {
-		return err
-	}
-	if len(routes) > s.cfg.Safety.RequireConfirmationOver && !force {
-		return fmt.Errorf("removal of %d routes requires --force", len(routes))
-	}
-	snap := fmt.Sprintf("%s:%020d", name, time.Now().UnixNano())
-	_ = s.cache.Put("snapshots", snap, routes)
-	deleted := []mikrotik.Route{}
-	for _, r := range routes {
-		if err := s.mt.DeleteRoute(ctx, r.ID); err != nil {
-			for _, old := range deleted {
-				old.ID = ""
-				_, _ = s.mt.AddRoute(ctx, old)
-			}
-			return fmt.Errorf("remove service failed and rollback attempted: %w", err)
-		}
-		deleted = append(deleted, r)
-	}
-	return nil
-}
-
-func (s *Syncer) Backup(ctx context.Context, name string) ([]mikrotik.Route, error) {
-	return s.mt.ListServiceRoutes(ctx, name)
-}
-func (s *Syncer) Restore(ctx context.Context, name string, routes []mikrotik.Route) error {
-	if !config.ValidateServiceName(name) {
-		return fmt.Errorf("invalid service")
-	}
-	current, err := s.mt.ListServiceRoutes(ctx, name)
-	if err != nil {
-		return err
-	}
-	for _, r := range current {
-		if err = s.mt.DeleteRoute(ctx, r.ID); err != nil {
-			return err
-		}
-	}
-	for _, r := range routes {
-		r.ID = ""
-		r.Comment = s.cfg.MikroTik.CommentPrefix + ":" + name
-		if _, err = s.mt.AddRoute(ctx, r); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ListServices возвращает список всех сервисов из конфигурации
-func (s *Syncer) ListServices() []string {
-	return s.cfg.Services
-}
-
-// SyncOne синхронизирует один сервис (обёртка для SyncService)
-func (s *Syncer) SyncOne(ctx context.Context, name string) error {
-	_, err := s.SyncService(ctx, name, false, false)
-	return err
-}
-
-// SetServiceSchedule устанавливает расписание для сервиса
-// TODO: Реализовать сохранение в конфиг и hot-reload
-func (s *Syncer) SetServiceSchedule(name string, schedule string) error {
-	// Пока возвращаем ошибку "не реализовано"
-	return fmt.Errorf("SetServiceSchedule not implemented yet")
-}
-
-// === Методы для работы со snapshots ===
-
-// CreateSnapshot создаёт snapshot текущих маршрутов сервиса
-func (s *Syncer) CreateSnapshot(ctx context.Context, service string) (string, error) {
-	routes, err := s.mt.ListServiceRoutes(ctx, service)
-	if err != nil {
-		return "", fmt.Errorf("list routes: %w", err)
-	}
-
-	snapshotID, err := s.cache.CreateSnapshot(service, routes)
-	if err != nil {
-		return "", fmt.Errorf("create snapshot: %w", err)
-	}
-
-	s.log.Info("snapshot created", "service", service, "snapshot_id", snapshotID, "routes", len(routes))
-	return snapshotID, nil
-}
-
-// ListSnapshots возвращает список snapshots для сервиса
-func (s *Syncer) ListSnapshots(ctx context.Context, service string) ([]storage.SnapshotInfo, error) {
-	return s.cache.ListSnapshots(service)
-}
-
-// GetSnapshot получает snapshot по ID
-func (s *Syncer) GetSnapshot(ctx context.Context, service, snapshotID string, v any) error {
-	return s.cache.GetSnapshot(service, snapshotID, v)
-}
-
-// DeleteSnapshot удаляет snapshot
-func (s *Syncer) DeleteSnapshot(ctx context.Context, service, snapshotID string) error {
-	return s.cache.DeleteSnapshot(service, snapshotID)
-}
-
-// CleanupSnapshots удаляет snapshots старше TTL
-func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.Duration) (int, error) {
-	return s.cache.CleanupExpiredSnapshots(ttl)
-}
-
-// ===== В начало файла добавить в блок imports: =====
-// 	"net/http"
-
-// ===== Заменить функцию NewSyncer: =====
-/*
+// NewSyncer создаёт новый синхронизатор.
+// ИСПРАВЛЕНО: создаётся http.Client с таймаутом вместо передачи
+// time.Duration напрямую в NewHTTP (который ожидает *http.Client).
 func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, n notifier.Notifier) *Syncer {
 	to := cfg.External.HTTPTimeout
 	if to == 0 {
@@ -409,11 +68,366 @@ func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, n not
 		locks:  map[string]*sync.Mutex{},
 	}
 }
-*/
 
-// ===== Добавить в конец файла: =====
+func (s *Syncer) lockFor(name string) *sync.Mutex {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.locks[name]
+	if m == nil {
+		m = &sync.Mutex{}
+		s.locks[name] = m
+	}
+	return m
+}
+
+func (s *Syncer) SyncService(ctx context.Context, name string, dry, confirm bool) (Result, error) {
+	log := s.log.With("service", name, "dry", dry)
+	start := time.Now()
+	m := s.lockFor(name)
+	m.Lock()
+	defer m.Unlock()
+	res := Result{Service: name, DryRun: dry, Timestamp: start}
+	if dry {
+		log.Info("starting dry-run sync")
+	} else {
+		log.Info("starting sync")
+	}
+	if !config.ValidateServiceName(name) {
+		res.Error = "invalid service name"
+		log.Error("invalid service name", "name", name)
+		return res, fmt.Errorf("invalid service name")
+	}
+	desired, err := s.collect(ctx, name)
+	if err != nil {
+		res.Error = err.Error()
+		log.Error("collection failed", "err", err)
+		return res, fmt.Errorf("collect: %w", err)
+	}
+	res.Desired = len(desired)
+	existing, err := s.mt.ListServiceRoutes(ctx, name)
+	if err != nil {
+		res.Error = err.Error()
+		log.Error("failed to list routes", "err", err)
+		return res, fmt.Errorf("list routes: %w", err)
+	}
+	diff, err := ComputeDiff(desired, existing)
+	if err != nil {
+		res.Error = err.Error()
+		log.Error("diff computation failed", "err", err)
+		return res, fmt.Errorf("diff: %w", err)
+	}
+	res.Added = len(diff.Add)
+	res.Removed = len(diff.Delete)
+	res.Total = len(existing) + len(diff.Add) - len(diff.Delete)
+	res.Changed = len(diff.Add) > 0 || len(diff.Delete) > 0
+	if dry {
+		log.Info("dry-run completed", "added", res.Added, "removed", res.Removed, "total", res.Total, "changed", res.Changed)
+		return res, nil
+	}
+	limit := s.cfg.Safety.RequireConfirmationOver
+	if limit > 0 && res.Added > limit {
+		if !confirm {
+			res.Error = fmt.Sprintf("change affects %d routes, exceeds confirmation threshold %d", res.Added, limit)
+			log.Warn("confirmation required", "added", res.Added, "threshold", limit)
+			return res, fmt.Errorf("%s", res.Error)
+		}
+	}
+	if len(existing) > 0 {
+		ratio := float64(len(diff.Delete)) / float64(len(existing))
+		if ratio > s.cfg.Safety.MaxDeleteRatio {
+			res.Error = fmt.Sprintf("delete ratio %.2f exceeds maximum %.2f", ratio, s.cfg.Safety.MaxDeleteRatio)
+			log.Error("delete ratio exceeded", "ratio", ratio, "max", s.cfg.Safety.MaxDeleteRatio)
+			return res, fmt.Errorf("%s", res.Error)
+		}
+	}
+	tx := mikrotik.NewTransaction(s.mt, name, s.cfg.MikroTik.CommentPrefix)
+	tx.Begin(ctx)
+	for _, k := range diff.Add {
+		r := mikrotik.Route{DstAddress: k.CIDR, Gateway: k.Gateway, RoutingTable: k.Table, Distance: strconv.Itoa(k.Distance)}
+		if err := s.mt.AddRoute(ctx, r); err != nil {
+			tx.Rollback(ctx)
+			res.Error = err.Error()
+			log.Error("add route failed, rolled back", "route", k.CIDR, "err", err)
+			return res, fmt.Errorf("add route: %w", err)
+		}
+	}
+	for _, k := range diff.Delete {
+		r := mikrotik.Route{DstAddress: k.CIDR, Gateway: k.Gateway, RoutingTable: k.Table, Distance: strconv.Itoa(k.Distance)}
+		if err := s.mt.DeleteRoute(ctx, r); err != nil {
+			tx.Rollback(ctx)
+			res.Error = err.Error()
+			log.Error("delete route failed, rolled back", "route", k.CIDR, "err", err)
+			return res, fmt.Errorf("delete route: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		res.Error = err.Error()
+		log.Error("commit failed", "err", err)
+		return res, fmt.Errorf("commit: %w", err)
+	}
+	elapsed := time.Since(start)
+	logging.LogSyncResult(log, res, elapsed)
+	s.notify.Notify(ctx, res)
+	s.createSnapshot(ctx, name, desired)
+	return res, nil
+}
+
+func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool) error {
+	log := s.log.With("services", len(services), "dry", dry)
+	log.Info("starting multi-service sync")
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, s.cfg.Scheduler.MaxConcurrent)
+	results := make(chan Result, len(services))
+	var first error
+	var once sync.Once
+	for _, name := range services {
+		name := name
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			r, e := s.SyncService(ctx, name, dry, false)
+			if e != nil {
+				once.Do(func() { first = e })
+			}
+			results <- r
+		}()
+	}
+	wg.Wait()
+	close(results)
+	var summary []Result
+	for r := range results {
+		summary = append(summary, r)
+	}
+	logging.LogSyncSummary(log, summary)
+	return first
+}
+
+func (s *Syncer) collect(ctx context.Context, name string) ([]RouteKey, error) {
+	ov := s.cfg.Overrides[name]
+	class := classifier.Classify(name, ov)
+	if class == "" {
+		return nil, fmt.Errorf("unable to classify service %s", name)
+	}
+	var raw []string
+	var err error
+	switch class {
+	case classifier.CDN:
+		raw, err = collectors.NewCDN(s.http).Collect(ctx, name, ov)
+	case classifier.ASN:
+		raw, err = collectors.NewASN(s.http).Collect(ctx, name, ov)
+	case classifier.Whois:
+		raw, err = collectors.NewWhois(s.http).Collect(ctx, name, ov)
+	case classifier.Static:
+		raw, err = collectors.NewStatic(s.http).Collect(ctx, name, ov)
+	case classifier.Dynamic:
+		raw, err = collectors.NewDynamic(s.http, resolver.New(s.cfg.External)).Collect(ctx, name, ov)
+	default:
+		return nil, fmt.Errorf("unknown classifier %s", class)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("collector %s: %w", class, err)
+	}
+	v := validator.Validator{Safety: s.cfg.Safety}
+	prefixes, err := v.Validate(raw, ov)
+	if err != nil {
+		return nil, fmt.Errorf("validation: %w", err)
+	}
+	agg, err := aggregator.Aggregate(prefixes)
+	if err != nil {
+		return nil, fmt.Errorf("aggregation: %w", err)
+	}
+	desired := make([]RouteKey, 0, len(agg))
+	for _, p := range agg {
+		desired = append(desired, RouteKey{CIDR: p.String(), Gateway: s.cfg.MikroTik.Gateway, Table: s.cfg.MikroTik.RoutingTable, Distance: s.cfg.MikroTik.Distance})
+	}
+	sort.Slice(desired, func(i, j int) bool {
+		if desired[i].CIDR == desired[j].CIDR {
+			return desired[i].Distance < desired[j].Distance
+		}
+		return desired[i].CIDR < desired[j].CIDR
+	})
+	return desired, nil
+}
+
+func (s *Syncer) AddService(ctx context.Context, name string, prefixes []string, override config.ServiceOverride) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !config.ValidateServiceName(name) {
+		return fmt.Errorf("invalid service name: %s", name)
+	}
+	if err := validator.SanitizeComment(name); err != nil {
+		return err
+	}
+	for _, p := range s.cfg.Services {
+		if p == name {
+			return fmt.Errorf("service %s already exists", name)
+		}
+	}
+	if len(prefixes) > 0 {
+		override.StaticURL = ""
+	}
+	s.cfg.Services = append(s.cfg.Services, name)
+	if s.cfg.Overrides == nil {
+		s.cfg.Overrides = make(map[string]config.ServiceOverride)
+	}
+	s.cfg.Overrides[name] = override
+	return s.cfg.Save()
+}
+
+func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !config.ValidateServiceName(name) {
+		return fmt.Errorf("invalid service name: %s", name)
+	}
+	idx := -1
+	for i, n := range s.cfg.Services {
+		if n == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("service %s not found", name)
+	}
+	if purgeRoutes {
+		routes, err := s.mt.ListServiceRoutes(ctx, name)
+		if err != nil {
+			return fmt.Errorf("list routes: %w", err)
+		}
+		for _, r := range routes {
+			if err := s.mt.DeleteRoute(ctx, r); err != nil {
+				s.log.Warn("failed to delete route on removal", "service", name, "route", r.DstAddress, "err", err)
+			}
+		}
+	}
+	s.cfg.Services = append(s.cfg.Services[:idx], s.cfg.Services[idx+1:]...)
+	delete(s.cfg.Overrides, name)
+	return s.cfg.Save()
+}
+
+func (s *Syncer) Backup(ctx context.Context, name string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	routes, err := s.mt.ListServiceRoutes(ctx, name)
+	if err != nil {
+		return "", fmt.Errorf("list routes: %w", err)
+	}
+	key := "backup:" + name
+	return s.cache.SaveBackup(key, routes)
+}
+
+func (s *Syncer) Restore(ctx context.Context, name string, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	routes, err := s.cache.LoadBackup("backup:" + name)
+	if err != nil {
+		return fmt.Errorf("load backup: %w", err)
+	}
+	for _, r := range routes {
+		if err := s.mt.AddRoute(ctx, r); err != nil {
+			return fmt.Errorf("restore route %s: %w", r.DstAddress, err)
+		}
+	}
+	return nil
+}
+
+func (s *Syncer) ListServices(ctx context.Context) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.cfg.Services))
+	copy(out, s.cfg.Services)
+	sort.Strings(out)
+	return out
+}
+
+func (s *Syncer) SyncOne(ctx context.Context, name string) (Result, error) {
+	return s.SyncService(ctx, name, false, false)
+}
+
+func (s *Syncer) SetServiceSchedule(name string, schedule string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !config.ValidateServiceName(name) {
+		return fmt.Errorf("invalid service name: %s", name)
+	}
+	if s.cfg.Schedules.Services == nil {
+		s.cfg.Schedules.Services = make(map[string]config.ServiceSchedule)
+	}
+	s.cfg.Schedules.Services[name] = config.ServiceSchedule{Schedule: schedule}
+	return s.cfg.Save()
+}
+
+func (s *Syncer) CreateSnapshot(ctx context.Context, service string, prefixes []netip.Prefix) (string, error) {
+	if !s.cfg.Snapshots.Enabled {
+		return "", nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	strs := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		strs[i] = p.String()
+	}
+	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	if err := s.cache.SaveSnapshot(service, id, strs); err != nil {
+		return "", fmt.Errorf("save snapshot: %w", err)
+	}
+	s.CleanupSnapshots(service)
+	return id, nil
+}
+
+func (s *Syncer) ListSnapshots(service string) []string {
+	return s.cache.ListSnapshots(service)
+}
+
+func (s *Syncer) GetSnapshot(service, id string) ([]string, error) {
+	return s.cache.LoadSnapshot(service, id)
+}
+
+func (s *Syncer) DeleteSnapshot(service, id string) error {
+	return s.cache.DeleteSnapshot(service, id)
+}
+
+func (s *Syncer) CleanupSnapshots(service string) {
+	ids := s.cache.ListSnapshots(service)
+	maxCount := s.cfg.Snapshots.MaxCount
+	if len(ids) > maxCount {
+		sort.Strings(ids)
+		for _, id := range ids[:len(ids)-maxCount] {
+			_ = s.cache.DeleteSnapshot(service, id)
+		}
+	}
+}
+
+func (s *Syncer) createSnapshot(ctx context.Context, name string, desired []RouteKey) {
+	if !s.cfg.Snapshots.Enabled {
+		return
+	}
+	prefixes := make([]netip.Prefix, 0, len(desired))
+	for _, k := range desired {
+		p, err := netip.ParsePrefix(k.CIDR)
+		if err != nil {
+			s.log.Warn("skipping invalid prefix for snapshot", "prefix", k.CIDR)
+			continue
+		}
+		prefixes = append(prefixes, p)
+	}
+	if _, err := s.CreateSnapshot(ctx, name, prefixes); err != nil {
+		s.log.Warn("failed to create snapshot", "service", name, "err", err)
+	}
+}
+
+// ======================== ДОБАВЛЕННЫЕ МЕТОДЫ (Этап 1) ========================
 
 // Snapshot возвращает карту количества маршрутов по каждому сервису.
+// Используется в Web UI для отображения общей статистики.
+// ДОБАВЛЕНО: метод вызывался в server.go, но отсутствовал.
 func (s *Syncer) Snapshot(ctx context.Context) (map[string]int, error) {
 	result := make(map[string]int, len(s.cfg.Services))
 	for _, name := range s.cfg.Services {
@@ -429,16 +443,21 @@ func (s *Syncer) Snapshot(ctx context.Context) (map[string]int, error) {
 }
 
 // PingMikroTik проверяет доступность MikroTik RouterOS.
+// Возвращает nil, если соединение установлено успешно.
+// ДОБАВЛЕНО: метод вызывался в server.go (с опечаткой), но отсутствовал.
 func (s *Syncer) PingMikroTik(ctx context.Context) error {
 	return s.mt.Ping(ctx)
 }
 
 // SyncOneResult синхронизирует один сервис и возвращает Result.
+// Используется в REST API для dry-run операций.
+// ДОБАВЛЕНО: метод вызывался в server.go, но отсутствовал.
 func (s *Syncer) SyncOneResult(ctx context.Context, name string, dry bool) (Result, error) {
 	return s.SyncService(ctx, name, dry, false)
 }
 
 // RouteCount возвращает общее количество синхронизированных маршрутов.
+// ДОБАВЛЕНО: вспомогательный метод для Web UI.
 func (s *Syncer) RouteCount(ctx context.Context) (int, error) {
 	snap, err := s.Snapshot(ctx)
 	if err != nil {
