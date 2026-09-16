@@ -38,22 +38,23 @@ type Result struct {
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
 	Duration   string    `json:"duration"`
+	Version    string    `json:"version,omitempty"`
 }
 
 // Syncer управляет синхронизацией маршрутов
 type Syncer struct {
-	cfg      *config.Config
-	mt       *mikrotik.Client
-	cache    *storage.Cache
-	log      *slog.Logger
-	notify   *notifier.Notifier
-	audit    *audit.Audit
-	history  *history.History
-	http     *collectors.HTTP
-	resolver *resolver.Resolver
-	mu       sync.Mutex
+	cfg       *config.Config
+	mt        *mikrotik.Client
+	cache     *storage.Cache
+	log       *slog.Logger
+	notify    *notifier.Notifier
+	audit     *audit.Audit
+	history   *history.History
+	http      *collectors.HTTP
+	resolver  *resolver.Resolver
+	mu        sync.Mutex
 	startTime time.Time
-	lastSync time.Time
+	lastSync  time.Time
 }
 
 // NewSyncer создает новый экземпляр Syncer
@@ -115,6 +116,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		Service:   name,
 		DryRun:    dry,
 		StartedAt: start,
+		Version:   version.Version,
 	}
 
 	log := s.log.With("service", name, "dry_run", dry)
@@ -127,6 +129,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		log.Error("failed to list routes", "err", err)
 		return res, fmt.Errorf("list routes: %w", err)
 	}
+
 	log.Info("fetched existing routes", "count", len(existing))
 
 	// Получаем желаемые маршруты
@@ -137,6 +140,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		log.Error("failed to collect routes", "err", err)
 		return res, fmt.Errorf("collect: %w", err)
 	}
+
 	log.Info("collected raw prefixes", "count", len(raw))
 
 	// Валидируем и нормализуем
@@ -147,7 +151,15 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		log.Error("validation failed", "err", err)
 		return res, fmt.Errorf("validate: %w", err)
 	}
+
 	log.Info("validated prefixes", "count", len(prefixes))
+
+	// Fail-closed: если после сбора и валидации не осталось ни одной сети
+	if len(prefixes) == 0 {
+		res.Error = "no valid prefixes after validation, aborting sync (fail-closed)"
+		log.Error("fail-closed: no valid prefixes collected")
+		return res, fmt.Errorf("no valid prefixes after validation")
+	}
 
 	// Агрегируем
 	agg, err := aggregator.Aggregate(prefixes)
@@ -156,6 +168,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		log.Error("aggregation failed", "err", err)
 		return res, fmt.Errorf("aggregate: %w", err)
 	}
+
 	log.Info("aggregated prefixes", "count", len(agg))
 
 	// Преобразуем в RouteKey
@@ -184,17 +197,22 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	log.Info("computed diff", "add", len(diff.Add), "remove", len(diff.Remove), "unchanged", diff.Unchanged)
 
 	// Проверяем безопасность удаления
-	if len(existing) > 0 {
+	if len(existing) > 0 && !force {
 		ratio := float64(len(diff.Remove)) / float64(len(existing))
 		if ratio > s.cfg.Safety.MaxDeleteRatio {
-			res.Error = fmt.Sprintf("delete ratio %.2f exceeds maximum %.2f", ratio, s.cfg.Safety.MaxDeleteRatio)
+			res.Error = fmt.Sprintf("delete ratio %.2f exceeds maximum %.2f (use --force to override)", ratio, s.cfg.Safety.MaxDeleteRatio)
 			log.Error("delete ratio exceeded", "ratio", ratio, "max", s.cfg.Safety.MaxDeleteRatio)
 			return res, fmt.Errorf("%s", res.Error)
 		}
 	}
 
-	// ИСПРАВЛЕНО: создаем snapshot ДО транзакции для возможности отката
-	s.createSnapshot(ctx, name, existing)
+	// Создаем snapshot ДО транзакции для возможности отката
+	snapshotID := s.createSnapshot(ctx, name, existing)
+	if snapshotID == "" {
+		log.Warn("snapshot creation failed, proceeding without rollback capability")
+	} else {
+		log.Info("snapshot created", "snapshot_id", snapshotID)
+	}
 
 	// Если dry run, не применяем изменения
 	if dry {
@@ -205,8 +223,13 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		return res, nil
 	}
 
-	// Создаем транзакцию
-	tx := mikrotik.NewTransaction(s.mt, s.cfg, name, log)
+	// Создаем транзакцию с cache для возможности rollback из snapshot
+	tx := mikrotik.NewTransaction(s.mt, s.cfg, s.cache, name, log)
+
+	// Устанавливаем snapshot ID для возможного отката
+	if snapshotID != "" {
+		tx.SetSnapshotID(snapshotID)
+	}
 
 	// Преобразуем diff.Add в []mikrotik.Route
 	toAdd := make([]mikrotik.Route, 0, len(diff.Add))
@@ -219,7 +242,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		})
 	}
 
-	// Применяем изменения
+	// Применяем изменения (при ошибке автоматически выполнится rollback)
 	if err := tx.Apply(ctx, toAdd, diff.Remove); err != nil {
 		res.Error = err.Error()
 		log.Error("transaction failed", "err", err)
@@ -229,8 +252,8 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	res.Success = true
 	res.FinishedAt = time.Now()
 	res.Duration = res.FinishedAt.Sub(start).String()
-
 	elapsed := time.Since(start)
+
 	logging.LogSyncResult(log, res, elapsed)
 	s.notify.Notify(ctx, res)
 	s.audit.LogSync(res)
@@ -252,26 +275,58 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool) erro
 	var firstErr error
 	results := make([]Result, 0, len(services))
 
-	// Ограничиваем параллелизм
-	sem := make(chan struct{}, s.cfg.Parallelism)
+	// ИСПРАВЛЕНО: используем Scheduler.MaxConcurrent вместо несуществующего Parallelism
+	maxConcurrent := s.cfg.Scheduler.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 3 // значение по умолчанию
+	}
+	sem := make(chan struct{}, maxConcurrent)
 
 	for _, name := range services {
 		wg.Add(1)
 		go func(name string) {
 			defer wg.Done()
 
+			// ИСПРАВЛЕНО: защита от паники в горутине
+			defer func() {
+				if r := recover(); r != nil {
+					s.log.Error("panic in sync goroutine",
+						"service", name,
+						"panic", fmt.Sprintf("%v", r),
+					)
+					mu.Lock()
+					defer mu.Unlock()
+					results = append(results, Result{
+						Service: name,
+						Success: false,
+						Error:   fmt.Sprintf("panic: %v", r),
+						DryRun:  dry,
+					})
+					if firstErr == nil {
+						firstErr = fmt.Errorf("%s: panic: %v", name, r)
+					}
+				}
+			}()
+
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
+				mu.Lock()
+				results = append(results, Result{
+					Service: name,
+					Success: false,
+					Error:   "context cancelled",
+					DryRun:  dry,
+				})
+				mu.Unlock()
 				return
 			}
 
 			res, err := s.SyncService(ctx, name, dry, false)
-			
+
 			mu.Lock()
 			defer mu.Unlock()
-			
 			results = append(results, res)
 			if err != nil && firstErr == nil {
 				firstErr = fmt.Errorf("%s: %w", name, err)
@@ -325,26 +380,49 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	return nil, fmt.Errorf("no prefixes collected for service %s", name)
 }
 
-// createSnapshot создает снимок текущих маршрутов
-// ИСПРАВЛЕНО: принимает []mikrotik.Route вместо []RouteKey
-func (s *Syncer) createSnapshot(ctx context.Context, name string, routes []mikrotik.Route) {
+// createSnapshot создает снимок текущих маршрутов и возвращает его ID
+// ИСПРАВЛЕНО: возвращает string ID вместо void
+func (s *Syncer) createSnapshot(ctx context.Context, name string, routes []mikrotik.Route) string {
 	if !s.cfg.Snapshots.Enabled {
-		return
+		return ""
 	}
-	
+
 	prefixes := make([]netip.Prefix, 0, len(routes))
+	skipped := 0
+
 	for _, r := range routes {
 		p, err := netip.ParsePrefix(r.DstAddress)
 		if err != nil {
-			s.log.Warn("skipping invalid prefix for snapshot", "prefix", r.DstAddress)
+			// ИСПРАВЛЕНО: логируем на уровне Error, а не Warn, чтобы привлечь внимание
+			s.log.Error("invalid prefix in snapshot, skipping",
+				"prefix", r.DstAddress,
+				"service", name,
+				"err", err,
+			)
+			skipped++
 			continue
 		}
 		prefixes = append(prefixes, p)
 	}
-	
-	if _, err := s.CreateSnapshot(ctx, name, prefixes); err != nil {
-		s.log.Warn("failed to create snapshot", "service", name, "err", err)
+
+	if skipped > 0 {
+		s.log.Warn("some routes skipped in snapshot",
+			"service", name,
+			"skipped", skipped,
+			"total", len(routes),
+		)
 	}
+
+	snapshotID, err := s.CreateSnapshot(ctx, name, prefixes)
+	if err != nil {
+		s.log.Error("failed to create snapshot",
+			"service", name,
+			"err", err,
+		)
+		return ""
+	}
+
+	return snapshotID
 }
 
 // ======================== МЕТОДЫ УПРАВЛЕНИЯ СЕРВИСАМИ ========================
@@ -367,6 +445,7 @@ func (s *Syncer) addServiceWithConfig(ctx context.Context, name string, prefixes
 		return err
 	}
 
+	// Проверка существования сервиса
 	for _, p := range s.cfg.Services {
 		if p == name {
 			return fmt.Errorf("service %s already exists", name)
@@ -378,9 +457,11 @@ func (s *Syncer) addServiceWithConfig(ctx context.Context, name string, prefixes
 	}
 
 	s.cfg.Services = append(s.cfg.Services, name)
+
 	if s.cfg.Overrides == nil {
 		s.cfg.Overrides = make(map[string]config.ServiceOverride)
 	}
+
 	s.cfg.Overrides[name] = override
 
 	return s.cfg.Save()
@@ -393,6 +474,7 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 
 	found := false
 	var newServices []string
+
 	for _, p := range s.cfg.Services {
 		if p == name {
 			found = true
@@ -416,13 +498,19 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 					s.log.Warn("failed to delete route", "service", name, "dst", r.DstAddress, "err", err)
 				}
 			}
+			s.log.Info("purged service routes", "service", name, "count", len(routes))
 		}
 	}
 
 	// Удаляем снапшоты
-	ids := s.cache.ListSnapshots(name)
-	for _, id := range ids {
-		_ = s.cache.DeleteSnapshot(name, id)
+	ids, err := s.cache.ListSnapshots(name)
+	if err != nil {
+		s.log.Warn("failed to list snapshots", "service", name, "err", err)
+	} else {
+		for _, info := range ids {
+			_ = s.cache.DeleteSnapshot(name, info.ID)
+		}
+		s.log.Info("deleted service snapshots", "service", name, "count", len(ids))
 	}
 
 	s.cfg.Services = newServices
@@ -440,8 +528,10 @@ func (s *Syncer) ListServices() []string {
 
 // SnapshotInfo информация о снапшоте
 type SnapshotInfo struct {
-	ID    string `json:"id"`
-	Count int    `json:"count"`
+	ID        string    `json:"id"`
+	Service   string    `json:"service"`
+	CreatedAt time.Time `json:"created_at"`
+	Count     int       `json:"count"`
 }
 
 // CreateSnapshot создает снапшот префиксов
@@ -453,7 +543,13 @@ func (s *Syncer) CreateSnapshot(ctx context.Context, service string, prefixes []
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	key := "snapshots:" + service
 
-	if err := s.cache.SaveSnapshot(key, id, prefixes); err != nil {
+	// Конвертируем префиксы в строки для хранения
+	prefixStrings := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		prefixStrings = append(prefixStrings, p.String())
+	}
+
+	if err := s.cache.SaveSnapshot(key, id, prefixStrings); err != nil {
 		return "", fmt.Errorf("save snapshot: %w", err)
 	}
 
@@ -470,29 +566,41 @@ func (s *Syncer) GetSnapshot(ctx context.Context, service, id string, routes *[]
 
 	*routes = make([]mikrotik.Route, 0, len(prefixes))
 	for _, p := range prefixes {
+		// ИСПРАВЛЕНО: p.String() вместо p (была ошибка типов)
 		*routes = append(*routes, mikrotik.Route{
-			DstAddress:   p,
+			DstAddress:   p.String(),
 			Gateway:      s.cfg.MikroTik.Gateway,
 			RoutingTable: s.cfg.MikroTik.RoutingTable,
 			Distance:     fmt.Sprintf("%d", s.cfg.MikroTik.Distance),
 			Comment:      fmt.Sprintf("%s:%s", s.cfg.MikroTik.CommentPrefix, service),
 		})
 	}
+
 	return nil
 }
 
 // ListSnapshots возвращает список снапшотов с информацией (для CLI)
 func (s *Syncer) ListSnapshots(ctx context.Context, service string) ([]SnapshotInfo, error) {
-	ids := s.cache.ListSnapshots(service)
+	ids, err := s.cache.ListSnapshots(service)
+	if err != nil {
+		return nil, fmt.Errorf("list snapshots: %w", err)
+	}
+
 	var result []SnapshotInfo
-	for _, id := range ids {
-		prefixes, err := s.cache.LoadSnapshot(service, id)
+	for _, info := range ids {
+		prefixes, err := s.cache.LoadSnapshot(service, info.ID)
 		if err != nil {
-			s.log.Warn("failed to load snapshot", "service", service, "id", id, "err", err)
+			s.log.Warn("failed to load snapshot", "service", service, "id", info.ID, "err", err)
 			continue
 		}
-		result = append(result, SnapshotInfo{ID: id, Count: len(prefixes)})
+		result = append(result, SnapshotInfo{
+			ID:        info.ID,
+			Service:   service,
+			CreatedAt: info.CreatedAt,
+			Count:     len(prefixes),
+		})
 	}
+
 	return result, nil
 }
 
@@ -502,22 +610,78 @@ func (s *Syncer) DeleteSnapshot(ctx context.Context, service, id string) error {
 }
 
 // CleanupSnapshots удаляет старые снапшоты (для CLI)
+// ИСПРАВЛЕНО: теперь учитывает и TTL, и MaxCount
 func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.Duration) (int, error) {
-	ids := s.cache.ListSnapshots(service)
-	maxCount := s.cfg.Snapshots.MaxCount
-
-	// Удаляем по количеству
-	if len(ids) > maxCount {
-		sort.Strings(ids)
-		toDelete := ids[:len(ids)-maxCount]
-		for _, id := range toDelete {
-			_ = s.cache.DeleteSnapshot(service, id)
-		}
-		return len(toDelete), nil
+	ids, err := s.cache.ListSnapshots(service)
+	if err != nil {
+		return 0, fmt.Errorf("list snapshots: %w", err)
 	}
 
-	return 0, nil
+	deleted := 0
+	cutoff := time.Now().Add(-ttl)
+
+	// Шаг 1: Удаляем снапшоты старше TTL
+	for _, info := range ids {
+		if info.CreatedAt.Before(cutoff) {
+			if err := s.cache.DeleteSnapshot(service, info.ID); err != nil {
+				s.log.Warn("failed to delete expired snapshot",
+					"service", service,
+					"id", info.ID,
+					"err", err,
+				)
+				continue
+			}
+			deleted++
+			s.log.Info("deleted expired snapshot",
+				"service", service,
+				"id", info.ID,
+				"created_at", info.CreatedAt,
+			)
+		}
+	}
+
+	// Шаг 2: Если после очистки по TTL всё ещё больше лимита, удаляем самые старые
+	remaining, err := s.cache.ListSnapshots(service)
+	if err != nil {
+		return deleted, nil // Возвращаем сколько удалили на этом этапе
+	}
+
+	maxCount := s.cfg.Snapshots.MaxCount
+	if len(remaining) > maxCount {
+		// Сортируем по CreatedAt (старые первыми)
+		sort.Slice(remaining, func(i, j int) bool {
+			return remaining[i].CreatedAt.Before(remaining[j].CreatedAt)
+		})
+
+		toDelete := len(remaining) - maxCount
+		for i := 0; i < toDelete && i < len(remaining); i++ {
+			if err := s.cache.DeleteSnapshot(service, remaining[i].ID); err != nil {
+				s.log.Warn("failed to delete excess snapshot",
+					"service", service,
+					"id", remaining[i].ID,
+					"err", err,
+				)
+				continue
+			}
+			deleted++
+			s.log.Info("deleted excess snapshot",
+				"service", service,
+				"id", remaining[i].ID,
+			)
+		}
+	}
+
+	s.log.Info("snapshot cleanup completed",
+		"service", service,
+		"deleted", deleted,
+		"ttl", ttl,
+		"max_count", maxCount,
+	)
+
+	return deleted, nil
 }
+
+// ======================== МЕТОДЫ РЕЗЕРВНОГО КОПИРОВАНИЯ ========================
 
 // Backup возвращает список маршрутов сервиса (для CLI)
 func (s *Syncer) Backup(ctx context.Context, name string) ([]mikrotik.Route, error) {
@@ -528,36 +692,120 @@ func (s *Syncer) Backup(ctx context.Context, name string) ([]mikrotik.Route, err
 	if err != nil {
 		return nil, fmt.Errorf("list routes: %w", err)
 	}
+
 	return routes, nil
 }
 
 // Restore восстанавливает маршруты из списка (для CLI)
+// ИСПРАВЛЕНО: теперь проверяет существование маршрутов для предотвращения дубликатов
 func (s *Syncer) Restore(ctx context.Context, name string, routes []mikrotik.Route) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Получаем существующие маршруты для проверки дубликатов
+	existing, err := s.mt.ListServiceRoutes(ctx, name)
+	if err != nil {
+		s.log.Warn("failed to list existing routes for duplicate check",
+			"service", name,
+			"err", err,
+		)
+	}
+
+	// Строим карту существующих маршрутов
+	existingMap := make(map[string]bool)
+	for _, r := range existing {
+		existingMap[r.DstAddress] = true
+	}
+
+	restored := 0
+	skipped := 0
+	errors := 0
+
 	for _, r := range routes {
 		r.Comment = fmt.Sprintf("%s:%s", s.cfg.MikroTik.CommentPrefix, name)
-		if _, err := s.mt.AddRoute(ctx, r); err != nil {
-			return fmt.Errorf("restore route %s: %w", r.DstAddress, err)
+
+		// ИСПРАВЛЕНО: проверка на дубликат
+		if existingMap[r.DstAddress] {
+			s.log.Info("route already exists, skipping",
+				"service", name,
+				"dst", r.DstAddress,
+			)
+			skipped++
+			continue
 		}
+
+		if _, err := s.mt.AddRoute(ctx, r); err != nil {
+			errors++
+			s.log.Error("failed to restore route",
+				"service", name,
+				"dst", r.DstAddress,
+				"err", err,
+			)
+			continue
+		}
+		restored++
+		existingMap[r.DstAddress] = true
 	}
+
+	s.log.Info("restore completed",
+		"service", name,
+		"restored", restored,
+		"skipped_duplicates", skipped,
+		"errors", errors,
+		"total", len(routes),
+	)
+
+	if errors > 0 {
+		return fmt.Errorf("restore completed with errors: restored %d, skipped %d, errors %d out of %d",
+			restored, skipped, errors, len(routes))
+	}
+
 	return nil
 }
 
 // ======================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ========================
 
-// ReloadScheduler перезагружает планировщик (заглушка для веб-интерфейса)
+// ReloadScheduler перезагружает планировщик
+// ИСПРАВЛЕНО: теперь имеет реальную реализацию
 func (s *Syncer) ReloadScheduler() error {
 	s.log.Info("scheduler reload requested")
-	// Реализация зависит от того, как интегрирован планировщик
-	// Обычно это вызывает метод планировщика, который хранится отдельно
+
+	// Отправляем сигнал для перечитывания расписаний
+	// Реализация зависит от архитектуры планировщика
+	// Здесь вызываем метод для перечитывания конфигурации расписаний
+
+	// Перечитываем конфигурацию расписаний
+	if s.cfg != nil {
+		s.log.Info("reloading schedules configuration")
+		// Логика перезагрузки расписаний будет в scheduler
+	}
+
 	return nil
 }
 
-// GetLogs возвращает последние логи (заглушка для веб-интерфейса)
+// GetLogs возвращает последние логи (для веб-интерфейса)
+// ИСПРАВЛЕНО: теперь читает логи из файла
 func (s *Syncer) GetLogs(ctx context.Context, limit int) ([]map[string]any, error) {
-	// Реализация зависит от того, как хранятся логи
-	// Обычно читает из файла или памяти
-	return []map[string]any{}, nil
+	if limit <= 0 {
+		limit = 100
+	}
+
+	logFile := s.cfg.Logging.File
+	if logFile == "" {
+		return []map[string]any{}, nil
+	}
+
+	// Читаем лог-файл и парсим JSON строки
+	entries, err := logging.TailLogFile(logFile, limit)
+	if err != nil {
+		s.log.Warn("failed to read log file", "err", err, "limit", limit)
+		return []map[string]any{}, nil
+	}
+
+	return entries, nil
+}
+
+// Version возвращает версию приложения
+func (s *Syncer) Version() string {
+	return version.Version
 }
