@@ -89,9 +89,6 @@ MikroTik Route Sync — это приложение на Go для автома�
       validator/        — фильтрация сетей (RFC, ASN-проверка)
       version/          — версия приложения
       web/              — Web UI / REST API / WebSocket
-    pkg/
-      cidrutil/         — утилиты CIDR (нормализация, вложенность)
-      humanize/         — форматирование (длительность, размеры)
     docs/
       openapi.yaml      — OpenAPI 3.1 спецификация
       ARCHITECTURE.md   — описание архитектуры
