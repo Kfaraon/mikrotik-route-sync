@@ -18,7 +18,6 @@ func (c *Config) Save() error {
 	return AtomicWrite(c.path, c)
 }
 
-// CheckSecurePermissions проверяет, что файл конфигурации имеет права 0600.
 func CheckSecurePermissions(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -32,13 +31,15 @@ func CheckSecurePermissions(path string) error {
 
 func AtomicWrite(path string, v any) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create config dir: %w", err)
+		}
 	}
-	if err := CheckSecurePermissions(path); err != nil {
-		// Если файл еще не существует, проверяем только директорию
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("insecure config path %q: %w", path, err)
+
+	if fi, err := os.Stat(path); err == nil {
+		if fi.Mode().Perm() != 0o600 {
+			return fmt.Errorf("insecure config file permissions %q: %o (expected 0600)", path, fi.Mode().Perm())
 		}
 	}
 
