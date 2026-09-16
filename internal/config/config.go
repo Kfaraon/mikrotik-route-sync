@@ -376,3 +376,33 @@ func setByReflection(obj any, path string, value any) error {
 	current.Set(newVal)
 	return nil
 }
+
+// Save сохраняет конфигурацию обратно в файл.
+// Используется при добавлении/удалении сервисов через API.
+func (c *Config) Save() error {
+	if c.path == "" {
+		return fmt.Errorf("config path not set, cannot save")
+	}
+
+	// Маршалим конфигурацию в YAML
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	// Проверяем права на файл перед записью
+	if fi, err := os.Stat(c.path); err == nil {
+		if fi.Mode().Perm() != 0600 {
+			return fmt.Errorf("config file %s must have 0600 permissions, got %o", c.path, fi.Mode().Perm())
+		}
+	} else {
+		return fmt.Errorf("cannot stat config file: %w", err)
+	}
+
+	// Записываем файл с правами 0600
+	if err := os.WriteFile(c.path, data, 0600); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
+}
