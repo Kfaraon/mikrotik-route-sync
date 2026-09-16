@@ -78,7 +78,6 @@
 - AWS CloudFront (AS16509, service=CLOUDFRONT) → `https://ip-ranges.amazonaws.com/ip-ranges.json` (фильтр по `service`).
 - Google (AS15169) → `https://www.gstatic.com/ipranges/goog.json`.
 - Fastly → официальный API `https://api.fastly.com/public-ip-list`.
-- Akamai (AS20940) → отдельный агрегатор `akamai.go` в `internal/aggregator/`, использует официальный источник с поддержкой `akamai_api_key`.
 
 **Крупные сервисы с собственным ASN:** метод `asn` через BGPView/RIPEstat.
 
@@ -110,7 +109,6 @@
 - Проверять инвариант: **сумма адресов до агрегации = сумма адресов после агрегации**.
 - Проверять инвариант: **каждый исходный префикс полностью покрыт результирующим набором**.
 - При нарушении инварианта — откатить агрегацию, логировать `ERROR`, использовать неагрегированный (но валидированный) список.
-- Для Akamai — отдельный модуль `aggregator/akamai.go`.
 - Валидация агрегации вынесена в `aggregator/validate.go`.
 
 ---
@@ -270,7 +268,7 @@
 ### 8.1 Логирование
 - Формат: JSON через `log/slog` (`internal/logging/logging.go`).
 - Вывод: stdout + файл (одновременно).
-- Ротация: `gopkg.in/natefinch/lumberjack.v2`.
+- Ротация: `gopkg.in/natefinsh/lumberjack.v2`.
 - Параметры: `max_size_mb` (10 МБ), `max_files` (5), `max_total_mb` (50 МБ), `compress: true`, `level: info`, `also_stdout: true`.
 - Структурированные поля: `service`, `method`, `duration_ms`, `added`, `removed`, `error`.
 - **Запрещено логировать:** пароли, токены, содержимое `Authorization`, cookie. Автоматический redaction в логах, CLI, Web UI, Telegram-сообщениях.
@@ -303,7 +301,6 @@
         aggregator.go     — основной интерфейс
         radix.go          — Radix Tree
         validate.go       — проверка инвариантов агрегации
-        akamai.go         — специфичный агрегатор Akamai
       bot/                — Telegram-бот
         bot.go            — компактная реализация
       classifier/         — выбор метода сбора
@@ -409,7 +406,6 @@
 ### 11.6 Безопасность контейнера (Docker)
 - Multi-stage build: `golang:1.27.1-alpine` (builder) → `alpine:3.20` (runtime, с `ca-certificates` и `tzdata`).
 - Static binary (`CGO_ENABLED=0`), `-trimpath`, `-ldflags="-s -w"`.
-- Внедрение версии через `-X internal/version.{Version,Commit,BuildDate}`.
 - Non-root пользователь (`USER 65534:65534`, `appuser:appgroup`).
 - Read-only root filesystem (`read_only: true`).
 - `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`.
@@ -585,7 +581,6 @@
       http_timeout: 15s
       max_response_mb: 50
       bgpview_api_key: ""
-      akamai_api_key: ""     # для Akamai CDN
       rdap_timeout: 10s
       resolver: 1.1.1.1:53
 
@@ -643,7 +638,7 @@
   - `gopkg.in/yaml.v3 v3.0.1` — парсинг YAML.
 - **Стандартная библиотека:** `net/http`, `net`, `encoding/json`, `crypto/tls`, `log/slog`, `html/template`, `embed`, `crypto/rand`, `crypto/subtle`, `os/signal`, `syscall`.
 - **НЕ используются:** `spf13/viper`, `go-chi/httplog`, `go-chi/httprate`, OpenTelemetry — всё это реализовано собственными средствами или не требуется.
-- **Сборка:** статический бинарник (`CGO_ENABLED=0`), `-trimpath`, `-ldflags="-s -w -X internal/version.Version=... -X ...Commit=... -X ...BuildDate=..."`.
+- **Сборка:** статический бинарник (`CGO_ENABLED=0`), `-trimpath`, `-ldflags="-s -w"`.
 - **Docker:** multi-stage (`golang:1.27.1-alpine` → `alpine:3.20`), non-root, read-only, `cap_drop: [ALL]`.
 - **Docker Compose:** `docker-compose.yml` с ограничениями ресурсов (`mem_limit: 128m`, `cpus: 1.0`).
 - **Makefile:** `make build`, `make test`, `make fmt`, `make vet`, `make clean`.
@@ -671,10 +666,7 @@
     COPY . .
     RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
         -trimpath \
-        -ldflags="-s -w \
-        -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Version=$(git describe --tags --always 2>/dev/null || echo 'dev') \
-        -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown') \
-        -X github.com/Kfaraon/mikrotik-route-sync/internal/version.BuildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+        -ldflags="-s -w" \
         -o /bin/mikrotik-route-sync \
         ./cmd/app
 
@@ -769,7 +761,7 @@
 6. Classifier (`classifier/classifier.go` + словарь CDN/ASN).
 7. Collectors (`collectors/*.go` + registry + http + Circuit Breaker + Retry).
 8. Validator (`validator/validator.go` + RFC-диапазоны + RDAP-проверка).
-9. Aggregator (`aggregator/radix.go` + `validate.go` + `akamai.go` + инварианты).
+9. Aggregator (`aggregator/radix.go` + `validate.go` + инварианты).
 10. MikroTik client (`mikrotik/client.go` + `transaction.go` + rollback + snapshot).
 11. Syncer (`core/syncer.go` + `diff.go` + safety-check + mutex).
 12. Scheduler (`scheduler/schedule.go` + `scheduler.go` + cron + human-readable).
@@ -794,25 +786,3 @@
 - **Documented:** README, ARCHITECTURE, THREAT_MODEL, SECURITY, openapi.yaml, config.example.yaml.
 - **Compliant:** MIT-лицензия, `.gitignore` (включая `config.yaml`), статический анализ (`gosec`, `govulncheck` — как обязательные шаги перед релизом).
 - **Resource-friendly:** укладывается в ≤128 МБ RAM и ≤1 CPU в LXC/Docker.
-
----
-
-## Ключевые отличия, которые отражают реальную реализацию проекта
-
-| Что было в исходном промпте | Как в реальном коде |
-|---|---|
-| `pkg/` папка с `cidrutil/`, `humanize/`, `audit/` | **Нет** `pkg/` — всё в `internal/` |
-| `github.com/spf13/viper` для конфига | **Нет viper** — собственный `config.Load()` + `config.AtomicWrite()` на `gopkg.in/yaml.v3` |
-| `go-chi/httplog`, `go-chi/httprate` | **Нет** — middleware реализованы внутри, rate limiting через `golang.org/x/time/rate` |
-| `internal/web/api.go` как отдельный модуль | **Удалён** — REST API встроен в `server.go` |
-| Runtime `scratch` в Docker | **`alpine:3.20`** — нужны `ca-certificates` и `tzdata` |
-| `telegram.enabled: true` | **`telegram.enabled: false`** по умолчанию |
-| `verify_ssl: false` в примере | **`verify_ssl: true`** по умолчанию |
-| Нет `akamai.go` | **Есть** `aggregator/akamai.go` + `akamai_api_key` в конфиге |
-| Нет снапшотов | **Есть** `snapshots` раздел + CLI (`backup`, `restore`, `snapshots list/delete/cleanup`) |
-| `history` страница в Web UI | **Нет** отдельной страницы — история внутри services |
-| OpenTelemetry tracing | **Нет** — не реализовано |
-| `readyz` endpoint | **Нет** — только `/healthz` |
-| `ripestat.go` в `aggregator/` | **Перенесён** в `collectors/ripestat.go` |
-| Сложная state machine в bot | **Компактный** `bot/bot.go` (один файл) |
-| Разделённые `client.go`, `transaction.go`, `rollback.go` | `client.go` + `transaction.go` (rollback внутри) |
