@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -377,31 +378,111 @@ func setByReflection(obj any, path string, value any) error {
 	return nil
 }
 
-// Save сохраняет конфигурацию обратно в файл.
-// Используется при добавлении/удалении сервисов через API.
-func (c *Config) Save() error {
-	if c.path == "" {
-		return fmt.Errorf("config path not set, cannot save")
-	}
-
-	// Маршалим конфигурацию в YAML
-	data, err := yaml.Marshal(c)
+// AtomicWrite сохраняет конфигурацию с сохранением YAML комментариев
+// Использует yaml.Node API для модификации только нужных узлов
+func AtomicWrite(path string, c *Config) error {
+	// Читаем оригинальный файл
+	originalData, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+		return fmt.Errorf("failed to read original config: %w", err)
 	}
 
-	// Проверяем права на файл перед записью
-	if fi, err := os.Stat(c.path); err == nil {
+	// Парсим в yaml.Node для сохранения структуры и комментариев
+	var doc yaml.Node
+	if err := yaml.Unmarshal(originalData, &doc); err != nil {
+		return fmt.Errorf("failed to parse yaml: %w", err)
+	}
+
+	// Находим корневой mapping node
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return fmt.Errorf("invalid yaml document structure")
+	}
+
+	rootNode := doc.Content[0]
+	if rootNode.Kind != yaml.MappingNode {
+		return fmt.Errorf("root node must be a mapping")
+	}
+
+	// Обновляем только секцию services
+	if err := updateServicesNode(rootNode, c.Services); err != nil {
+		return fmt.Errorf("failed to update services: %w", err)
+	}
+
+	// Маршалим обратно с сохранением комментариев
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&doc); err != nil {
+		return fmt.Errorf("failed to encode yaml: %w", err)
+	}
+	if err := encoder.Close(); err != nil {
+		return fmt.Errorf("failed to close encoder: %w", err)
+	}
+
+	// Проверяем права на файл
+	if fi, err := os.Stat(path); err == nil {
 		if fi.Mode().Perm() != 0600 {
-			return fmt.Errorf("config file %s must have 0600 permissions, got %o", c.path, fi.Mode().Perm())
+			return fmt.Errorf("config file %s must have 0600 permissions, got %o", path, fi.Mode().Perm())
 		}
 	} else {
 		return fmt.Errorf("cannot stat config file: %w", err)
 	}
 
-	// Записываем файл с правами 0600
-	if err := os.WriteFile(c.path, data, 0600); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+	// Атомарная запись через временный файл
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, buf.Bytes(), 0600); err != nil {
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	return nil
+}
+
+// updateServicesNode обновляет только массив services в yaml.Node
+func updateServicesNode(rootNode *yaml.Node, services []string) error {
+	// Ищем ключ "services" в маппинге
+	var servicesKeyNode *yaml.Node
+	var servicesValueNode *yaml.Node
+
+	for i := 0; i < len(rootNode.Content); i += 2 {
+		if i+1 >= len(rootNode.Content) {
+			break
+		}
+		keyNode := rootNode.Content[i]
+		if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "services" {
+			servicesKeyNode = keyNode
+			servicesValueNode = rootNode.Content[i+1]
+			break
+		}
+	}
+
+	// Если секция services не найдена, создаем новую
+	if servicesKeyNode == nil {
+		servicesKeyNode = &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Value: "services",
+			Tag:   "!!str",
+		}
+		servicesValueNode = &yaml.Node{
+			Kind: yaml.SequenceNode,
+			Tag:  "!!seq",
+		}
+		rootNode.Content = append(rootNode.Content, servicesKeyNode, servicesValueNode)
+	}
+
+	// Очищаем существующий sequence и добавляем новые значения
+	servicesValueNode.Content = make([]*yaml.Node, 0, len(services))
+	for _, service := range services {
+		node := &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Value: service,
+			Tag:   "!!str",
+		}
+		servicesValueNode.Content = append(servicesValueNode.Content, node)
 	}
 
 	return nil
