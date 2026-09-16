@@ -12,6 +12,7 @@ import (
 
 // Config представляет основную конфигурацию приложения.
 type Config struct {
+	path     string `yaml:"-" mapstructure:"-"` // Путь к файлу конфигурации (не сериализуется)
 	Timezone string `yaml:"timezone" mapstructure:"timezone"`
 	CachePath string `yaml:"cache_path" mapstructure:"cache_path"` // Путь к файлу кэша
 	Logging  LoggingConfig  `yaml:"logging" mapstructure:"logging"`
@@ -181,6 +182,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	var c Config
+	c.path = path
 	if err := v.Unmarshal(&c); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
