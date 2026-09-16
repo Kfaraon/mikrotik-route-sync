@@ -323,7 +323,7 @@ func newRoot() *cobra.Command {
 					return e
 				}
 				c.Services = append(c.Services, args[0])
-				return config.AtomicWrite(cfgPath, c)
+				return c.Save()
 			})
 		},
 	})
@@ -344,7 +344,7 @@ func newRoot() *cobra.Command {
 					}
 				}
 				c.Services = out
-				return config.AtomicWrite(cfgPath, c)
+				return c.Save()
 			})
 		},
 	}
