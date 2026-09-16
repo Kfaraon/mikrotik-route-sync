@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
-	"time"
 	"strings"
+	"time"
 )
 
 type CDNCollector struct {
@@ -37,7 +37,7 @@ func (c *CDNCollector) Collect(ctx context.Context, service string, opts Options
 
 	// Специальная обработка для Akamai
 	if c.asn == 20940 {
-		akamaiCollector := NewAkamaiCollector()
+		akamaiCollector := NewAkamaiCollector("") // передаем пустой ключ, будет использован публичный список
 		return akamaiCollector.Collect(ctx, service, opts)
 	}
 
