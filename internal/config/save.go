@@ -18,6 +18,18 @@ func (c *Config) Save() error {
 	return AtomicWrite(c.path, c)
 }
 
+// CheckSecurePermissions проверяет, что файл конфигурации имеет права 0600.
+func CheckSecurePermissions(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Perm() != 0o600 {
+		return fmt.Errorf("insecure file permissions: %o (expected 0600)", fi.Mode().Perm())
+	}
+	return nil
+}
+
 func AtomicWrite(path string, v any) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
