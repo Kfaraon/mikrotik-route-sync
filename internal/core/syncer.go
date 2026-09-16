@@ -387,3 +387,66 @@ func (s *Syncer) DeleteSnapshot(ctx context.Context, service, snapshotID string)
 func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.Duration) (int, error) {
 	return s.cache.CleanupExpiredSnapshots(ttl)
 }
+
+// ===== В начало файла добавить в блок imports: =====
+// 	"net/http"
+
+// ===== Заменить функцию NewSyncer: =====
+/*
+func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, n notifier.Notifier) *Syncer {
+	to := cfg.External.HTTPTimeout
+	if to == 0 {
+		to = 15 * time.Second
+	}
+	httpClient := &http.Client{Timeout: to}
+	return &Syncer{
+		cfg:    cfg,
+		log:    log,
+		cache:  cache,
+		notify: n,
+		mt:     mikrotik.New(cfg.MikroTik),
+		http:   collectors.NewHTTP(httpClient, cfg.External.MaxResponseMB),
+		locks:  map[string]*sync.Mutex{},
+	}
+}
+*/
+
+// ===== Добавить в конец файла: =====
+
+// Snapshot возвращает карту количества маршрутов по каждому сервису.
+func (s *Syncer) Snapshot(ctx context.Context) (map[string]int, error) {
+	result := make(map[string]int, len(s.cfg.Services))
+	for _, name := range s.cfg.Services {
+		routes, err := s.mt.ListServiceRoutes(ctx, name)
+		if err != nil {
+			s.log.Warn("snapshot: failed to list routes", "service", name, "err", err)
+			result[name] = 0
+			continue
+		}
+		result[name] = len(routes)
+	}
+	return result, nil
+}
+
+// PingMikroTik проверяет доступность MikroTik RouterOS.
+func (s *Syncer) PingMikroTik(ctx context.Context) error {
+	return s.mt.Ping(ctx)
+}
+
+// SyncOneResult синхронизирует один сервис и возвращает Result.
+func (s *Syncer) SyncOneResult(ctx context.Context, name string, dry bool) (Result, error) {
+	return s.SyncService(ctx, name, dry, false)
+}
+
+// RouteCount возвращает общее количество синхронизированных маршрутов.
+func (s *Syncer) RouteCount(ctx context.Context) (int, error) {
+	snap, err := s.Snapshot(ctx)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, count := range snap {
+		total += count
+	}
+	return total, nil
+}
