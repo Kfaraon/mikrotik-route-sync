@@ -72,7 +72,7 @@ func NewSyncer(cfg *config.Config, log *slog.Logger) (*Syncer, error) {
 	notify := notifier.NewNotifier(cfg)
 	auditLog := audit.NewAudit(log)
 	hist := history.NewHistory(cfg.History.MaxEntries)
-	httpClient := collectors.NewHTTP(cfg.External.Timeout)
+	httpClient := collectors.NewHTTP(cfg.External.HTTPTimeout.Duration(), cfg.Retry, cfg.External.MaxResponseMB)
 	res := resolver.NewResolver(cfg.External.Resolver, httpClient)
 
 	s := &Syncer{
