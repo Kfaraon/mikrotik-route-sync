@@ -10,279 +10,289 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 )
 
-// Transaction представляет транзакцию применения изменений маршрутов
+// ============================================================================
+// Типы данных
+// ============================================================================
+
+// TransactionState описывает жизненный цикл транзакции.
+type TransactionState string
+
+const (
+	StatePending    TransactionState = "pending"     // создана, ещё не запущена
+	StateApplying   TransactionState = "applying"    // выполняется применение
+	StateApplied    TransactionState = "applied"     // успешно применена
+	StateFailed     TransactionState = "failed"      // ошибка применения (до отката)
+	StateRolledBack TransactionState = "rolled_back" // ошибка применения + успешный откат
+	StateDegraded   TransactionState = "degraded"    // ошибка применения + частичный/неуспешный откат
+)
+
+// Transaction обеспечивает атомарное применение изменений маршрутов для одного сервиса.
+// Реализует паттерн "применить или откатиться" (компенсирующий откат через REST).
 type Transaction struct {
 	client     *Client
 	cfg        *config.Config
 	cache      *storage.Cache
 	service    string
-	snapshotID string
 	log        *slog.Logger
-	added      []Route
-	deleted    []Route
-	startedAt  time.Time
-	committed  bool
+	snapshotID string
+	state      TransactionState
+	startTime  time.Time
 }
 
-// NewTransaction создает новую транзакцию для сервиса
-func NewTransaction(client *Client, cfg *config.Config, cache *storage.Cache, service string, log *slog.Logger) *Transaction {
+// ============================================================================
+// Конструктор
+// ============================================================================
+
+// NewTransaction создаёт новую транзакцию для сервиса.
+//
+// Параметры:
+//   - client: настроенный MikroTik REST клиент.
+//   - cfg: глобальная конфигурация (для получения префикса комментариев).
+//   - cache: кэш для работы со снапшотами (используется при ручном восстановлении).
+//   - service: имя сервиса (например, "instagram").
+//   - log: базовый логгер (будет обогащён контекстом сервиса).
+func NewTransaction(
+	client *Client,
+	cfg *config.Config,
+	cache *storage.Cache,
+	service string,
+	log *slog.Logger,
+) *Transaction {
 	return &Transaction{
 		client:    client,
 		cfg:       cfg,
 		cache:     cache,
 		service:   service,
 		log:       log.With("service", service, "component", "transaction"),
-		startedAt: time.Now(),
+		state:     StatePending,
+		startTime: time.Now(),
 	}
 }
 
-// SetSnapshotID устанавливает ID snapshot для возможного отката
-func (t *Transaction) SetSnapshotID(snapshotID string) {
-	t.snapshotID = snapshotID
+// ============================================================================
+// Публичные методы
+// ============================================================================
+
+// SetSnapshotID устанавливает идентификатор снапшота для возможного ручного восстановления.
+// Должен вызываться до Apply().
+func (t *Transaction) SetSnapshotID(id string) {
+	t.snapshotID = id
+	t.log.Debug("snapshot attached to transaction", "snapshot_id", id)
 }
 
-// Apply применяет изменения: сначала добавляет новые маршруты, потом удаляет старые
-func (t *Transaction) Apply(ctx context.Context, toAdd, toDelete []Route) error {
-	t.log.Info("начинаю транзакцию", "add", len(toAdd), "delete", len(toDelete))
+// Apply выполняет применение изменений маршрутов (добавление/удаление).
+// При ошибке на любой фазе автоматически пытается выполнить компенсирующий откат.
+//
+// Параметры:
+//   - toAdd: []Route — новые маршруты для добавления (без .ID).
+//   - toRemove: []Route — существующие маршруты для удаления (используются .ID).
+//
+// Возвращает:
+//   - nil: при успешном применении.
+//   - error: описание ошибки применения + результат отката (если он был).
+//
+// Поведение при ошибке:
+//  1. Фаза удаления/добавления прерывается.
+//  2. Выполняется компенсирующий откат:
+//     - удаляются маршруты, которые были успешно добавлены;
+//     - восстанавливаются маршруты, которые были успешно удалены.
+//  3. Если откат не удался полностью — сервис помечается как "degraded".
+func (t *Transaction) Apply(ctx context.Context, toAdd []Route, toRemove []Route) error {
+	t.state = StateApplying
+	t.log.Info("starting transaction",
+		"add_count", len(toAdd),
+		"remove_count", len(toRemove),
+		"snapshot_id", t.snapshotID,
+	)
 
-	if len(toAdd) > 0 {
-		if err := t.applyAdd(ctx, toAdd); err != nil {
-			t.log.Error("ошибка добавления маршрутов", "err", err)
-			t.rollback(ctx)
-			return fmt.Errorf("add routes: %w", err)
-		}
-		t.log.Info("добавлено маршрутов", "count", len(t.added))
-	}
+	var addedIDs []string
+	var removedRoutes []Route
+	var applyErr error
 
-	if len(toDelete) > 0 {
-		if err := t.applyDelete(ctx, toDelete); err != nil {
-			t.log.Error("ошибка удаления маршрутов", "err", err)
-			t.rollback(ctx)
-			return fmt.Errorf("delete routes: %w", err)
-		}
-		t.log.Info("удалено маршрутов", "count", len(t.deleted))
-	}
-
-	t.committed = true
-	t.log.Info("транзакция завершена успешно", "duration", time.Since(t.startedAt))
-	return nil
-}
-
-func (t *Transaction) applyAdd(ctx context.Context, routes []Route) error {
-	for _, r := range routes {
-		if r.Gateway == "" {
-			r.Gateway = t.cfg.MikroTik.Gateway
-		}
-		if r.RoutingTable == "" {
-			r.RoutingTable = t.cfg.MikroTik.RoutingTable
-		}
-		if r.Distance == "" {
-			r.Distance = fmt.Sprintf("%d", t.cfg.MikroTik.Distance)
-		}
-		if r.Comment == "" {
-			r.Comment = fmt.Sprintf("%s:%s", t.cfg.MikroTik.CommentPrefix, t.service)
-		}
-
-		if err := t.client.AddRoute(ctx, r); err != nil {
-			return fmt.Errorf("add route %s: %w", r.DstAddress, err)
-		}
-		t.added = append(t.added, r)
-	}
-	return nil
-}
-
-func (t *Transaction) applyDelete(ctx context.Context, routes []Route) error {
-	for _, r := range routes {
-		if r.ID == "" {
-			t.log.Warn("маршрут без ID, пропускаю удаление", "dst", r.DstAddress)
-			continue
+	// Фаза 1: Удаление старых маршрутов
+	for _, r := range toRemove {
+		if err := ctx.Err(); err != nil {
+			applyErr = fmt.Errorf("context cancelled during remove phase: %w", err)
+			break
 		}
 
 		if err := t.client.DeleteRoute(ctx, r.ID); err != nil {
-			return fmt.Errorf("remove route %s (id=%s): %w", r.DstAddress, r.ID, err)
+			applyErr = fmt.Errorf("delete route %s (%s): %w", r.ID, r.DstAddress, err)
+			t.log.Error("failed to delete route during apply",
+				"route_id", r.ID,
+				"dst", r.DstAddress,
+				"err", err,
+			)
+			break
 		}
-		t.deleted = append(t.deleted, r)
+		removedRoutes = append(removedRoutes, r)
 	}
+
+	// Фаза 2: Добавление новых маршрутов (только если удаление прошло успешно)
+	if applyErr == nil {
+		for _, r := range toAdd {
+			if err := ctx.Err(); err != nil {
+				applyErr = fmt.Errorf("context cancelled during add phase: %w", err)
+				break
+			}
+
+			id, err := t.client.AddRoute(ctx, r)
+			if err != nil {
+				applyErr = fmt.Errorf("add route %s: %w", r.DstAddress, err)
+				t.log.Error("failed to add route during apply",
+					"dst", r.DstAddress,
+					"gateway", r.Gateway,
+					"err", err,
+				)
+				break
+			}
+			addedIDs = append(addedIDs, id)
+		}
+	}
+
+	// Проверяем результат применения
+	if applyErr != nil {
+		t.state = StateFailed
+		t.log.Error("transaction failed, initiating rollback",
+			"apply_error", applyErr,
+			"removed_before_failure", len(removedRoutes),
+			"added_before_failure", len(addedIDs),
+		)
+
+		rollbackErr := t.rollback(ctx, addedIDs, removedRoutes)
+
+		if rollbackErr != nil {
+			// Критическая ситуация: откат не удался полностью
+			t.state = StateDegraded
+			t.log.Error("rollback failed, service is DEGRADED",
+				"apply_error", applyErr,
+				"rollback_error", rollbackErr,
+				"manual_intervention_required", true,
+			)
+			return fmt.Errorf(
+				"transaction failed (%v) AND rollback failed (%v): service %s is degraded, manual intervention required (snapshot_id: %s)",
+				applyErr, rollbackErr, t.service, t.snapshotID,
+			)
+		}
+
+		// Откат успешен
+		t.state = StateRolledBack
+		t.log.Info("rollback completed successfully",
+			"rolled_back_deletes", len(removedRoutes),
+			"rolled_back_adds", len(addedIDs),
+			"final_state", t.state,
+		)
+		return fmt.Errorf("transaction failed and was rolled back: %w", applyErr)
+	}
+
+	// Успешное применение
+	t.state = StateApplied
+	elapsed := time.Since(t.startTime)
+	t.log.Info("transaction applied successfully",
+		"added", len(addedIDs),
+		"removed", len(removedRoutes),
+		"duration", elapsed,
+		"final_state", t.state,
+	)
+
 	return nil
 }
 
-// rollback выполняет откат транзакции
-// Сначала пытается использовать snapshot, затем fallback на локальное состояние
-func (t *Transaction) rollback(ctx context.Context) {
-	if t.committed {
-		return
-	}
-
-	t.log.Warn("выполняю rollback",
-		"added_to_remove", len(t.added),
-		"deleted_to_restore", len(t.deleted),
-		"snapshot_id", t.snapshotID)
-
-	// Приоритет 1: Если есть snapshot ID, восстанавливаем из snapshot
-	if t.snapshotID != "" {
-		t.log.Info("использую snapshot для rollback", "snapshot_id", t.snapshotID)
-		if err := t.rollbackFromSnapshot(ctx); err != nil {
-			t.log.Error("rollback из snapshot не удался, использую локальное состояние", "err", err)
-			t.rollbackFromLocalState(ctx)
-		} else {
-			t.log.Info("rollback из snapshot успешно завершен")
-			return
-		}
-	} else {
-		// Приоритет 2: Используем локальное состояние
-		t.rollbackFromLocalState(ctx)
-	}
+// State возвращает текущее состояние транзакции.
+func (t *Transaction) State() TransactionState {
+	return t.state
 }
 
-// rollbackFromSnapshot восстанавливает сервис из snapshot
-func (t *Transaction) rollbackFromSnapshot(ctx context.Context) error {
-	if t.cache == nil {
-		return fmt.Errorf("cache не инициализирован")
-	}
+// SnapshotID возвращает ID снапшота, привязанного к транзакции.
+func (t *Transaction) SnapshotID() string {
+	return t.snapshotID
+}
 
-	// Загружаем snapshot из хранилища
-	var snapshotRoutes []Route
-	if err := t.cache.GetSnapshot(t.service, t.snapshotID, &snapshotRoutes); err != nil {
-		return fmt.Errorf("load snapshot: %w", err)
-	}
+// ============================================================================
+// Компенсирующий откат
+// ============================================================================
 
-	t.log.Info("загружен snapshot для rollback", "route_count", len(snapshotRoutes))
+// rollback выполняет компенсирующий откат изменений:
+//
+//  1. Удаляет маршруты, которые были успешно добавлены (по их новым .ID).
+//  2. Восстанавливает маршруты, которые были успешно удалены (из исходных объектов).
+//
+// Это best-effort операция: если какой-то шаг не удался, продолжаем выполнять
+// остальные и возвращаем агрегированную ошибку со всеми сбоями.
+//
+// Параметры:
+//   - addedIDs: список .ID маршрутов, которые были добавлены и должны быть удалены.
+//   - removedRoutes: список исходных объектов маршрутов, которые были удалены и должны быть восстановлены.
+//
+// Возвращает:
+//   - nil: если все операции отката прошли успешно.
+//   - error: агрегированная ошибка, если хотя бы одна операция отката не удалась.
+func (t *Transaction) rollback(ctx context.Context, addedIDs []string, removedRoutes []Route) error {
+	var rollbackErrors []error
 
-	// Шаг 1: Удаляем все текущие маршруты сервиса
-	removed, err := t.cleanupService(ctx)
-	if err != nil {
-		return fmt.Errorf("cleanup service: %w", err)
-	}
-	t.log.Info("текущие маршруты удалены", "removed", removed)
+	t.log.Info("rollback started",
+		"to_delete", len(addedIDs),
+		"to_restore", len(removedRoutes),
+	)
 
-	// Шаг 2: Восстанавливаем маршруты из snapshot
-	restored := 0
-	errors := 0
-
-	for _, route := range snapshotRoutes {
-		// Устанавливаем комментарий, если он пустой
-		if route.Comment == "" {
-			route.Comment = fmt.Sprintf("%s:%s", t.cfg.MikroTik.CommentPrefix, t.service)
-		}
-
-		// Устанавливаем значения по умолчанию
-		if route.Gateway == "" {
-			route.Gateway = t.cfg.MikroTik.Gateway
-		}
-		if route.RoutingTable == "" {
-			route.RoutingTable = t.cfg.MikroTik.RoutingTable
-		}
-		if route.Distance == "" {
-			route.Distance = fmt.Sprintf("%d", t.cfg.MikroTik.Distance)
-		}
-
-		if _, err := t.client.AddRoute(ctx, route); err != nil {
-			errors++
-			t.log.Error("не удалось восстановить маршрут из snapshot",
-				"dst", route.DstAddress,
-				"err", err)
+	// Шаг 1: Удаляем маршруты, которые были добавлены
+	for _, id := range addedIDs {
+		if err := ctx.Err(); err != nil {
+			rollbackErrors = append(rollbackErrors,
+				fmt.Errorf("context cancelled during rollback delete: %w", err))
 			continue
 		}
-		restored++
+
+		if err := t.client.DeleteRoute(ctx, id); err != nil {
+			rollbackErrors = append(rollbackErrors,
+				fmt.Errorf("rollback delete route %s: %w", id, err))
+			t.log.Error("rollback: failed to delete added route",
+				"route_id", id,
+				"err", err,
+			)
+		}
 	}
 
-	if errors > 0 {
-		return fmt.Errorf("partial restore: restored %d/%d routes (%d failed)",
-			restored, len(snapshotRoutes), errors)
-	}
+	// Шаг 2: Восстанавливаем маршруты, которые были удалены
+	for _, r := range removedRoutes {
+		if err := ctx.Err(); err != nil {
+			rollbackErrors = append(rollbackErrors,
+				fmt.Errorf("context cancelled during rollback restore: %w", err))
+			continue
+		}
 
-	t.log.Info("успешное восстановление из snapshot",
-		"restored", restored,
-		"duration", time.Since(t.startedAt))
+		// Очищаем ID, чтобы RouterOS присвоил новый при добавлении
+		r.ID = ""
+		// Гарантируем корректный комментарий сервиса (изоляция по сервисам)
+		r.Comment = fmt.Sprintf("%s:%s", t.cfg.MikroTik.CommentPrefix, t.service)
 
-	return nil
-}
-
-// rollbackFromLocalState использует локальное состояние транзакции для отката
-func (t *Transaction) rollbackFromLocalState(ctx context.Context) {
-	rollbackFailed := false
-
-	if len(t.added) > 0 {
-		// Получаем актуальный список маршрутов
-		currentRoutes, err := t.client.ListServiceRoutes(ctx, t.service)
+		_, err := t.client.AddRoute(ctx, r)
 		if err != nil {
-			t.log.Error("rollback: не удалось получить список маршрутов", "err", err)
-			rollbackFailed = true
-		} else {
-			routeMap := make(map[string]Route)
-			for _, r := range currentRoutes {
-				routeMap[r.DstAddress] = r
-			}
-
-			for _, added := range t.added {
-				if found, ok := routeMap[added.DstAddress]; ok {
-					if err := t.client.DeleteRoute(ctx, found.ID); err != nil {
-						t.log.Error("rollback: не удалось удалить добавленный маршрут",
-							"id", found.ID, "dst", added.DstAddress, "err", err)
-						rollbackFailed = true
-					}
-				}
-			}
+			rollbackErrors = append(rollbackErrors,
+				fmt.Errorf("rollback restore route %s: %w", r.DstAddress, err))
+			t.log.Error("rollback: failed to restore removed route",
+				"dst", r.DstAddress,
+				"gateway", r.Gateway,
+				"err", err,
+			)
 		}
 	}
 
-	for _, deleted := range t.deleted {
-		deleted.ID = "" // Очищаем ID, так как он устарел
-		if err := t.client.AddRoute(ctx, deleted); err != nil {
-			t.log.Error("rollback: не удалось восстановить удаленный маршрут",
-				"dst", deleted.DstAddress, "err", err)
-			rollbackFailed = true
-		}
+	// Агрегируем ошибки отката
+	if len(rollbackErrors) > 0 {
+		t.log.Error("rollback completed with errors",
+			"error_count", len(rollbackErrors),
+			"first_error", rollbackErrors[0],
+		)
+		return fmt.Errorf(
+			"%d rollback operations failed: %w",
+			len(rollbackErrors), rollbackErrors[0],
+		)
 	}
 
-	if rollbackFailed {
-		t.log.Error("rollback частично неуспешен — сервис в состоянии degraded")
-	} else {
-		t.log.Info("rollback из локального состояния успешно завершен")
-	}
-}
-
-// cleanupService удаляет все маршруты указанного сервиса
-func (t *Transaction) cleanupService(ctx context.Context) (int, error) {
-	routes, err := t.client.ListServiceRoutes(ctx, t.service)
-	if err != nil {
-		return 0, fmt.Errorf("list routes: %w", err)
-	}
-
-	removed := 0
-	errors := 0
-
-	for _, route := range routes {
-		if route.ID == "" {
-			t.log.Warn("маршрут без ID, пропускаю удаление", "dst", route.DstAddress)
-			continue
-		}
-
-		if err := t.client.DeleteRoute(ctx, route.ID); err != nil {
-			errors++
-			t.log.Error("не удалось удалить маршрут",
-				"id", route.ID,
-				"dst", route.DstAddress,
-				"err", err)
-			continue
-		}
-		removed++
-	}
-
-	if errors > 0 {
-		return removed, fmt.Errorf("deleted %d/%d routes (%d failed)",
-			removed, len(routes), errors)
-	}
-
-	return removed, nil
-}
-
-// Rollback публичный метод для ручного отката
-func (t *Transaction) Rollback(ctx context.Context) {
-	t.rollback(ctx)
-}
-
-// Stats возвращает статистику транзакции
-func (t *Transaction) Stats() (added, deleted int) {
-	return len(t.added), len(t.deleted)
+	t.log.Info("rollback completed successfully",
+		"deleted_added_routes", len(addedIDs),
+		"restored_removed_routes", len(removedRoutes),
+	)
+	return nil
 }
