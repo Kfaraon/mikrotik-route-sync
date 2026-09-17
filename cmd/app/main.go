@@ -27,7 +27,6 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 	webui "github.com/Kfaraon/mikrotik-route-sync/internal/web"
-	"github.com/hpcloud/tail"
 	"github.com/spf13/cobra"
 )
 
@@ -659,9 +658,8 @@ func redactSensitive(key string, value any) any {
 	return value
 }
 
-// tailLog читает лог-файл с поддержкой ротации
+// tailLog читает лог-файл с поддержкой ротации (собственная реализация без внешних зависимостей)
 func tailLog(path string, n int, follow bool) error {
-	// Если не follow, просто читаем последние n строк
 	if !follow {
 		f, err := os.Open(path)
 		if err != nil {
@@ -683,38 +681,38 @@ func tailLog(path string, n int, follow bool) error {
 		return nil
 	}
 
-	// Используем hpcloud/tail для поддержки ротации
-	t, err := tail.TailFile(path, tail.Config{
-		Follow:    true,
-		ReOpen:    true, // Критично для ротации — переоткрывает файл при изменении inode
-		MustExist: false,
-		Poll:      true,
-		Logger:    tail.DiscardingLogger,
-	})
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	fi, _ := f.Stat()
+	_, _ = f.Seek(fi.Size(), io.SeekStart)
 
-	// Горутина для чтения строк
-	go func() {
-		for line := range t.Lines {
-			if line == nil {
-				return
+	scanner := bufio.NewScanner(f)
+	for {
+		if scanner.Scan() {
+			fmt.Println(scanner.Text())
+		} else {
+			if err := scanner.Err(); err != nil {
+				return err
 			}
-			fmt.Println(line.Text)
+			time.Sleep(500 * time.Millisecond)
+			fiNew, err := os.Stat(path)
+			if err == nil {
+				if fiNew.Size() < fi.Size() || !os.SameFile(fiNew, fi) {
+					f.Close()
+					f, err = os.Open(path)
+					if err != nil {
+						return err
+					}
+					fi = fiNew
+					scanner = bufio.NewScanner(f)
+				} else {
+					fi = fiNew
+				}
+			}
 		}
-	}()
-
-	// Ждем сигнала завершения
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	<-sigCh
-	cancel()
-	t.Stop()
-
-	return nil
+	}
 }
