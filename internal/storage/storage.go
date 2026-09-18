@@ -12,7 +12,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// Bucket names
+// Имена бакетов в bbolt (только IPv4 данные).
 var (
 	bucketASN          = []byte("asn_by_ip")
 	bucketPrefixes     = []byte("prefixes_by_asn")
@@ -22,13 +22,13 @@ var (
 	bucketTransactions = []byte("transactions")
 )
 
-// Cache represents the bbolt database wrapper
+// Cache — обёртка над bbolt для кэша и хранения состояния.
 type Cache struct {
 	db *bolt.DB
 	mu sync.RWMutex
 }
 
-// SnapshotInfo представляет метаданные snapshot
+// SnapshotInfo — метаинформация о снапшоте.
 type SnapshotInfo struct {
 	ID        string    `json:"id"`
 	Service   string    `json:"service"`
@@ -36,25 +36,26 @@ type SnapshotInfo struct {
 	Count     int       `json:"route_count"`
 }
 
+// cachedEntry — запись кэша с TTL.
 type cachedEntry struct {
 	Value     json.RawMessage `json:"value"`
 	ExpiresAt time.Time       `json:"expires_at"`
 }
 
-// Open opens or creates the bbolt database and initializes all buckets
+// Open открывает или создаёт базу bbolt и инициализирует все бакеты.
 func Open(path string) (*Cache, error) {
 	if dir := filepath.Dir(path); dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("create directory: %w", err)
+			return nil, fmt.Errorf("create dir: %w", err)
 		}
 	}
 
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
-		return nil, fmt.Errorf("open bolt db: %w", err)
+		return nil, fmt.Errorf("open bolt: %w", err)
 	}
 
-	// Initialize all required buckets
+	// Создание всех необходимых бакетов
 	err = db.Update(func(tx *bolt.Tx) error {
 		buckets := [][]byte{
 			bucketASN, bucketPrefixes, bucketCache,
@@ -67,26 +68,21 @@ func Open(path string) (*Cache, error) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-
 	return &Cache{db: db}, nil
 }
 
-// Close closes the database
+// Close закрывает базу.
 func (c *Cache) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.db.Close()
 }
 
-// ============================================================================
-// Generic cache methods (for ASN/prefixes caching)
-// ============================================================================
-
+// get читает значение из бакета с проверкой TTL.
 func (c *Cache) get(bucket []byte, key string, dst any) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -117,10 +113,11 @@ func (c *Cache) get(bucket []byte, key string, dst any) bool {
 	return found
 }
 
+// set записывает значение в бакет с TTL.
 func (c *Cache) set(bucket []byte, key string, value any, ttl time.Duration) error {
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("marshal value: %w", err)
+		return fmt.Errorf("marshal: %w", err)
 	}
 	entry := cachedEntry{Value: raw, ExpiresAt: time.Now().Add(ttl)}
 	encoded, err := json.Marshal(entry)
@@ -140,29 +137,29 @@ func (c *Cache) set(bucket []byte, key string, value any, ttl time.Duration) err
 	})
 }
 
-// GetASN retrieves cached ASN for an IP
+// GetASN получает кэшированный ASN для IP-адреса.
 func (c *Cache) GetASN(ip string) (int, bool) {
 	var asn int
 	return asn, c.get(bucketASN, ip, &asn)
 }
 
-// SetASN caches ASN for an IP with TTL
+// SetASN кэширует ASN для IP с TTL.
 func (c *Cache) SetASN(ip string, asn int, ttl time.Duration) error {
 	return c.set(bucketASN, ip, asn, ttl)
 }
 
-// GetPrefixes retrieves cached prefixes for an ASN
+// GetPrefixes получает кэшированные префиксы для ASN.
 func (c *Cache) GetPrefixes(asn int) ([]string, bool) {
 	var prefixes []string
 	return prefixes, c.get(bucketPrefixes, fmt.Sprintf("%d", asn), &prefixes)
 }
 
-// SetPrefixes caches prefixes for an ASN with TTL
+// SetPrefixes кэширует префиксы для ASN с TTL.
 func (c *Cache) SetPrefixes(asn int, prefixes []string, ttl time.Duration) error {
 	return c.set(bucketPrefixes, fmt.Sprintf("%d", asn), prefixes, ttl)
 }
 
-// PurgeExpired removes expired entries from cache buckets
+// PurgeExpired удаляет просроченные записи из кэш-бакетов.
 func (c *Cache) PurgeExpired() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -191,20 +188,14 @@ func (c *Cache) PurgeExpired() error {
 	})
 }
 
-// ============================================================================
-// Generic bucket methods (for history/transactions)
-// ============================================================================
-
-// Put stores a value in a specific bucket
+// Put записывает значение в указанный бакет.
 func (c *Cache) Put(bucket, key string, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("marshal value: %w", err)
+		return fmt.Errorf("marshal: %w", err)
 	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
 	return c.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucket))
 		if b == nil {
@@ -214,11 +205,10 @@ func (c *Cache) Put(bucket, key string, v any) error {
 	})
 }
 
-// Get retrieves a value from a specific bucket
+// Get читает значение из указанного бакета.
 func (c *Cache) Get(bucket, key string, v any) error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
 	return c.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucket))
 		if b == nil {
@@ -226,21 +216,17 @@ func (c *Cache) Get(bucket, key string, v any) error {
 		}
 		data := b.Get([]byte(key))
 		if data == nil {
-			return fmt.Errorf("key not found in bucket %s", bucket)
+			return fmt.Errorf("key not found in %s", bucket)
 		}
 		return json.Unmarshal(data, v)
 	})
 }
 
-// ============================================================================
-// Snapshot methods
-// ============================================================================
-
-// CreateSnapshot создаёт новый snapshot и возвращает его ID
+// CreateSnapshot создаёт новый снапшот и возвращает его ID.
 func (c *Cache) CreateSnapshot(service string, routes any) (string, error) {
 	data, err := json.Marshal(routes)
 	if err != nil {
-		return "", fmt.Errorf("marshal routes: %w", err)
+		return "", fmt.Errorf("marshal: %w", err)
 	}
 
 	snapshotID := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -256,30 +242,25 @@ func (c *Cache) CreateSnapshot(service string, routes any) (string, error) {
 		}
 		return b.Put([]byte(key), data)
 	})
-
 	if err != nil {
 		return "", err
 	}
-
 	return snapshotID, nil
 }
 
-// ListSnapshots возвращает список snapshots для сервиса
+// ListSnapshots возвращает список снапшотов для сервиса.
 func (c *Cache) ListSnapshots(service string) ([]SnapshotInfo, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	var snapshots []SnapshotInfo
-
 	err := c.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketSnapshots)
 		if b == nil {
 			return nil
 		}
-
 		prefix := []byte(service + ":")
 		cursor := b.Cursor()
-
 		for key, _ := cursor.Seek(prefix); key != nil && len(key) > 0; key, _ = cursor.Next() {
 			if len(key) < len(prefix) {
 				break
@@ -287,43 +268,37 @@ func (c *Cache) ListSnapshots(service string) ([]SnapshotInfo, error) {
 			if string(key[:len(prefix)]) != string(prefix) {
 				break
 			}
-
 			keyStr := string(key)
 			snapshotID := keyStr[len(service)+1:]
-
 			snapshots = append(snapshots, SnapshotInfo{
 				ID:      snapshotID,
 				Service: service,
 			})
 		}
-
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
+	// Сортировка по ID (новые первые)
 	sort.Slice(snapshots, func(i, j int) bool {
 		return snapshots[i].ID > snapshots[j].ID
 	})
-
 	return snapshots, nil
 }
 
-// GetSnapshot получает snapshot по ID
+// GetSnapshot получает снапшот по ID.
 func (c *Cache) GetSnapshot(service, snapshotID string, v any) error {
 	key := fmt.Sprintf("%s:%s", service, snapshotID)
 	return c.Get("snapshots", key, v)
 }
 
-// DeleteSnapshot удаляет snapshot
+// DeleteSnapshot удаляет конкретный снапшот.
 func (c *Cache) DeleteSnapshot(service, snapshotID string) error {
 	key := fmt.Sprintf("%s:%s", service, snapshotID)
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
 	return c.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketSnapshots)
 		if b == nil {
@@ -331,97 +306,4 @@ func (c *Cache) DeleteSnapshot(service, snapshotID string) error {
 		}
 		return b.Delete([]byte(key))
 	})
-}
-
-// CleanupExpiredSnapshots удаляет snapshots старше TTL
-func (c *Cache) CleanupExpiredSnapshots(ttl time.Duration) (int, error) {
-	cutoff := time.Now().Add(-ttl)
-	deleted := 0
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	err := c.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSnapshots)
-		if b == nil {
-			return nil
-		}
-
-		cursor := b.Cursor()
-		var toDelete []string
-
-		for key, _ := cursor.First(); key != nil; key, _ = cursor.Next() {
-			keyStr := string(key)
-			if len(keyStr) < 3 {
-				continue
-			}
-
-			parts := splitKey(keyStr)
-			if len(parts) != 2 {
-				continue
-			}
-
-			snapshotID := parts[1]
-			var ts int64
-			if _, err := fmt.Sscanf(snapshotID, "%d", &ts); err != nil {
-				continue
-			}
-
-			createdAt := time.Unix(0, ts)
-			if createdAt.Before(cutoff) {
-				toDelete = append(toDelete, keyStr)
-			}
-		}
-
-		for _, key := range toDelete {
-			if err := b.Delete([]byte(key)); err == nil {
-				deleted++
-			}
-		}
-
-		return nil
-	})
-
-	return deleted, err
-}
-
-// CountSnapshots возвращает количество snapshots для сервиса
-func (c *Cache) CountSnapshots(service string) (int, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	count := 0
-	err := c.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSnapshots)
-		if b == nil {
-			return nil
-		}
-
-		prefix := []byte(service + ":")
-		cursor := b.Cursor()
-
-		for key, _ := cursor.Seek(prefix); key != nil && len(key) > 0; key, _ = cursor.Next() {
-			if len(key) < len(prefix) {
-				break
-			}
-			if string(key[:len(prefix)]) != string(prefix) {
-				break
-			}
-			count++
-		}
-
-		return nil
-	})
-
-	return count, err
-}
-
-// splitKey разделяет ключ на части
-func splitKey(key string) []string {
-	for i := len(key) - 1; i >= 0; i-- {
-		if key[i] == ':' {
-			return []string{key[:i], key[i+1:]}
-		}
-	}
-	return []string{key}
 }
