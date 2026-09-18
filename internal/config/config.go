@@ -35,21 +35,21 @@ func (d Duration) Duration() time.Duration {
 }
 
 type Config struct {
-	path          string                       `yaml:"-"`
-	Timezone      string                       `yaml:"timezone"`
-	CachePath     string                       `yaml:"cache_path"`
-	Logging       LoggingConfig                `yaml:"logging"`
-	MikroTik      MikroTikConfig               `yaml:"mikrotik"`
-	Telegram      TelegramConfig               `yaml:"telegram"`
-	Web           WebConfig                    `yaml:"web"`
-	Scheduler     SchedulerConfig              `yaml:"scheduler"`
-	Safety        SafetyConfig                 `yaml:"safety"`
-	Retry         RetryConfig                  `yaml:"retry"`
-	External      ExternalConfig               `yaml:"external"`
-	Snapshots     SnapshotsConfig              `yaml:"snapshots"`
-	Schedules     SchedulesConfig              `yaml:"schedules"`
-	Services      []string                     `yaml:"services"`
-	Overrides     map[string]ServiceOverride   `yaml:"overrides"`
+	path          string                     `yaml:"-"`
+	Timezone      string                     `yaml:"timezone"`
+	CachePath     string                     `yaml:"cache_path"`
+	Logging       LoggingConfig              `yaml:"logging"`
+	MikroTik      MikroTikConfig             `yaml:"mikrotik"`
+	Telegram      TelegramConfig             `yaml:"telegram"`
+	Web           WebConfig                  `yaml:"web"`
+	Scheduler     SchedulerConfig            `yaml:"scheduler"`
+	Safety        SafetyConfig               `yaml:"safety"`
+	Retry         RetryConfig                `yaml:"retry"`
+	External      ExternalConfig             `yaml:"external"`
+	Snapshots     SnapshotsConfig            `yaml:"snapshots"`
+	Schedules     SchedulesConfig            `yaml:"schedules"`
+	Services      []string                   `yaml:"services"`
+	Overrides     map[string]ServiceOverride `yaml:"overrides"`
 }
 
 type LoggingConfig struct {
@@ -63,49 +63,49 @@ type LoggingConfig struct {
 }
 
 type MikroTikConfig struct {
-	Host           string   `yaml:"host"`
-	Port           int      `yaml:"port"`
-	Username       string   `yaml:"username"`
-	Password       string   `yaml:"password"`
-	UseSSL         bool     `yaml:"use_ssl"`
-	VerifySSL      bool     `yaml:"verify_ssl"`
-	Timeout        Duration `yaml:"timeout"`
-	Gateway        string   `yaml:"gateway"`
-	RoutingTable   string   `yaml:"routing_table"`
-	Distance       int      `yaml:"distance"`
-	CommentPrefix  string   `yaml:"comment_prefix"`
-	RateLimit      int      `yaml:"rate_limit"`
+	Host          string   `yaml:"host"`
+	Port          int      `yaml:"port"`
+	Username      string   `yaml:"username"`
+	Password      string   `yaml:"password"`
+	UseSSL        bool     `yaml:"use_ssl"`
+	VerifySSL     bool     `yaml:"verify_ssl"`
+	Timeout       Duration `yaml:"timeout"`
+	Gateway       string   `yaml:"gateway"`
+	RoutingTable  string   `yaml:"routing_table"`
+	Distance      int      `yaml:"distance"`
+	CommentPrefix string   `yaml:"comment_prefix"`
+	RateLimit     int      `yaml:"rate_limit"`
 }
 
 type TelegramConfig struct {
-	Enabled              bool     `yaml:"enabled"`
-	BotToken             string   `yaml:"bot_token"`
-	ChatID               string   `yaml:"chat_id"`
-	AuthorizedChatIDs    []string `yaml:"authorized_chat_ids"`
-	RateLimit            int      `yaml:"rate_limit"`
-	WeeklyReport         WeeklyReportConfig `yaml:"weekly_report"`
-	Buttons              ButtonsConfig `yaml:"buttons"`
+	Enabled           bool               `yaml:"enabled"`
+	BotToken          string             `yaml:"bot_token"`
+	ChatID            string             `yaml:"chat_id"`
+	AuthorizedChatIDs []string           `yaml:"authorized_chat_ids"`
+	RateLimit         int                `yaml:"rate_limit"`
+	WeeklyReport      WeeklyReportConfig `yaml:"weekly_report"`
+	Buttons           ButtonsConfig      `yaml:"buttons"`
 }
 
 type WeeklyReportConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
 }
 
 type ButtonsConfig struct {
-	Enabled bool `yaml:"enabled"`
-	MaxSelectedServices int `yaml:"max_selected_services"`
+	Enabled             bool `yaml:"enabled"`
+	MaxSelectedServices int  `yaml:"max_selected_services"`
 }
 
 type WebConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	Listen          string   `yaml:"listen"`
-	AllowedCIDRs    []string `yaml:"allowed_cidrs"`
-	TrustedProxies  []string `yaml:"trusted_proxies"`
+	Enabled         bool          `yaml:"enabled"`
+	Listen          string        `yaml:"listen"`
+	AllowedCIDRs    []string      `yaml:"allowed_cidrs"`
+	TrustedProxies  []string      `yaml:"trusted_proxies"`
 	Auth            WebAuthConfig `yaml:"auth"`
-	SessionTimeout  Duration `yaml:"session_timeout"`
-	CSRFEnabled     bool     `yaml:"csrf_enabled"`
-	SecurityHeaders bool     `yaml:"security_headers"`
+	SessionTimeout  Duration      `yaml:"session_timeout"`
+	CSRFEnabled     bool          `yaml:"csrf_enabled"`
+	SecurityHeaders bool          `yaml:"security_headers"`
 }
 
 type WebAuthConfig struct {
@@ -115,20 +115,20 @@ type WebAuthConfig struct {
 }
 
 type SchedulerConfig struct {
-	Parallel      bool     `yaml:"parallel"`
-	MaxConcurrent int      `yaml:"max_concurrent"`
+	Parallel       bool     `yaml:"parallel"`
+	MaxConcurrent  int      `yaml:"max_concurrent"`
 	ReloadInterval Duration `yaml:"reload_interval"`
-	CacheTTL      Duration `yaml:"cache_ttl"`
-	CachePurge    string   `yaml:"cache_purge"`
+	CacheTTL       Duration `yaml:"cache_ttl"`
+	CachePurge     string   `yaml:"cache_purge"`
 }
 
 type SafetyConfig struct {
-	MaxDeleteRatio        float64 `yaml:"max_delete_ratio"`
+	MaxDeleteRatio          float64 `yaml:"max_delete_ratio"`
 	RequireConfirmationOver int     `yaml:"require_confirmation_over"`
-	MinPrefixV4           int     `yaml:"min_prefix_v4"`
-	MinPrefixV6           int     `yaml:"min_prefix_v6"`
-	AllowHostRoutes       bool    `yaml:"allow_host_routes"`
-	MaxASNPrefixes        int     `yaml:"max_asn_prefixes"`
+	MinPrefixV4             int     `yaml:"min_prefix_v4"`
+	MinPrefixV6             int     `yaml:"min_prefix_v6"`
+	AllowHostRoutes         bool    `yaml:"allow_host_routes"`
+	MaxASNPrefixes          int     `yaml:"max_asn_prefixes"`
 }
 
 type RetryConfig struct {
@@ -154,9 +154,9 @@ type SnapshotsConfig struct {
 }
 
 type SchedulesConfig struct {
-	Global   string                         `yaml:"global"`
-	Groups   map[string]GroupConfig         `yaml:"groups"`
-	Services map[string]ServiceSchedule     `yaml:"services"`
+	Global   string                     `yaml:"global"`
+	Groups   map[string]GroupConfig     `yaml:"groups"`
+	Services map[string]ServiceSchedule `yaml:"services"`
 }
 
 type GroupConfig struct {
@@ -192,7 +192,7 @@ func Load(path string) (*Config, error) {
 	}
 	c.path = path
 
-	// ENV overrides (Приоритет: ENV > config.yaml)
+	// ENV overrides
 	if p := os.Getenv("MRS_MIKROTIK_PASSWORD"); p != "" {
 		c.MikroTik.Password = p
 	}
@@ -203,9 +203,14 @@ func Load(path string) (*Config, error) {
 		c.Web.Auth.Password = wp
 	}
 
+	// ИСПРАВЛЕНО: Разрешены права 0400 (только чтение) и 0600 (чтение+запись)
+	// Важно для production, где config.yaml может быть read-only
 	if fi, err := os.Stat(path); err == nil {
-		if fi.Mode().Perm() != 0600 {
-			return nil, fmt.Errorf("config file %s must have 0600 permissions", path)
+		if fi.Mode().Perm()&0077 != 0 {
+			return nil, fmt.Errorf(
+				"config file %s has insecure permissions %o (expected 600 or 400, owner-only access)",
+				path, fi.Mode().Perm(),
+			)
 		}
 	} else {
 		return nil, fmt.Errorf("cannot stat config file: %w", err)
@@ -230,10 +235,10 @@ func setDefaults(c *Config) {
 		c.Safety.MaxDeleteRatio = 0.5
 	}
 	if c.Safety.MinPrefixV4 == 0 {
-		c.Safety.MinPrefixV4 = 8 // Исправлено с 9
+		c.Safety.MinPrefixV4 = 8
 	}
 	if c.Safety.MinPrefixV6 == 0 {
-		c.Safety.MinPrefixV6 = 16 // Исправлено с 32
+		c.Safety.MinPrefixV6 = 16
 	}
 	if c.MikroTik.Distance == 0 {
 		c.MikroTik.Distance = 1
@@ -245,7 +250,7 @@ func setDefaults(c *Config) {
 		c.External.MaxResponseMB = 50
 	}
 	if c.Snapshots.MaxCount == 0 {
-		c.Snapshots.MaxCount = 50 // Исправлено с 10
+		c.Snapshots.MaxCount = 50
 	}
 	if c.Snapshots.TTL.Duration() == 0 {
 		c.Snapshots.TTL = Duration(7 * 24 * time.Hour)
@@ -325,7 +330,6 @@ func (c *Config) Save() error {
 }
 
 func (c *Config) Set(path string, value any) error {
-	// Упрощено для совместимости
 	return nil
 }
 
@@ -334,12 +338,12 @@ func AtomicWrite(path string, c *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to read original config: %w", err)
 	}
-	
+
 	var doc yaml.Node
 	if err := yaml.Unmarshal(originalData, &doc); err != nil {
 		return fmt.Errorf("failed to parse yaml: %w", err)
 	}
-	
+
 	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
 		rootNode := doc.Content[0]
 		if rootNode.Kind == yaml.MappingNode {
@@ -361,8 +365,7 @@ func AtomicWrite(path string, c *Config) error {
 	if err := os.WriteFile(tmpPath, buf.Bytes(), 0600); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
-	
-	// Fsync перед rename
+
 	f, err := os.Open(tmpPath)
 	if err == nil {
 		f.Sync()
