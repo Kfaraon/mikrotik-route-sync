@@ -26,6 +26,11 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
 )
 
+// ============================================================================
+// Типы данных
+// ============================================================================
+
+// Result описывает итог синхронизации одного сервиса.
 type Result struct {
 	Service    string    `json:"service"`
 	Success    bool      `json:"success"`
@@ -40,6 +45,7 @@ type Result struct {
 	Version    string    `json:"version,omitempty"`
 }
 
+// RouteKey — нормализованный ключ маршрута для идемпотентного сравнения.
 type RouteKey struct {
 	CIDR     string `json:"cidr"`
 	Gateway  string `json:"gateway"`
@@ -47,6 +53,7 @@ type RouteKey struct {
 	Distance int    `json:"distance"`
 }
 
+// DiffResult описывает вычисленную разницу для команды `app diff`.
 type DiffResult struct {
 	Service   string     `json:"service"`
 	Add       []RouteKey `json:"add"`
@@ -54,6 +61,7 @@ type DiffResult struct {
 	Unchanged int        `json:"unchanged"`
 }
 
+// ServiceInfo — метаинформация о сервисе для команды `app info`.
 type ServiceInfo struct {
 	Name          string                 `json:"name"`
 	Schedule      string                 `json:"schedule"`
@@ -62,6 +70,7 @@ type ServiceInfo struct {
 	SnapshotCount int                    `json:"snapshot_count"`
 }
 
+// SnapshotInfo — метаинформация о снапшоте для CLI/Web/Telegram.
 type SnapshotInfo struct {
 	ID        string    `json:"id"`
 	Service   string    `json:"service"`
@@ -69,6 +78,7 @@ type SnapshotInfo struct {
 	Count     int       `json:"count"`
 }
 
+// Syncer — главный оркестратор синхронизации маршрутов.
 type Syncer struct {
 	cfg       *config.Config
 	mt        *mikrotik.Client
@@ -79,13 +89,20 @@ type Syncer struct {
 	history   *history.History
 	http      *collectors.HTTP
 	resolver  *resolver.Resolver
-	// serviceMu защищает ТОЛЬКО мутации конфига и запись в history/lastSync
-	// НЕ блокирует параллельную синхронизацию
+	// serviceMu защищает ТОЛЬКО мутации конфига (add/remove service, save)
+	// и запись в history/lastSync. НЕ блокирует параллельную синхронизацию.
 	serviceMu sync.Mutex
 	startTime time.Time
 	lastSync  time.Time
 }
 
+// ============================================================================
+// Конструктор
+// ============================================================================
+
+// NewSyncer создает инициализированный экземпляр Syncer.
+// Принимает уже сконфигурированные зависимости (cache, notify),
+// что позволяет переиспользовать их между CLI, Web и Scheduler.
 func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, notify notifier.Notifier) (*Syncer, error) {
 	mt, err := mikrotik.NewClient(cfg)
 	if err != nil {
@@ -111,15 +128,30 @@ func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, notif
 	}, nil
 }
 
+// ============================================================================
+// Метрики состояния
+// ============================================================================
+
 func (s *Syncer) StartTime() time.Time { return s.startTime }
 func (s *Syncer) LastSync() time.Time  { return s.lastSync }
 func (s *Syncer) Version() string      { return version.Version }
 
+// PingMikroTik проверяет доступность RouterOS API.
 func (s *Syncer) PingMikroTik(ctx context.Context) error {
 	return s.mt.Ping(ctx)
 }
 
-// SyncService выполняет полный цикл синхронизации одного сервиса.
+// ============================================================================
+// Основная логика синхронизации
+// ============================================================================
+
+// SyncService выполняет полный цикл синхронизации одного сервиса:
+// 1. Получает текущие маршруты из MikroTik (фильтр по comment=AUTO:<service>).
+// 2. Собирает новые префиксы через classifier + collectors.
+// 3. Валидирует и агрегирует (fail-closed при пустом результате).
+// 4. Вычисляет diff и проверяет safe-delete ratio + RequireConfirmationOver.
+// 5. Создает снапшот и применяет изменения через транзакцию (с rollback при ошибке).
+//
 // NOTE: Метод НЕ использует глобальный мьютекс, что позволяет параллельную
 // синхронизацию нескольких сервисов через SyncMany.
 func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) (Result, error) {
@@ -134,6 +166,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	log := s.log.With("service", name, "dry_run", dry, "force", force)
 	log.Info("starting sync")
 
+	// 1. Получаем существующие маршруты (строго по comment=AUTO:<name>)
 	existing, err := s.mt.ListServiceRoutes(ctx, name)
 	if err != nil {
 		res.Error = fmt.Sprintf("list routes: %v", err)
@@ -142,6 +175,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	log.Info("fetched existing routes", "count", len(existing))
 
+	// 2. Сбор префиксов
 	ov := s.cfg.Overrides[name]
 	raw, err := s.collect(ctx, name, ov)
 	if err != nil {
@@ -151,6 +185,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	log.Info("collected raw prefixes", "count", len(raw))
 
+	// 3. Валидация
 	v := validator.Validator{Safety: s.cfg.Safety}
 	prefixes, err := v.Validate(prefixesToStrings(raw), ov)
 	if err != nil {
@@ -167,6 +202,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	log.Info("validated prefixes", "count", len(prefixes))
 
+	// 4. Агрегация в минимальный набор CIDR
 	agg, err := aggregator.Aggregate(prefixes)
 	if err != nil {
 		res.Error = fmt.Sprintf("aggregate: %v", err)
@@ -175,6 +211,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	log.Info("aggregated prefixes", "count", len(agg))
 
+	// Формируем желаемый набор маршрутов (используем глобальные настройки MikroTik)
 	desired := make([]RouteKey, 0, len(agg))
 	for _, p := range agg {
 		desired = append(desired, RouteKey{
@@ -185,6 +222,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		})
 	}
 
+	// 5. Вычисление diff
 	diff, err := ComputeDiff(desired, existing)
 	if err != nil {
 		res.Error = fmt.Sprintf("compute diff: %v", err)
@@ -224,6 +262,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		}
 	}
 
+	// 6. Снапшот перед применением (для rollback)
 	snapshotID := s.createSnapshot(ctx, name, existing)
 	if snapshotID == "" {
 		log.Warn("snapshot creation failed, proceeding without rollback capability")
@@ -231,6 +270,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		log.Info("snapshot created", "snapshot_id", snapshotID)
 	}
 
+	// 7. Dry run — только логируем diff
 	if dry {
 		log.Info("dry run completed", "add", res.Added, "remove", res.Removed)
 		res.Success = true
@@ -239,6 +279,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		return res, nil
 	}
 
+	// 8. Транзакционное применение (с автоматическим rollback при ошибке)
 	tx := mikrotik.NewTransaction(s.mt, s.cfg, s.cache, name, log)
 	if snapshotID != "" {
 		tx.SetSnapshotID(snapshotID)
@@ -261,11 +302,13 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		return res, fmt.Errorf("transaction: %w", err)
 	}
 
+	// 9. Финализация
 	res.Success = true
 	res.FinishedAt = time.Now()
 	res.Duration = res.FinishedAt.Sub(start).String()
 	elapsed := time.Since(start)
 
+	// Логирование (приведение к logging.SyncResult)
 	logRes := logging.SyncResult{
 		Service:    res.Service,
 		Success:    res.Success,
@@ -280,6 +323,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	logging.LogSyncResult(log, logRes, elapsed)
 
+	// Уведомления, аудит, история
 	s.notify.Send(ctx, fmt.Sprintf(
 		"✅ Sync %s: +%d -%d =%d (%s)",
 		name, res.Added, res.Removed, res.Unchanged, res.Duration,
@@ -302,7 +346,9 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	return res, nil
 }
 
-// SyncMany запускает ПАРАЛЛЕЛЬНУЮ синхронизацию группы сервисов.
+// SyncMany запускает ПАРАЛЛЕЛЬНУЮ синхронизацию группы сервисов с ограничением
+// на количество одновременных потоков (из конфига `scheduler.max_concurrent`).
+//
 // ВАЖНО: force параметр пробрасывается в SyncService.
 func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, force bool) error {
 	if len(services) == 0 {
@@ -365,6 +411,7 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 
 	wg.Wait()
 
+	// Итоговое логирование группы
 	logResults := make([]logging.SyncResult, len(results))
 	for i, r := range results {
 		logResults[i] = logging.SyncResult{
@@ -384,6 +431,10 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 	return firstErr
 }
 
+// ============================================================================
+// Команды info / diff для CLI
+// ============================================================================
+
 // InfoService возвращает детальную информацию о сервисе.
 func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, error) {
 	info := &ServiceInfo{
@@ -392,6 +443,7 @@ func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, er
 		Override: s.cfg.Overrides[name],
 	}
 
+	// Количество маршрутов в MikroTik
 	routes, err := s.mt.ListServiceRoutes(ctx, name)
 	if err != nil {
 		s.log.Warn("failed to list routes for info", "service", name, "err", err)
@@ -399,6 +451,7 @@ func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, er
 		info.RouteCount = len(routes)
 	}
 
+	// Количество снапшотов
 	snapshots, err := s.cache.ListSnapshots(name)
 	if err != nil {
 		s.log.Warn("failed to list snapshots for info", "service", name, "err", err)
@@ -409,7 +462,8 @@ func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, er
 	return info, nil
 }
 
-// DiffService вычисляет diff без применения.
+// DiffService вычисляет diff без применения (аналог --dry-run, но без применения).
+// ИСПРАВЛЕНО: не использует приватные поля из других файлов.
 func (s *Syncer) DiffService(ctx context.Context, name string) (*DiffResult, error) {
 	existing, err := s.mt.ListServiceRoutes(ctx, name)
 	if err != nil {
@@ -452,17 +506,26 @@ func (s *Syncer) DiffService(ctx context.Context, name string) (*DiffResult, err
 		return nil, fmt.Errorf("compute diff: %w", err)
 	}
 
+	// Конвертируем diff.Remove ([]mikrotik.Route) в []RouteKey
 	removeKeys := make([]RouteKey, 0, len(diff.Remove))
 	for _, r := range diff.Remove {
-		key, err := mikrotikRouteToKey(r)
-		if err != nil {
-			continue
+		cidr := r.DstAddress
+		if p, err := netip.ParsePrefix(cidr); err == nil {
+			cidr = p.Masked().String()
 		}
+
+		distance := 1
+		if r.Distance != "" {
+			if d, err := strconv.Atoi(r.Distance); err == nil {
+				distance = d
+			}
+		}
+
 		removeKeys = append(removeKeys, RouteKey{
-			CIDR:     key.cidr,
-			Gateway:  key.gateway,
-			Table:    key.table,
-			Distance: key.distance,
+			CIDR:     cidr,
+			Gateway:  r.Gateway,
+			Table:    r.RoutingTable,
+			Distance: distance,
 		})
 	}
 
@@ -474,6 +537,12 @@ func (s *Syncer) DiffService(ctx context.Context, name string) (*DiffResult, err
 	}, nil
 }
 
+// ============================================================================
+// Сбор префиксов (classifier + collectors)
+// ============================================================================
+
+// collect определяет метод сбора через classifier и последовательно
+// опрашивает collectors до получения непустого результата.
 func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOverride) ([]netip.Prefix, error) {
 	class := classifier.Classify(name, ov.Method)
 
@@ -483,6 +552,7 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	}
 
 	for _, method := range class.Methods {
+		// Akamai (AS20940) обрабатывается как обычный ASN
 		if method == "akamai" {
 			method = "asn"
 		}
@@ -540,6 +610,11 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	return nil, fmt.Errorf("no prefixes collected for service %s", name)
 }
 
+// ============================================================================
+// Работа со снапшотами (Rollback infrastructure)
+// ============================================================================
+
+// createSnapshot — внутренний хелпер: создает снапшот из существующих маршрутов.
 func (s *Syncer) createSnapshot(ctx context.Context, name string, routes []mikrotik.Route) string {
 	if !s.cfg.Snapshots.Enabled {
 		return ""
@@ -572,6 +647,7 @@ func (s *Syncer) createSnapshot(ctx context.Context, name string, routes []mikro
 	return snapshotID
 }
 
+// CreateSnapshot сохраняет текущий набор префиксов сервиса в bbolt.
 func (s *Syncer) CreateSnapshot(ctx context.Context, service string, prefixes []netip.Prefix) (string, error) {
 	if !s.cfg.Snapshots.Enabled {
 		return "", fmt.Errorf("snapshots are disabled")
@@ -591,6 +667,7 @@ func (s *Syncer) CreateSnapshot(ctx context.Context, service string, prefixes []
 	return id, nil
 }
 
+// GetSnapshot загружает снапшот и конвертирует его обратно в []mikrotik.Route.
 func (s *Syncer) GetSnapshot(ctx context.Context, service, id string, routes *[]mikrotik.Route) error {
 	var prefixStrings []string
 	if err := s.cache.GetSnapshot(service, id, &prefixStrings); err != nil {
@@ -618,6 +695,7 @@ func (s *Syncer) GetSnapshot(ctx context.Context, service, id string, routes *[]
 	return nil
 }
 
+// ListSnapshots возвращает список всех снапшотов сервиса с количеством префиксов.
 func (s *Syncer) ListSnapshots(ctx context.Context, service string) ([]SnapshotInfo, error) {
 	infos, err := s.cache.ListSnapshots(service)
 	if err != nil {
@@ -642,10 +720,12 @@ func (s *Syncer) ListSnapshots(ctx context.Context, service string) ([]SnapshotI
 	return result, nil
 }
 
+// DeleteSnapshot удаляет конкретный снапшот сервиса.
 func (s *Syncer) DeleteSnapshot(ctx context.Context, service, id string) error {
 	return s.cache.DeleteSnapshot(service, id)
 }
 
+// CleanupSnapshots удаляет старые снапшоты по TTL и ограничивает их количество.
 func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.Duration) (int, error) {
 	ids, err := s.cache.ListSnapshots(service)
 	if err != nil {
@@ -655,6 +735,7 @@ func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.
 	deleted := 0
 	cutoff := time.Now().Add(-ttl)
 
+	// Удаляем просроченные
 	for _, info := range ids {
 		if info.CreatedAt.Before(cutoff) {
 			if err := s.cache.DeleteSnapshot(service, info.ID); err != nil {
@@ -666,6 +747,7 @@ func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.
 		}
 	}
 
+	// Удаляем лишние, если превышен max_count
 	remaining, err := s.cache.ListSnapshots(service)
 	if err != nil {
 		return deleted, nil
@@ -693,6 +775,11 @@ func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.
 	return deleted, nil
 }
 
+// ============================================================================
+// Управление сервисами (CLI / Web / Telegram Bot)
+// ============================================================================
+
+// AddService регистрирует новый сервис в конфиге с дефолтными настройками.
 func (s *Syncer) AddService(ctx context.Context, name string) error {
 	return s.AddServiceWithConfig(ctx, name, config.ServiceOverride{})
 }
@@ -748,6 +835,7 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 		return fmt.Errorf("service %s not found", name)
 	}
 
+	// Purge routes — удаляем все маршруты с comment=AUTO:<name>
 	if purgeRoutes {
 		routes, err := s.mt.ListServiceRoutes(ctx, name)
 		if err != nil {
@@ -763,6 +851,7 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 		}
 	}
 
+	// Удаляем все снапшоты сервиса
 	ids, err := s.cache.ListSnapshots(name)
 	if err != nil {
 		s.log.Warn("failed to list snapshots", "service", name, "err", err)
@@ -779,10 +868,16 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	return s.cfg.Save()
 }
 
+// ListServices возвращает список зарегистрированных сервисов.
 func (s *Syncer) ListServices() []string {
 	return s.cfg.Services
 }
 
+// ============================================================================
+// Backup / Restore
+// ============================================================================
+
+// Backup экспортирует текущие маршруты сервиса в формате []mikrotik.Route.
 func (s *Syncer) Backup(ctx context.Context, name string) ([]mikrotik.Route, error) {
 	routes, err := s.mt.ListServiceRoutes(ctx, name)
 	if err != nil {
@@ -791,6 +886,7 @@ func (s *Syncer) Backup(ctx context.Context, name string) ([]mikrotik.Route, err
 	return routes, nil
 }
 
+// Restore импортирует маршруты из backup, пропуская дубликаты.
 func (s *Syncer) Restore(ctx context.Context, name string, routes []mikrotik.Route) error {
 	existing, err := s.mt.ListServiceRoutes(ctx, name)
 	if err != nil {
@@ -842,11 +938,17 @@ func (s *Syncer) Restore(ctx context.Context, name string, routes []mikrotik.Rou
 	return nil
 }
 
+// ============================================================================
+// Утилиты
+// ============================================================================
+
+// ReloadScheduler сигналит планировщику перечитать конфиг.
 func (s *Syncer) ReloadScheduler() error {
 	s.log.Info("scheduler reload requested")
 	return nil
 }
 
+// GetLogs возвращает последние N записей из лог-файла.
 func (s *Syncer) GetLogs(ctx context.Context, limit int) ([]map[string]any, error) {
 	if limit <= 0 {
 		limit = 100
@@ -866,6 +968,11 @@ func (s *Syncer) GetLogs(ctx context.Context, limit int) ([]map[string]any, erro
 	return entries, nil
 }
 
+// ============================================================================
+// Вспомогательные функции
+// ============================================================================
+
+// EntryToAudit конвертирует Result в формат для audit-лога.
 func EntryToAudit(res Result) audit.Entry {
 	status := "success"
 	if !res.Success {
@@ -885,6 +992,7 @@ func EntryToAudit(res Result) audit.Entry {
 	}
 }
 
+// prefixesToStrings конвертирует []netip.Prefix в []string для валидатора.
 func prefixesToStrings(ps []netip.Prefix) []string {
 	out := make([]string, len(ps))
 	for i, p := range ps {
