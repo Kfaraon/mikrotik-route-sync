@@ -9,33 +9,90 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// SyncResult — результат синхронизации одного сервиса.
+type SyncResult struct {
+	Service    string `json:"service"`
+	Success    bool   `json:"success"`
+	Added      int    `json:"added"`
+	Removed    int    `json:"removed"`
+	Unchanged  int    `json:"unchanged"`
+	Error      string `json:"error,omitempty"`
+	DurationMs int    `json:"duration_ms"`
+}
+
+// Notifier — интерфейс для отправки уведомлений (Telegram и др.).
 type Notifier interface {
-	Send(context.Context, string) error
-}
-type nop struct{}
-
-func (nop) Send(context.Context, string) error { return nil }
-
-type Telegram struct {
-	bot  *tgbotapi.BotAPI
-	chat int64
-	log  *slog.Logger
+	Send(ctx context.Context, message string) error
+	SyncStart(ctx context.Context, services []string, trigger, spec string) error
+	SyncDone(ctx context.Context, results []SyncResult, elapsed any, dryRun bool) error
+	Error(ctx context.Context, service string, err error) error
 }
 
-func FromConfig(c config.Telegram, log *slog.Logger) Notifier {
-	if !c.Enabled || c.BotToken == "" || c.ChatID == "" {
-		return nop{}
+// TelegramNotifier — реализация Notifier через Telegram.
+type TelegramNotifier struct {
+	api    *tgbotapi.BotAPI
+	chatID int64
+	log    *slog.Logger
+}
+
+// NewTelegram создаёт Telegram-нотификатор.
+func NewTelegram(cfg config.TelegramConfig, log *slog.Logger) (Notifier, error) {
+	if !cfg.Enabled || cfg.BotToken == "" {
+		return &NoopNotifier{}, nil
 	}
-	b, e := tgbotapi.NewBotAPI(c.BotToken)
-	if e != nil {
-		log.Warn("telegram disabled", "error", e)
-		return nop{}
+	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
+	if err != nil {
+		return nil, fmt.Errorf("telegram bot init: %w", err)
 	}
-	var id int64
-	fmt.Sscan(c.ChatID, &id)
-	return &Telegram{bot: b, chat: id, log: log}
+	var chatID int64
+	if cfg.ChatID != "" {
+		_, _ = fmt.Sscanf(cfg.ChatID, "%d", &chatID)
+	}
+	return &TelegramNotifier{api: api, chatID: chatID, log: log}, nil
 }
-func (t *Telegram) Send(_ context.Context, msg string) error {
-	_, e := t.bot.Send(tgbotapi.NewMessage(t.chat, msg))
-	return e
+
+func (n *TelegramNotifier) Send(ctx context.Context, message string) error {
+	if n.chatID == 0 {
+		return nil
+	}
+	msg := tgbotapi.NewMessage(n.chatID, message)
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	_, err := n.api.Send(msg)
+	return err
 }
+
+func (n *TelegramNotifier) SyncStart(ctx context.Context, services []string, trigger, spec string) error {
+	return n.Send(ctx, fmt.Sprintf("Sync started: %v (trigger: %s, schedule: %s)", services, trigger, spec))
+}
+
+func (n *TelegramNotifier) SyncDone(ctx context.Context, results []SyncResult, elapsed any, dryRun bool) error {
+	msg := "Sync completed:\n"
+	if dryRun {
+		msg = "Dry-run completed:\n"
+	}
+	for _, r := range results {
+		status := "+"
+		if !r.Success {
+			status = "-"
+		}
+		msg += fmt.Sprintf("%s %s: +%d -%d =%d\n",
+			status, r.Service, r.Added, r.Removed, r.Unchanged)
+	}
+	return n.Send(ctx, msg)
+}
+
+func (n *TelegramNotifier) Error(ctx context.Context, service string, err error) error {
+	return n.Send(ctx, fmt.Sprintf("Error in %s: %v", service, err))
+}
+
+// NoopNotifier — пустой нотификатор (когда Telegram отключён).
+type NoopNotifier struct{}
+
+func (n *NoopNotifier) Send(ctx context.Context, message string) error { return nil }
+func (n *NoopNotifier) SyncStart(ctx context.Context, services []string, trigger, spec string) error {
+	return nil
+}
+func (n *NoopNotifier) SyncDone(ctx context.Context, results []SyncResult, elapsed any, dryRun bool) error {
+	return nil
+}
+func (n *NoopNotifier) Error(ctx context.Context, service string, err error) error { return nil }
