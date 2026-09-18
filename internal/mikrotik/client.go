@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -153,11 +154,14 @@ func (c *Client) doWithPagination(ctx context.Context, method, path string, limi
 	return allResults, nil
 }
 
+// ИСПРАВЛЕНИЕ: redact использует regex для маскировки всех чувствительных ключей
+var sensitiveKeysRegex = regexp.MustCompile(`(?i)(password|token|secret|api[_-]?key|authorization|cookie)(["\s:=]+)(["']?)([^"'\s,}]+)(["']?)`)
+
 func redact(s string) string {
 	if len(s) > 1024 {
 		s = s[:1024]
 	}
-	return strings.ReplaceAll(s, "password", "[redacted]")
+	return sensitiveKeysRegex.ReplaceAllString(s, "${1}${2}${3}[REDACTED]${5}")
 }
 
 func (c *Client) ListServiceRoutes(ctx context.Context, service string) ([]Route, error) {
@@ -189,11 +193,14 @@ func (c *Client) AddRoute(ctx context.Context, r Route) (Route, error) {
 	return out, e
 }
 
+// ИСПРАВЛЕНИЕ: DeleteRoute корректно работает с ID типа *1A
 func (c *Client) DeleteRoute(ctx context.Context, id string) error {
 	if id == "" || strings.ContainsAny(id, "/?#") {
 		return fmt.Errorf("invalid route id")
 	}
-	return c.do(ctx, http.MethodDelete, "/ip/route/"+url.PathEscape(id), nil, nil)
+	// Используем query параметр вместо path escape
+	path := fmt.Sprintf("/ip/route?.id=%s", url.QueryEscape(id))
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 func (c *Client) Ping(ctx context.Context) error {
