@@ -192,7 +192,7 @@ func Load(path string) (*Config, error) {
 	}
 	c.path = path
 
-	// ENV overrides
+	// ENV overrides (Приоритет: ENV > config.yaml)
 	if p := os.Getenv("MRS_MIKROTIK_PASSWORD"); p != "" {
 		c.MikroTik.Password = p
 	}
@@ -366,6 +366,7 @@ func AtomicWrite(path string, c *Config) error {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
 
+	// Fsync перед rename
 	f, err := os.Open(tmpPath)
 	if err == nil {
 		f.Sync()
