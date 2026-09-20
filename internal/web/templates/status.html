@@ -3,8 +3,7 @@
   <article>
     <h3>MikroTik</h3>
     <p class="status-{{ .MikroTikStatus }}">
-      {{ if eq .MikroTikStatus "ok" }}✅{{ else }}❌{{ end }}
-      {{ .MikroTikStatus }}
+      {{ if eq .MikroTikStatus "ok" }}OK — API доступен{{ else }}ОШИБКА — API недоступен{{ end }}
     </p>
   </article>
   <article>
@@ -12,16 +11,15 @@
     <p>{{ .ServiceCount }}</p>
   </article>
   <article>
-    <h3>Маршрутов</h3>
-    <p>{{ .RouteCount }}</p>
+    <h3>Uptime</h3>
+    <p>{{ .Uptime }}</p>
+  </article>
+  <article>
+    <h3>Последняя синхронизация</h3>
+    <p>{{ .LastSync }}</p>
   </article>
 </div>
-
-<div role="group">
-  <button hx-post="/actions/sync-all"
-          hx-headers='{"X-CSRF-Token":"{{ .CSRF }}"}'
-          hx-confirm="Запустить синхронизацию всех сервисов?">
-    🔄 Синхронизировать всё
-  </button>
-</div>
+{{ if .Degraded }}
+<p class="status-error">⚠ Сервисы в состоянии DEGRADED (необходима ручная проверка): {{ range .Degraded }}{{ . }} {{ end }}</p>
+{{ end }}
 {{end}}

@@ -8,8 +8,9 @@ import (
 
 // Переменные устанавливаются через ldflags при сборке:
 // go build -ldflags "-X github.com/Kfaraon/mikrotik-route-sync/internal/version.Version=1.0.0
-//                    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Commit=abc123
-//                    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.BuildDate=2024-01-01T00:00:00Z"
+//
+//	-X github.com/Kfaraon/mikrotik-route-sync/internal/version.Commit=abc123
+//	-X github.com/Kfaraon/mikrotik-route-sync/internal/version.BuildDate=2024-01-01T00:00:00Z"
 var (
 	Version   = "dev"
 	Commit    = "unknown"
@@ -54,7 +55,7 @@ func ParseBuildDate() (time.Time, error) {
 	if BuildDate == "unknown" {
 		return time.Time{}, fmt.Errorf("build date is unknown")
 	}
-	
+
 	// Пробуем разные форматы
 	formats := []string{
 		time.RFC3339,
@@ -62,12 +63,12 @@ func ParseBuildDate() (time.Time, error) {
 		"2006-01-02 15:04:05",
 		"2006-01-02",
 	}
-	
+
 	for _, format := range formats {
 		if t, err := time.Parse(format, BuildDate); err == nil {
 			return t, nil
 		}
 	}
-	
+
 	return time.Time{}, fmt.Errorf("unable to parse build date: %s", BuildDate)
 }

@@ -6,9 +6,11 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![RouterOS](https://img.shields.io/badge/RouterOS-v7-red)
 
-Пользователь указывает сервис, домен, IP-адрес или ASN. Приложение определяет подходящий источник сетей, собирает и валидирует CIDR, безопасно агрегирует их и синхронизирует **только маршруты выбранного сервиса**. Каждый управляемый маршрут помечается комментарием `AUTO:<service>`.
+Пользователь указывает сервис, домен, IPv4-адрес или ASN. Приложение определяет подходящий источник сетей, собирает и валидирует CIDR, безопасно агрегирует их и синхронизирует **только маршруты выбранного сервиса**. Каждый управляемый маршрут помечается комментарием `AUTO:<service>`.
 
 > **Главный принцип проекта:** один сервис — одна изолированная область синхронизации. Ошибка при обработке `youtube` не должна затрагивать маршруты `instagram`, `cloudflare` или любого другого сервиса.
+
+> **Диапазон адресов:** система управляет **только IPv4-маршрутами**. IPv6 не используется: префиксы IPv6 отбрасываются коллекторами и валидацией.
 
 ---
 
@@ -40,15 +42,18 @@
 
 ## Возможности
 
+> **Только IPv4.** Проект сознательно не использует IPv6: префиксы IPv6
+> отбрасываются коллекторами и на этапах валидации/агрегации.
+
 - Автоматическая классификация источника: `asn`, `cdn`, `dynamic`, `whois`, `static_url`
-- Определение ASN по домену / IP и работа с ASN, указанным напрямую
-- Резолвинг: BGPView с fallback на RIPEstat и RDAP
-- Официальные источники: Cloudflare, AWS CloudFront, Google, Fastly, Akamai
+- Определение ASN по домену / IPv4 и работа с ASN, указанным напрямую
+- Резолвинг: дамп BGP-таблицы bgp.tools с fallback на RIPEstat и RDAP
+- Официальные IPv4-источники: Cloudflare, AWS CloudFront, Google, Fastly, Akamai
 - DNS/dynamic-сбор для сервисов с меняющейся инфраструктурой
 - Пользовательские списки через `static_url`
 - Кэш ASN и префиксов в `bbolt`
 - Фильтрация приватных, link-local, multicast и слишком широких сетей
-- Безопасная CIDR-агрегация только настоящих sibling-префиксов
+- Безопасная CIDR-агрегация (radix tree) только настоящих sibling-префиксов
 - Проверка сохранности множества IP-адресов после агрегации
 - Инкрементальная diff-синхронизация RouterOS
 - Точная изоляция по комментарию `AUTO:<service>`
@@ -71,7 +76,7 @@
 
 ## Как работает синхронизация
 
-    service / domain / IP / ASN
+    service / domain / IPv4 / ASN
                 │
                 ▼
          resolver + classifier
@@ -109,7 +114,7 @@
 - **Go 1.27.1**
 - MikroTik RouterOS v7 с доступным **REST API**
 - Отдельный RouterOS-пользователь с минимально необходимыми правами
-- Доступ приложения к DNS и настроенным внешним источникам (BGPView, RIPEstat, официальные CDN-списки)
+- Доступ приложения к DNS и настроенным внешним источникам (bgp.tools, RIPEstat, официальные CDN-списки)
 - Для Docker / LXC — постоянное хранилище для конфигурации, кэша и логов
 
 ---
@@ -367,7 +372,6 @@
       max_delete_ratio: 0.5
       require_confirmation_over: 100
       min_prefix_v4: 8
-      min_prefix_v6: 16
       allow_host_routes: false
       max_asn_prefixes: 100
 
@@ -380,7 +384,8 @@
     external:
       http_timeout: 15s
       max_response_mb: 50
-      bgpview_api_key: ""
+      # email/контакт в User-Agent для bgp.tools (их правила требуют описательный UA)
+      bgp_tools_contact: "you@example.com"
       akamai_api_key: ""
       rdap_timeout: 10s
       resolver: "1.1.1.1:53"
@@ -400,11 +405,16 @@
 
 ### Переменные окружения
 
-Секреты можно передать через ENV (приоритет над `config.yaml`):
+ENV имеют приоритет над `config.yaml`:
 
     MRS_MIKROTIK_PASSWORD
     MRS_TELEGRAM_BOT_TOKEN
     MRS_WEB_PASSWORD
+    MRS_BGP_TOOLS_CONTACT
+    MRS_AKAMAI_API_KEY
+
+Служебная (не секрет): `MRS_REQUIRE_FILE_PERMS` — `1` форсирует проверку прав `0600`
+даже на Windows, `0` отключает проверку (например, Docker Desktop с bind-mount).
 
 > `config.yaml` намеренно добавлен в `.gitignore` и должен иметь права **0600**.
 
@@ -448,7 +458,7 @@
 - **Safe-diff:** массовое удаление блокируется при `deleted / existing > max_delete_ratio` (по умолчанию 0.5)
 - **Best-effort rollback:** при ошибке применения выполняется откат к исходному состоянию
 - **Retry** с экспоненциальной задержкой и jitter
-- **Circuit Breaker** для внешних сервисов (MikroTik, BGPView, RDAP, Telegram)
+- **Circuit Breaker** для внешних сервисов (MikroTik, bgp.tools, RDAP, Telegram)
 - **Graceful shutdown** по SIGTERM / SIGINT
 - **Hot-reload** конфигурации по SIGHUP
 
@@ -549,19 +559,28 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
 
 ## REST API
 
+Все ответы в единой схеме `{ "ok": bool, "data": ..., "error": ... }`.
+
 | Метод | Endpoint | Назначение |
 |-------|----------|-----------|
 | `GET` | `/healthz` | liveness-проба (без авторизации) |
+| `GET` | `/readyz` | readiness: доступность RouterOS и кэша (без авторизации) |
 | `GET` | `/api/v1/status` | Общий статус |
-| `GET` | `/api/v1/services` | Список сервисов |
-| `POST` | `/api/v1/services/sync` | Запустить синхронизацию набора сервисов |
-| `POST` | `/api/v1/services/{name}/sync` | Синхронизировать сервис |
-| `GET` | `/api/v1/schedules` | Расписания |
+| `GET` | `/api/v1/services` | Список сервисов (расписание, число маршрутов, overrides) |
+| `POST` | `/api/v1/services` | Добавить сервис |
+| `DELETE` | `/api/v1/services/{name}` | Удалить сервис (`?purge=true` — удалить и маршруты) |
+| `POST` | `/api/v1/services/sync` | Запустить синхронизацию набора сервисов (асинхронно) |
+| `POST` | `/api/v1/services/{name}/sync` | Синхронизировать один сервис |
+| `POST` | `/api/v1/services/{name}/dry-run` | Расчёт diff без применения |
+| `GET` | `/api/v1/schedules` | Все расписания (global/groups/services/effective) |
 | `PUT` | `/api/v1/schedules/{service}` | Изменить расписание сервиса |
-| `GET` | `/api/v1/logs` | Получить логи |
+| `GET` | `/api/v1/logs` | Логи (`level`, `service`, `since`, `limit`) |
+| `GET` | `/api/v1/history` | История синхронизаций (`service`, `limit`) |
 | `WS` | `/api/v1/ws` | Live-обновления |
 
-Изменяющие состояние запросы требуют корректный **CSRF-токен**.
+Изменяющие запросы от **cookie-сессии** требуют CSRF-токен (`X-CSRF-Token` или поле `csrf_token`).
+Запросы, авторизованные **Basic-заголовком**, освобождены от CSRF (браузер не прикладывает
+`Authorization` к межсайтовым запросам). При включённом `auth` тело запроса ограничено 1 МБ.
 
 Полная спецификация: [docs/openapi.yaml](docs/openapi.yaml)
 
@@ -580,7 +599,7 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
       compress: true
       also_stdout: true
 
-Ротация выполняется через `lumberjack`. Значения паролей и токенов **не должны** попадать в логи.
+Ротация выполняется через `lumberjack`. Фактический лимит каталога ≈ `max_size_mb × (max_files + 1)`; поле `max_total_mb` принимается конфигурацией как ориентир. Значения паролей и токенов **не должны** попадать в логи.
 
 ---
 
@@ -609,11 +628,28 @@ ASN и сетевые данные кэшируются в `bbolt`, чтобы �
 ### Особенности образа
 
 - **Multi-stage** build (builder: `golang:1.27.1-alpine`, runtime: `alpine:3.20`)
-- **Non-root** пользователь (`USER 65534:65534`)
+- **Non-root** пользователь (`USER 65534:65534` = `nobody`)
 - **Read-only** root filesystem
 - `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`
 - **Healthcheck** через `/healthz`
 - Ограничение ресурсов: `mem_limit: 128m`, `cpus: 1.0`
+
+### Зеркала (для сетей без прямого доступа к Docker Hub / proxy.golang.org)
+
+Dockerfile по умолчанию тянет base-образы через зеркало и использует GOPROXY-зеркало:
+
+    # сменить зеркало на прямое:
+    docker build --build-arg REGISTRY=docker.io/library -t mikrotik-route-sync .
+
+    # версия внедряется аргументами (git не требуется внутри образа):
+    docker build --build-arg VERSION=1.0.0 --build-arg COMMIT=$(git rev-parse --short HEAD) .
+
+В `docker-compose.yml` устанавливается `MRS_REQUIRE_FILE_PERMS=0`: на Windows-хосте
+bind-mount всегда показывает права `0777` внутри контейнера, иначе приложение
+отказалось бы читать `config.yaml`. На чистом Linux-хосте проверку можно оставить включённой.
+
+> Для доступа к Web UI из контейнера задайте `web.listen: 0.0.0.0:8080` в `config.yaml`
+> (композиция пробрасывает порт только на `127.0.0.1` хоста, доступ ограничен `allowed_cidrs`).
 
 ### Volumes
 

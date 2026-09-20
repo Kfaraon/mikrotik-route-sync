@@ -1,12 +1,25 @@
 # ==============================================================================
 # Stage 1: Builder (Сборка статического бинарного файла)
 # ==============================================================================
-FROM golang:1.27.1-alpine AS builder
+# REGISTRY — зеркало Docker Hub. auth.docker.io недоступен из некоторых сетей,
+# поэтому по умолчанию используется зеркальная копия official-образов.
+# При сборке с обычным доступом к Docker Hub: docker build --build-arg REGISTRY=docker.io/library .
+ARG REGISTRY=docker.m.daocloud.io/library
+
+FROM ${REGISTRY}/golang:1.27.1-alpine AS builder
+
+# Версия собирается на хосте и передаётся аргументами (git в образе не нужен)
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
 
 # Устанавливаем только необходимые для сборки инструменты
-RUN apk add --no-cache git ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /src
+
+# proxy.golang.org может быть недоступен — используем зеркало
+ENV GOPROXY=https://goproxy.cn,direct
 
 # Кэширование зависимостей (ускоряет повторные сборки)
 COPY go.mod go.sum ./
@@ -16,35 +29,35 @@ RUN go mod download
 COPY . .
 
 # Собираем статический бинарный файл с оптимизациями и внедрением версии
-# Примечание: пути -X должны соответствовать реальным путям в internal/version (будут созданы на след. шаге)
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -trimpath \
     -ldflags="-s -w \
-    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Version=$(git describe --tags --always 2>/dev/null || echo 'dev') \
-    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown') \
-    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.BuildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Version=${VERSION} \
+    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Commit=${COMMIT} \
+    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.BuildDate=${BUILD_DATE}" \
     -o /bin/mikrotik-route-sync \
     ./cmd/app
 
 # ==============================================================================
 # Stage 2: Runtime (Минимальный безопасный образ)
 # ==============================================================================
-FROM alpine:3.20 AS runtime
+FROM ${REGISTRY}/alpine:3.20 AS runtime
 
 # Устанавливаем только runtime-зависимости: корневые сертификаты (для HTTPS) и часовые пояса
+# Отдельный пользователь не создаётся: в Alpine 3.20 UID/GID 65534 уже заняты
+# системным nobody:nobody — используем его (USER ниже).
 RUN apk add --no-cache ca-certificates tzdata && \
-    # Создаем непривилегированного пользователя и группу с фиксированным UID/GID (65534 = nobody)
-    addgroup -g 65534 appgroup && \
-    adduser -D -H -u 65534 -G appgroup appuser
+    mkdir -p /data /var/log/mikrotik-route-sync && \
+    chown 65534:65534 /data /var/log/mikrotik-route-sync
 
 # Копируем только скомпилированный бинарный файл из builder-стадии
 COPY --from=builder /bin/mikrotik-route-sync /usr/local/bin/mikrotik-route-sync
 
-# Переключаемся на непривилегированного пользователя (Security by default)
-USER 65534:65534
-
-# Рабочая директория (должна совпадать с точкой монтирования volume для записи кэша/конфигов)
+# Рабочая директория (совпадает с точкой монтирования volume для кэша/конфигов)
 WORKDIR /data
+
+# Непривилегированный пользователь nobody (65534:65534)
+USER 65534:65534
 
 # Порт веб-интерфейса и API
 EXPOSE 8080

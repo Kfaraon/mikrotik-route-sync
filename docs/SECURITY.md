@@ -46,20 +46,23 @@
 
 ### Критические настройки
 
-- Права файла `config.yaml` — строго `0600`
-- Права директории конфига — строго `0700`
-- Приложение откажется запускаться при нарушении прав
-- Никогда не коммитьте `config.yaml` в git (уже в `.gitignore`)
+- Права файла `config.yaml` — строго `0600` (проверка при старте на POSIX)
+- Каталоги данных и логов создаются с правами `0700`; world/group-writable каталог логов — ошибка старта
+- На Windows проверка прав файла пропускается (NTFS не отображает unix-биты), форсируется через `MRS_REQUIRE_FILE_PERMS=1`
+- Никогда не коммитьте `config.yaml` в git (уже в `.gitignore` и `.dockerignore`)
 
 ### Секреты
 
 - Пароли и токены хранятся в `config.yaml` в открытом виде — **защитите файл**
-- Рекомендуется использовать ENV-переменные или Docker secrets:
+- Секреты можно передавать через ENV (приоритет над `config.yaml`):
   - `MRS_MIKROTIK_PASSWORD`
   - `MRS_TELEGRAM_BOT_TOKEN`
   - `MRS_WEB_PASSWORD`
-  - `MRS_BGPVIEW_API_KEY`
-- Поддерживаются `_FILE`-варианты для Docker secrets
+  - `MRS_BGP_TOOLS_CONTACT`
+  - `MRS_AKAMAI_API_KEY`
+- Служебная `MRS_REQUIRE_FILE_PERMS`: `1` — форсировать проверку прав 0600 на Windows,
+  `0` — отключить проверку (Docker Desktop на Windows: bind-mount всегда 0777)
+- Атомарная запись конфига выполняет `chmod 0600` (POSIX) после сохранения
 
 ### Сеть
 
@@ -115,9 +118,11 @@
 
 - Имя сервиса: `^[a-z0-9][a-z0-9_-]{0,63}$`
 - ASN: `^AS\d{1,10}$`
+- CIDR: только корректный формат, **только IPv4** (IPv6 отбрасывается)
 - URL: только `http/https`
-- Cron: только через валидированный парсер
-- Комментарии RouterOS: экранирование `"`, `\`, `\n`
+- Cron: только через валидированный парсер (`robfig/cron/v3`)
+- Комментарии RouterOS: запрет `"`, `\`, `\n`, `\r`
+- ID маршрута для DELETE: без `/ ? #`
 
 ## Аудит и наблюдаемость
 
@@ -135,7 +140,7 @@
   - `gosec ./...`
   - `golangci-lint run`
 - Статический бинарник (`CGO_ENABLED=0`)
-- Multi-stage Docker build (runtime — `scratch`)
+- Multi-stage Docker build (runtime — `alpine:3.20`, non-root `nobody`, read-only rootfs)
 
 ## Награды за уязвимости
 

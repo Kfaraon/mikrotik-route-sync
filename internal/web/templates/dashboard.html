@@ -5,71 +5,54 @@
   <meta charset="utf-8">
   <title>MikroTik Route Sync — Дашборд</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="/static/pico.min.css">
+  <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js"></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <nav class="container-fluid">
-    <ul>
-      <li><a href="/" aria-current="page">🏠 Дашборд</a></li>
-      <li><a href="/services">📦 Сервисы</a></li>
-      <li><a href="/schedules">📅 Расписания</a></li>
-      <li><a href="/settings">⚙️ Настройки</a></li>
-      <li><a href="/logs">📜 Логи</a></li>
-    </ul>
+  <nav class="bar">
+    <span class="brand">MikroTik Route Sync</span>
+    <a href="/" class="active">Дашборд</a>
+    <a href="/services">Сервисы</a>
+    <a href="/schedules">Расписания</a>
+    <a href="/settings">Настройки</a>
+    <a href="/logs">Логи</a>
+    <span class="ver">v{{ .Version }}</span>
   </nav>
 
-  <main class="container">
-    <h1>MikroTik Route Sync</h1>
+  <main class="wrap">
+    <h1>Дашборд</h1>
     <p class="muted">Часовой пояс: {{ .Timezone }}</p>
 
-    <!-- Live-статус через HTMX -->
-    <div id="status"
-         hx-get="/partials/status"
-         hx-trigger="load, every 10s"
-         hx-swap="innerHTML">
-      <p>Загрузка статуса…</p>
+    <div id="status" hx-get="/partials/status" hx-trigger="load, every 10s" hx-swap="innerHTML">
+      <p class="muted">Загрузка статуса…</p>
     </div>
 
-    <hr>
+    <section class="grid">
+      <article>
+        <h2>Сервисы ({{ .ServiceCount }})</h2>
+        <table>
+          <thead><tr><th>Сервис</th><th>Расписание</th></tr></thead>
+          <tbody>
+            {{ range .Services }}
+            <tr><td>{{ . }}</td><td>{{ effectiveSchedule . }}</td></tr>
+            {{ else }}
+            <tr><td colspan="2" class="muted">Сервисы не настроены — добавьте на странице «Сервисы»</td></tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </article>
 
-    <h2>Сервисы ({{ .ServiceCount }})</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Сервис</th>
-          <th>Расписание</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .Services }}
-        <tr>
-          <td>{{ . }}</td>
-          <td>{{ effectiveSchedule . }}</td>
-        </tr>
-        {{ else }}
-        <tr><td colspan="2" class="muted">Сервисы не настроены</td></tr>
-        {{ end }}
-      </tbody>
-    </table>
+      <article>
+        <h2>Быстрые действия</h2>
+        <button type="button" hx-post="/actions/sync-all" hx-swap="none"
+                hx-confirm="Синхронизировать все сервисы?">🔄 Синхронизировать всё</button>
+        <p class="muted">Результат придёт в Telegram и отобразится здесь через WebSocket.</p>
+        <div id="events" class="events"></div>
+      </article>
+    </section>
   </main>
-
-  <script>
-    // WebSocket для live-обновлений
-    (function() {
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(proto + '://' + location.host + '/api/v1/ws');
-      ws.onmessage = function(e) {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'sync_done') {
-          document.getElementById('status')?.dispatchEvent(new Event('htmx:refresh'));
-          htmx.trigger('#status', 'htmx:refresh');
-        }
-      };
-      ws.onclose = function() { setTimeout(arguments.callee, 5000); };
-    })();
-  </script>
 </body>
 </html>
 {{end}}

@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -44,16 +46,16 @@ type Config struct {
 	Timezone  string `yaml:"timezone"`
 	CachePath string `yaml:"cache_path"`
 
-	Logging   LoggingConfig    `yaml:"logging"`
-	MikroTik  MikroTikConfig   `yaml:"mikrotik"`
-	Telegram  TelegramConfig   `yaml:"telegram"`
-	Web       WebConfig        `yaml:"web"`
-	Scheduler SchedulerConfig  `yaml:"scheduler"`
-	Safety    SafetyConfig     `yaml:"safety"`
-	Retry     RetryConfig      `yaml:"retry"`
-	External  ExternalConfig   `yaml:"external"`
-	Snapshots SnapshotsConfig  `yaml:"snapshots"`
-	Schedules SchedulesConfig  `yaml:"schedules"`
+	Logging   LoggingConfig   `yaml:"logging"`
+	MikroTik  MikroTikConfig  `yaml:"mikrotik"`
+	Telegram  TelegramConfig  `yaml:"telegram"`
+	Web       WebConfig       `yaml:"web"`
+	Scheduler SchedulerConfig `yaml:"scheduler"`
+	Safety    SafetyConfig    `yaml:"safety"`
+	Retry     RetryConfig     `yaml:"retry"`
+	External  ExternalConfig  `yaml:"external"`
+	Snapshots SnapshotsConfig `yaml:"snapshots"`
+	Schedules SchedulesConfig `yaml:"schedules"`
 
 	Services  []string                   `yaml:"services"`
 	Overrides map[string]ServiceOverride `yaml:"overrides"`
@@ -138,6 +140,7 @@ type SchedulerConfig struct {
 }
 
 // SafetyConfig — параметры безопасности (только IPv4).
+// Проект сознательно не поддерживает IPv6.
 type SafetyConfig struct {
 	MaxDeleteRatio          float64 `yaml:"max_delete_ratio"`
 	RequireConfirmationOver int     `yaml:"require_confirmation_over"`
@@ -158,10 +161,12 @@ type RetryConfig struct {
 type ExternalConfig struct {
 	HTTPTimeout   Duration `yaml:"http_timeout"`
 	MaxResponseMB int      `yaml:"max_response_mb"`
-	BGPViewAPIKey string   `yaml:"bgpview_api_key"`
-	AkamaiAPIKey  string   `yaml:"akamai_api_key"`
-	RDAPTimeout   Duration `yaml:"rdap_timeout"`
-	Resolver      string   `yaml:"resolver"`
+	// BGPToolsContact — email или "название + URL/почта" для User-Agent
+	// запросов к bgp.tools (требование их API: описательный UA со способом связи).
+	BGPToolsContact string   `yaml:"bgp_tools_contact"`
+	AkamaiAPIKey    string   `yaml:"akamai_api_key"`
+	RDAPTimeout     Duration `yaml:"rdap_timeout"`
+	Resolver        string   `yaml:"resolver"`
 }
 
 // SnapshotsConfig — настройки снапшотов маршрутов.
@@ -225,20 +230,22 @@ func Load(path string) (*Config, error) {
 	if wp := os.Getenv("MRS_WEB_PASSWORD"); wp != "" {
 		c.Web.Auth.Password = wp
 	}
-	if bg := os.Getenv("MRS_BGPVIEW_API_KEY"); bg != "" {
-		c.External.BGPViewAPIKey = bg
+	if contact := os.Getenv("MRS_BGP_TOOLS_CONTACT"); contact != "" {
+		c.External.BGPToolsContact = contact
 	}
 	if ak := os.Getenv("MRS_AKAMAI_API_KEY"); ak != "" {
 		c.External.AkamaiAPIKey = ak
 	}
 
-	// Проверка прав файла (обязательно 0600)
-	fi, err := os.Stat(path)
-	if err != nil {
+	// Проверка прав файла (обязательно 0600).
+	// На Windows файловые права NTFS не отображаются в unix-бите,
+	// поэтому проверка выполняется только на POSIX-системах
+	// либо когда явная проверка включена через MRS_REQUIRE_FILE_PERMS=1.
+	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("stat config: %w", err)
 	}
-	if fi.Mode().Perm() != 0o600 {
-		return nil, fmt.Errorf("config %s: required 0600, got %o", path, fi.Mode().Perm())
+	if err := checkFilePermissions(path); err != nil {
+		return nil, err
 	}
 
 	setDefaults(&c)
@@ -247,6 +254,31 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("validation: %w", err)
 	}
 	return &c, nil
+}
+
+// checkFilePermissions требует права 0600 на POSIX-системах.
+// На Windows (где NTFS-права не отображаются в unix-бите) проверка
+// пропускается, если явно не включена через MRS_REQUIRE_FILE_PERMS=1.
+// MRS_REQUIRE_FILE_PERMS=0 отключает проверку принудительно (например,
+// в Docker Desktop на Windows bind-mount всегда показывает 0777).
+func checkFilePermissions(path string) error {
+	switch os.Getenv("MRS_REQUIRE_FILE_PERMS") {
+	case "0":
+		return nil
+	case "1":
+	default:
+		if runtime.GOOS == "windows" {
+			return nil
+		}
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat config: %w", err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		return fmt.Errorf("config %s: required 0600, got %o", path, fi.Mode().Perm())
+	}
+	return nil
 }
 
 // setDefaults устанавливает значения по умолчанию для пропущенных параметров.
@@ -260,9 +292,12 @@ func setDefaults(c *Config) {
 	if c.Safety.MaxDeleteRatio == 0 {
 		c.Safety.MaxDeleteRatio = 0.5
 	}
-	// Только IPv4: минимум /8 (PROMPT XIV)
+	// Только IPv4: минимум /8 (PROMPT XIV). IPv6 не поддерживается.
 	if c.Safety.MinPrefixV4 == 0 {
 		c.Safety.MinPrefixV4 = 8
+	}
+	if c.Safety.MaxASNPrefixes == 0 {
+		c.Safety.MaxASNPrefixes = 100
 	}
 	if c.MikroTik.Distance == 0 {
 		c.MikroTik.Distance = 1
@@ -329,10 +364,11 @@ func (c *Config) Validate() error {
 	if c.Schedules.Global == "" {
 		return fmt.Errorf("schedules.global required")
 	}
-	if c.Logging.File != "" {
+	if c.Logging.File != "" && runtime.GOOS != "windows" && os.Getenv("MRS_REQUIRE_FILE_PERMS") != "0" {
 		dir := filepath.Dir(c.Logging.File)
 		if fi, err := os.Stat(dir); err == nil {
-			if fi.Mode().Perm()&0o077 != 0 {
+			// «Слишком открыто» = запись для группы/окружающих (world/group writable)
+			if fi.Mode().Perm()&0o022 != 0 {
 				return fmt.Errorf("log dir %s too open: %o", dir, fi.Mode().Perm())
 			}
 		}
@@ -342,7 +378,33 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("web.auth.username/password required")
 		}
 	}
+	// Валидация имён сервисов и overrides (PROMPT XI.9).
+	for _, name := range c.Services {
+		if !ValidateServiceName(name) {
+			return fmt.Errorf("invalid service name %q (allowed ^[a-z0-9][a-z0-9_-]{0,63}$)", name)
+		}
+	}
+	for name, ov := range c.Overrides {
+		if !ValidateServiceName(name) {
+			return fmt.Errorf("invalid override service name %q", name)
+		}
+		if ov.Method != "" && !knownMethods[ov.Method] {
+			return fmt.Errorf("service %q: unknown method %q", name, ov.Method)
+		}
+		if ov.StaticURL != "" {
+			u, err := url.Parse(ov.StaticURL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+				return fmt.Errorf("service %q: static_url must be http/https", name)
+			}
+		}
+	}
 	return nil
+}
+
+// knownMethods — допустимые методы сбора (PROMPT II.2).
+var knownMethods = map[string]bool{
+	"cdn": true, "asn": true, "dynamic": true,
+	"whois": true, "static_url": true,
 }
 
 // EffectiveSchedule возвращает эффективное расписание сервиса.

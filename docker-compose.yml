@@ -8,9 +8,16 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 128m
     cpus: 1.0
+    environment:
+      # На Windows-хосте bind-mount всегда показывает 0777 внутри контейнера
+      - MRS_REQUIRE_FILE_PERMS=0
+      # Секреты можно передавать сюда, а не в config.yaml (приоритет ENV выше)
+      - MRS_MIKROTIK_PASSWORD=${MRS_MIKROTIK_PASSWORD:-}
+      - MRS_TELEGRAM_BOT_TOKEN=${MRS_TELEGRAM_BOT_TOKEN:-}
+      - MRS_WEB_PASSWORD=${MRS_WEB_PASSWORD:-}
     volumes:
-     - ./config.yaml:/data/config.yaml:ro
-     - cache_volume:/data/cache.db
-     - ./logs:/var/log/mikrotik-route-sync
+      - ./config.yaml:/data/config.yaml
+      - ./data:/data
+      - ./logs:/var/log/mikrotik-route-sync
     ports:
       - "127.0.0.1:8080:8080"

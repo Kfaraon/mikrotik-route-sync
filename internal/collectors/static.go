@@ -1,60 +1,41 @@
 package collectors
 
 import (
-	"bufio"
 	"context"
-	"io"
-	"net/http"
-	"net/netip"
-	"strings"
-	"time"
+	"fmt"
+	"net/url"
 )
 
-type StaticCollector struct {
-	url string
+// StaticURLCollector — произвольные публичные списки CIDR
+// (antifilter, re:filter и т.п.): одна сеть на строку, комментарии через #.
+type StaticURLCollector struct {
+	url  string
+	http *HTTP
 }
 
-func NewStaticCollector(url string) Collector {
-	return &StaticCollector{url: url}
+// NewStaticURLCollector проверяет URL (только http/https) и создаёт коллектор.
+func NewStaticURLCollector(u string, h *HTTP) (*StaticURLCollector, error) {
+	parsed, err := url.Parse(u)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, fmt.Errorf("static_url: must be a valid http/https URL, got %q", u)
+	}
+	return &StaticURLCollector{url: u, http: h}, nil
 }
 
-func (c *StaticCollector) Name() string { return "static_url" }
+func (c *StaticURLCollector) Name() string { return "static_url" }
 
-func (c *StaticCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, "GET", c.url, nil)
+func (c *StaticURLCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
+	lines, err := c.http.FetchLines(ctx, c.url)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("static_url: %w", err)
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
+	out := filterPrefixes(parsePrefixLines(lines), opts)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("static_url: no valid prefixes in %s", c.url)
 	}
-	defer resp.Body.Close()
-
-	var prefixes []netip.Prefix
-	excludeSet := make(map[netip.Prefix]bool)
-	for _, ex := range opts.Exclude {
-		excludeSet[ex.Masked()] = true
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if prefix, err := netip.ParsePrefix(line); err == nil {
-			prefix = prefix.Masked()
-			if !excludeSet[prefix] {
-				prefixes = append(prefixes, prefix)
-			}
-		}
-	}
-
 	return &Result{
-		Prefixes: prefixes,
+		Prefixes: out,
 		Source:   c.url,
 		Method:   "static_url",
 	}, nil

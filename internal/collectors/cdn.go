@@ -2,142 +2,130 @@ package collectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/netip"
 	"strings"
-	"time"
 )
 
-type CDNCollector struct {
-	asn int
+// CDN URL-источники по ASN (PROMPT II.2). Только IPv4.
+// Примечание: Akamai (AS20940) намеренно исключён — для него используется метод "asn".
+var cdnSources = map[int]cdnSource{
+	13335: { // Cloudflare
+		url:  "https://www.cloudflare.com/ips-v4",
+		kind: "text",
+	},
+	16509: { // AWS CloudFront
+		url:  "https://ip-ranges.amazonaws.com/ip-ranges.json",
+		kind: "aws",
+	},
+	15169: { // Google
+		url:  "https://www.gstatic.com/ipranges/goog.json",
+		kind: "google",
+	},
+	54825: { // Fastly
+		url:  "https://api.fastly.com/public-ip-list",
+		kind: "fastly",
+	},
 }
 
-func NewCDNCollector(asn int) Collector {
-	return &CDNCollector{asn: asn}
+type cdnSource struct {
+	url  string
+	kind string
+}
+
+// CDNCollector — официальные публичные списки IPv4-диапазонов CDN-провайдеров.
+type CDNCollector struct {
+	asn  int
+	http *HTTP
+}
+
+// NewCDNCollector создаёт CDN-коллектор для ASN.
+func NewCDNCollector(asn int, h *HTTP) *CDNCollector {
+	return &CDNCollector{asn: asn, http: h}
 }
 
 func (c *CDNCollector) Name() string { return "cdn" }
 
-// cdnURLs содержит маппинг известных ASN CDN-провайдеров на их публичные списки IP.
-// Примечание: Akamai (AS20940) намеренно исключён из этого списка.
-// Согласно архитектуре, для Akamai следует использовать метод "asn" (BGPView/RIPEstat).
-var cdnURLs = map[int]string{
-	13335: "https://www.cloudflare.com/ips-v4",              // Cloudflare
-	16509: "https://ip-ranges.amazonaws.com/ip-ranges.json", // AWS CloudFront
-	15169: "https://www.gstatic.com/ipranges/goog.json",     // Google
-}
-
 func (c *CDNCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
-	url, ok := cdnURLs[c.asn]
+	src, ok := cdnSources[c.asn]
 	if !ok {
-		return nil, fmt.Errorf("no static CDN URL for ASN %d (use 'asn' method instead)", c.asn)
+		return nil, fmt.Errorf("no CDN source for ASN %d (use 'asn' method instead)", c.asn)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	lines, err := c.fetchSource(ctx, src.kind, src.url)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, err
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+	out := filterPrefixes(parsePrefixLines(lines), opts)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("cdn: no prefixes fetched for AS%d", c.asn)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	var prefixes []string
-
-	// Cloudflare возвращает простой текст
-	if c.asn == 13335 {
-		prefixes = parseTextLines(string(body))
-	} else if c.asn == 15169 {
-		// Google JSON формат
-		var result struct {
-			Prefixes []struct {
-				IPv4Prefix string `json:"ipv4Prefix"`
-				IPv6Prefix string `json:"ipv6Prefix"`
-			} `json:"prefixes"`
-		}
-		if err := json.Unmarshal(body, &result); err == nil {
-			for _, p := range result.Prefixes {
-				if p.IPv4Prefix != "" {
-					prefixes = append(prefixes, p.IPv4Prefix)
-				}
-				if p.IPv6Prefix != "" {
-					prefixes = append(prefixes, p.IPv6Prefix)
-				}
-			}
-		}
-	} else {
-		// AWS JSON формат
-		var result struct {
-			Prefixes []struct {
-				IPPrefix string `json:"ip_prefix"`
-			} `json:"prefixes"`
-		}
-		if err := json.Unmarshal(body, &result); err == nil {
-			for _, p := range result.Prefixes {
-				prefixes = append(prefixes, p.IPPrefix)
-			}
-		}
-	}
-
-	var netPrefixes []netip.Prefix
-	for _, p := range prefixes {
-		if prefix, err := netip.ParsePrefix(p); err == nil {
-			netPrefixes = append(netPrefixes, prefix.Masked())
-		}
-	}
-
 	return &Result{
-		Prefixes: netPrefixes,
-		Source:   url,
+		Prefixes: out,
+		Source:   src.url,
 		Method:   "cdn",
 	}, nil
 }
 
-func parseTextLines(s string) []string {
-	var lines []string
-	for _, line := range splitLines(s) {
-		line = trimLine(line)
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	return lines
-}
+// fetchSource парсит конкретный формат CDN-ответа, возвращает строки CIDR.
+func (c *CDNCollector) fetchSource(ctx context.Context, kind, u string) ([]string, error) {
+	switch kind {
+	case "text":
+		return c.http.FetchLines(ctx, u)
 
-func splitLines(s string) []string {
-	var lines []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			lines = append(lines, s[start:i])
-			start = i + 1
+	case "google":
+		var data struct {
+			Prefixes []struct {
+				IPv4Prefix string `json:"ipv4Prefix"`
+			} `json:"prefixes"`
 		}
-	}
-	if start < len(s) {
-		lines = append(lines, s[start:])
-	}
-	return lines
-}
+		if err := c.http.FetchJSON(ctx, u, &data); err != nil {
+			return nil, err
+		}
+		var out []string
+		for _, p := range data.Prefixes {
+			if p.IPv4Prefix != "" {
+				out = append(out, p.IPv4Prefix)
+			}
+		}
+		return out, nil
 
-func trimLine(s string) string {
-	s = strings.TrimSpace(s)
-	if idx := strings.Index(s, "#"); idx >= 0 {
-		s = strings.TrimSpace(s[:idx])
+	case "aws":
+		// Фильтр только по service=CLOUDFRONT* (PROMPT II.2).
+		var data struct {
+			Prefixes []struct {
+				IPPrefix string `json:"ip_prefix"`
+				Service  string `json:"service"`
+				Region   string `json:"region"`
+			} `json:"prefixes"`
+		}
+		if err := c.http.FetchJSON(ctx, u, &data); err != nil {
+			return nil, err
+		}
+		var out []string
+		for _, p := range data.Prefixes {
+			if !strings.HasPrefix(strings.ToUpper(p.Service), "CLOUDFRONT") {
+				continue
+			}
+			if p.IPPrefix != "" {
+				out = append(out, p.IPPrefix)
+			}
+		}
+		return out, nil
+
+	case "fastly":
+		var data struct {
+			Prefixes []string `json:"prefixes"`
+			IPv4     []string `json:"addresses"`
+		}
+		if err := c.http.FetchJSON(ctx, u, &data); err != nil {
+			return nil, err
+		}
+		if len(data.Prefixes) > 0 {
+			return data.Prefixes, nil
+		}
+		return data.IPv4, nil
 	}
-	return s
+
+	return nil, fmt.Errorf("cdn: unknown source kind %q", kind)
 }

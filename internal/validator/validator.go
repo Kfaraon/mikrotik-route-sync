@@ -13,13 +13,13 @@ type Validator struct {
 	Safety config.SafetyConfig
 }
 
+// Project works with IPv4 only. IPv6 prefixes are rejected.
+
 var blocked = mustPrefixes([]string{
 	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
 	"169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24",
 	"192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
 	"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
-	"::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96",
-	"100::/64", "2001:db8::/32", "fc00::/7", "fe80::/10", "ff00::/8",
 })
 
 func mustPrefixes(xs []string) []netip.Prefix {
@@ -32,9 +32,6 @@ func mustPrefixes(xs []string) []netip.Prefix {
 
 func overlapsBlocked(p netip.Prefix) bool {
 	for _, b := range blocked {
-		if b.Addr().BitLen() != p.Addr().BitLen() {
-			continue
-		}
 		if b.Overlaps(p) {
 			return true
 		}
@@ -55,17 +52,14 @@ func (v Validator) Validate(raw []string, ov config.ServiceOverride) ([]netip.Pr
 
 	out := make([]netip.Prefix, 0, len(norm))
 	for _, p := range norm {
+		if !p.Addr().Is4() {
+			continue
+		}
 		if overlapsBlocked(p) {
 			continue
 		}
-		if p.Addr().Is4() {
-			if p.Bits() < v.Safety.MinPrefixV4 || (!v.Safety.AllowHostRoutes && p.Bits() == 32) {
-				continue
-			}
-		} else {
-			if p.Bits() < v.Safety.MinPrefixV6 || (!v.Safety.AllowHostRoutes && p.Bits() == 128) {
-				continue
-			}
+		if p.Bits() < v.Safety.MinPrefixV4 || (!v.Safety.AllowHostRoutes && p.Bits() == 32) {
+			continue
 		}
 		skip := false
 		for _, x := range excludes {
@@ -105,8 +99,10 @@ func (v Validator) Validate(raw []string, ov config.ServiceOverride) ([]netip.Pr
 	return out, nil
 }
 
+// SanitizeComment запрещает characters, ломающие RouterOS-комментарии
+// (PROMPT XI.9): двойные кавычки, обратный слэш, переводы строк.
 func SanitizeComment(s string) error {
-	if strings.ContainsAny(s, "\\"\\\\"\\"\\n\\r") {
+	if strings.ContainsAny(s, "\"\\\n\r") {
 		return fmt.Errorf("unsafe service/comment characters")
 	}
 	return nil

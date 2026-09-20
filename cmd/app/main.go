@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -24,7 +27,7 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/web"
+	webui "github.com/Kfaraon/mikrotik-route-sync/internal/web"
 )
 
 // ============================================================================
@@ -32,13 +35,15 @@ import (
 // ============================================================================
 
 var (
-	cfgPath   string
-	dryRun    bool
-	forceSync bool
-	service   string
-	group     string
-	purge     bool
-	ttl       time.Duration
+	cfgPath      string
+	dryRun       bool
+	forceOp      bool
+	svcName      string
+	grpName      string
+	purge        bool
+	snapTTLHours int
+	logLimit     int
+	logFollow    bool
 )
 
 // ============================================================================
@@ -46,213 +51,137 @@ var (
 // ============================================================================
 
 func main() {
-	rootCmd := &cobra.Command{
-		Use:   "mikrotik-route-sync",
-		Short: "Автоматическое управление маршрутами на MikroTik RouterOS v7",
-		Long: `mikrotik-route-sync — production-ready система для автоматического
-управления маршрутами на MikroTik RouterOS v7.
-
-Поддерживает:
-- Изоляцию по сервисам (каждый сервис — отдельная область управления)
-- Автоматическое определение метода сбора IP (CDN, ASN, WHOIS, динамический)
-- Инкрементальную синхронизацию через REST API
-- Транзакционность и best-effort rollback
-- Безопасность по умолчанию (fail-closed, safe-diff, минимизация прав)`,
-		Version: version.Version,
-	}
-
-	// Глобальные флаги
-	rootCmd.PersistentFlags().StringVarP(&cfgPath, "config", "c", "config.yaml", "путь к файлу конфигурации")
-
-	// Регистрация команд
-	rootCmd.AddCommand(
-		syncCmd(),
-		addServiceCmd(),
-		removeServiceCmd(),
-		listServicesCmd(),
-		infoCmd(),
-		diffCmd(),
-		snapshotCmd(),
-		backupCmd(),
-		restoreCmd(),
-		checkCmd(),
-		webCmd(),
-		botCmd(),
-		daemonCmd(),
-		schedulerCmd(),
-		configCmd(),
-		logsCmd(),
-		testCmd(),
-		versionCmd(),
-	)
-
-	if err := rootCmd.Execute(); err != nil {
+	root := newRoot()
+	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
+func newRoot() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "app",
+		Short: "Автоматическое управление маршрутами на MikroTik RouterOS v7",
+		Long: `mikrotik-route-sync — production-ready система управления маршрутами MikroTik.
+
+Пользователь указывает только название сервиса (instagram, youtube, cloudflare),
+домен, IP или ASN. Система сама определяет метод сбора, собирает CIDR,
+валидирует, агрегирует и инкрементально синхронизирует маршруты через REST API.`,
+		Version:       version.Version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	root.PersistentFlags().StringVar(&cfgPath, "config", "config.yaml", "путь к файлу конфигурации")
+
+	root.AddCommand(
+		syncCmd(),
+		diffCmd(),
+		listCmd(),
+		infoCmd(),
+		addServiceCmd(),
+		removeServiceCmd(),
+		backupCmd(),
+		restoreCmd(),
+		snapshotsCmd(),
+		scheduleCmd(),
+		botCmd(),
+		webCmd(),
+		daemonCmd(),
+		configCmd(),
+		logsCmd(),
+		testTelegramCmd(),
+		testMikrotikCmd(),
+		testDNSCmd(),
+		versionCmd(),
+	)
+	return root
+}
+
 // ============================================================================
-// Команда: sync
+// sync / diff / list / info
 // ============================================================================
 
 func syncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Синхронизировать маршруты сервисов",
-		Example: `  # Синхронизировать все сервисы
-  mikrotik-route-sync sync
-
-  # Синхронизировать группу
-  mikrotik-route-sync sync --group social
-
-  # Пробный запуск для конкретного сервиса
-  mikrotik-route-sync sync --service instagram --dry
-
-  # Принудительная синхронизация (обход защиты от массового удаления)
-  mikrotik-route-sync sync --service youtube --force`,
+		Short: "Синхронизировать маршруты (все сервисы, группу или один сервис)",
+		Example: `  app sync
+  app sync --service instagram
+  app sync --group social
+  app sync --dry-run
+  app sync --service youtube --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				var services []string
+				services, err := resolveTargets(cfg)
+				if err != nil {
+					return err
+				}
 
-				// Приоритет: service > group > all configured
-				if service != "" {
-					services = []string{service}
-				} else if group != "" {
-					groupServices := cfg.ServicesInGroup(group)
-					if len(groupServices) == 0 {
-						return fmt.Errorf("group %q not found or empty", group)
+				// Dry-run по одному сервису: машиночитаемый diff (PROMPT III.3)
+				if dryRun && svcName != "" {
+					diff, err := s.DiffService(ctx, svcName)
+					if err != nil {
+						return err
 					}
-					services = groupServices
-				} else {
-					services = cfg.Services
+					return printJSON(diff)
 				}
 
-				if len(services) == 0 {
-					return fmt.Errorf("no services configured. Use 'add-service' first")
+				fmt.Printf("Sync: %d сервисов (dry_run=%v force=%v)\n", len(services), dryRun, forceOp)
+				if err := s.SyncMany(ctx, services, dryRun, forceOp); err != nil {
+					return err
 				}
-
-				fmt.Printf("Starting sync for %d services (dry_run=%v, force=%v)\n",
-					len(services), dryRun, forceSync)
-
-				if err := s.SyncMany(ctx, services, dryRun, forceSync); err != nil {
-					return fmt.Errorf("sync failed: %w", err)
-				}
-
-				fmt.Println("Sync completed successfully")
+				fmt.Println("Sync completed")
 				return nil
 			})
 		},
 	}
-
-	cmd.Flags().BoolVar(&dryRun, "dry", false, "пробный запуск без применения изменений")
-	cmd.Flags().BoolVar(&forceSync, "force", false, "обход защиты от массового удаления")
-	cmd.Flags().StringVarP(&service, "service", "s", "", "конкретный сервис для операции")
-	cmd.Flags().StringVarP(&group, "group", "g", "", "группа сервисов для синхронизации")
-
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "расчёт изменений без применения")
+	cmd.Flags().BoolVar(&forceOp, "force", false, "обход защиты от массового удаления")
+	cmd.Flags().StringVarP(&svcName, "service", "s", "", "один сервис")
+	cmd.Flags().StringVarP(&grpName, "group", "g", "", "группа сервисов")
 	return cmd
 }
 
-// ============================================================================
-// Команда: add-service
-// ============================================================================
-
-func addServiceCmd() *cobra.Command {
-	var staticURL string
-	var method string
-	var exclude []string
-	var domains []string
-	var alsoCDN []string
-	var maxASNPrefixes int
-
-	cmd := &cobra.Command{
-		Use:   "add-service [name]",
-		Short: "Добавить новый сервис для синхронизации",
-		Args:  cobra.ExactArgs(1),
-		Example: `  # Добавить сервис с автоопределением метода
-  mikrotik-route-sync add-service instagram
-
-  # Добавить сервис с явным методом
-  mikrotik-route-sync add-service custom-cdn --method static_url --static-url https://example.com/cidr.txt
-
-  # Добавить сервис с исключениями
-  mikrotik-route-sync add-service youtube --exclude 10.0.0.0/8 --exclude 192.168.0.0/16`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				ov := config.ServiceOverride{
-					Method:         method,
-					StaticURL:      staticURL,
-					Exclude:        exclude,
-					Domains:        domains,
-					AlsoCDN:        alsoCDN,
-					MaxASNPrefixes: maxASNPrefixes,
-				}
-				// ИСПРАВЛЕНО: используем AddServiceWithConfig для проброса override
-				if err := s.AddServiceWithConfig(ctx, name, ov); err != nil {
-					return fmt.Errorf("add service: %w", err)
-				}
-
-				fmt.Printf("Service '%s' added successfully\n", name)
-				if method != "" || len(exclude) > 0 || len(domains) > 0 {
-					fmt.Printf("Overrides applied: method=%s, exclude=%v, domains=%v\n",
-						method, exclude, domains)
-				}
-				return nil
-			})
-		},
+func resolveTargets(cfg *config.Config) ([]string, error) {
+	switch {
+	case svcName != "":
+		return []string{svcName}, nil
+	case grpName != "":
+		gs := cfg.ServicesInGroup(grpName)
+		if len(gs) == 0 {
+			return nil, fmt.Errorf("group %q not found or empty", grpName)
+		}
+		return gs, nil
+	default:
+		if len(cfg.Services) == 0 {
+			return nil, fmt.Errorf("no services configured; use 'add-service' first")
+		}
+		return cfg.Services, nil
 	}
-
-	cmd.Flags().StringVar(&staticURL, "static-url", "", "URL для метода сбора статических префиксов")
-	cmd.Flags().StringVar(&method, "method", "", "метод сбора (cdn, asn, whois, static_url, dynamic)")
-	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "CIDR-сети для исключения")
-	cmd.Flags().StringSliceVar(&domains, "domains", nil, "домены для dynamic метода")
-	cmd.Flags().StringSliceVar(&alsoCDN, "also-cdn", nil, "дополнительные CDN (google, cloudflare, fastly)")
-	cmd.Flags().IntVar(&maxASNPrefixes, "max-asn-prefixes", 0, "максимум префиксов для ASN метода")
-
-	return cmd
 }
 
-// ============================================================================
-// Команда: remove-service
-// ============================================================================
-
-func removeServiceCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "remove-service [name]",
-		Short: "Удалить сервис из конфигурации",
-		Args:  cobra.ExactArgs(1),
-		Example: `  # Удалить сервис (маршруты остаются)
-  mikrotik-route-sync remove-service instagram
-
-  # Удалить сервис и все его маршруты
-  mikrotik-route-sync remove-service instagram --purge`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				if err := s.RemoveService(ctx, name, purge); err != nil {
-					return fmt.Errorf("remove service: %w", err)
-				}
-				fmt.Printf("Service '%s' removed successfully (purge_routes=%v)\n", name, purge)
-				return nil
-			})
-		},
-	}
-
-	cmd.Flags().BoolVar(&purge, "purge", false, "удалить все маршруты сервиса из MikroTik")
-
-	return cmd
-}
-
-// ============================================================================
-// Команда: list-services
-// ============================================================================
-
-func listServicesCmd() *cobra.Command {
+func diffCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list-services",
-		Short: "Список зарегистрированных сервисов",
-		Example: `  mikrotik-route-sync list-services`,
+		Use:   "diff <service>",
+		Short: "Показать diff сервиса в JSON (без изменений)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				diff, err := s.DiffService(ctx, args[0])
+				if err != nil {
+					return err
+				}
+				return printJSON(diff)
+			})
+		},
+	}
+}
+
+func listCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"list-services"},
+		Short:   "Список сервисов и их эффективных расписаний",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
 				services := s.ListServices()
@@ -260,155 +189,265 @@ func listServicesCmd() *cobra.Command {
 					fmt.Println("No services configured")
 					return nil
 				}
-				fmt.Println("Configured services:")
+				w := tabWriter()
+				fmt.Fprintln(w, "SERVICE\tSCHEDULE\tROUTES")
 				for _, name := range services {
-					schedule := cfg.EffectiveSchedule(name)
-					fmt.Printf("  - %-20s [schedule: %s]\n", name, schedule)
+					routes := 0
+					if rs, err := s.Backup(ctx, name); err == nil {
+						routes = len(rs)
+					}
+					fmt.Fprintf(w, "%s\t%s\t%d\n", name, cfg.EffectiveSchedule(name), routes)
 				}
+				w.Flush()
 				return nil
 			})
 		},
 	}
+	return cmd
 }
-
-// ============================================================================
-// Команда: info <service>
-// ============================================================================
 
 func infoCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "info [service]",
-		Short: "Показать информацию о сервисе (расписание, overrides, маршруты)",
+		Use:   "info <service>",
+		Short: "Информация о сервисе (расписание, overrides, маршруты)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				info, err := s.InfoService(ctx, name)
+				info, err := s.InfoService(ctx, args[0])
 				if err != nil {
-					return fmt.Errorf("get info: %w", err)
+					return err
 				}
-
-				fmt.Printf("Service: %s\n", info.Name)
-				fmt.Printf("Schedule: %s\n", info.Schedule)
-				fmt.Printf("Current routes in MikroTik: %d\n", info.RouteCount)
-				fmt.Printf("Snapshots: %d\n", info.SnapshotCount)
-
-				if info.Override.Method != "" || len(info.Override.Domains) > 0 || len(info.Override.Exclude) > 0 {
-					fmt.Println("\nOverrides:")
-					if info.Override.Method != "" {
-						fmt.Printf("  method: %s\n", info.Override.Method)
-					}
-					if len(info.Override.Domains) > 0 {
-						fmt.Printf("  domains: %v\n", info.Override.Domains)
-					}
-					if len(info.Override.Exclude) > 0 {
-						fmt.Printf("  exclude: %v\n", info.Override.Exclude)
-					}
-					if len(info.Override.AlsoCDN) > 0 {
-						fmt.Printf("  also_cdn: %v\n", info.Override.AlsoCDN)
-					}
-					if info.Override.MaxASNPrefixes > 0 {
-						fmt.Printf("  max_asn_prefixes: %d\n", info.Override.MaxASNPrefixes)
-					}
-					if info.Override.StaticURL != "" {
-						fmt.Printf("  static_url: %s\n", info.Override.StaticURL)
-					}
-				}
-				return nil
+				return printJSON(info)
 			})
 		},
 	}
 }
 
 // ============================================================================
-// Команда: diff <service>
+// add-service / remove-service
 // ============================================================================
 
-func diffCmd() *cobra.Command {
-	var jsonOutput bool
+func addServiceCmd() *cobra.Command {
+	var (
+		method    string
+		staticURL string
+		domains   []string
+		exclude   []string
+		alsoCDN   []string
+		maxASN    int
+		noSync    bool
+	)
 
 	cmd := &cobra.Command{
-		Use:   "diff [service]",
-		Short: "Показать diff между текущими и желаемыми маршрутами (без применения)",
+		Use:   "add-service <service>",
+		Short: "Добавить сервис и первоначально синхронизировать его",
 		Args:  cobra.ExactArgs(1),
+		Example: `  app add-service instagram
+  app add-service custom --method static_url --static-url https://example.org/prefixes.txt
+  app add-service youtube --method dynamic --domains youtube.com,googlevideo.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				diff, err := s.DiffService(ctx, name)
-				if err != nil {
-					return fmt.Errorf("compute diff: %w", err)
+				ov := config.ServiceOverride{
+					Method:         method,
+					StaticURL:      staticURL,
+					Domains:        domains,
+					Exclude:        exclude,
+					AlsoCDN:        alsoCDN,
+					MaxASNPrefixes: maxASN,
 				}
+				if err := s.AddServiceWithConfig(ctx, name, ov); err != nil {
+					return err
+				}
+				fmt.Printf("Service '%s' added\n", name)
 
-				if jsonOutput {
-					data, err := json.MarshalIndent(diff, "", "  ")
-					if err != nil {
-						return fmt.Errorf("marshal: %w", err)
-					}
-					fmt.Println(string(data))
+				if noSync {
 					return nil
 				}
-
-				fmt.Printf("Diff for service '%s':\n", name)
-				fmt.Printf("  To add:       %d\n", len(diff.Add))
-				fmt.Printf("  To remove:    %d\n", len(diff.Remove))
-				fmt.Printf("  Unchanged:    %d\n", diff.Unchanged)
-
-				if len(diff.Add) > 0 {
-					fmt.Println("\nWill ADD:")
-					for _, r := range diff.Add {
-						fmt.Printf("  + %s\n", r.CIDR)
-					}
+				res, err := s.SyncService(ctx, name, false, false)
+				if err != nil {
+					return fmt.Errorf("service added but initial sync failed: %w", err)
 				}
-				if len(diff.Remove) > 0 {
-					fmt.Println("\nWill REMOVE:")
-					for _, r := range diff.Remove {
-						fmt.Printf("  - %s\n", r.CIDR)
-					}
-				}
+				fmt.Printf("Initial sync: +%d -%d =%d (%s)\n", res.Added, res.Removed, res.Unchanged, res.Duration)
 				return nil
 			})
 		},
 	}
+	cmd.Flags().StringVar(&method, "method", "", "метод сбора (cdn, asn, dynamic, whois, static_url)")
+	cmd.Flags().StringVar(&staticURL, "static-url", "", "URL для static_url метода")
+	cmd.Flags().StringSliceVar(&domains, "domains", nil, "домены сервиса")
+	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "CIDR-сети для исключения")
+	cmd.Flags().StringSliceVar(&alsoCDN, "also-cdn", nil, "доп. CDN (cloudflare, google, aws, fastly)")
+	cmd.Flags().IntVar(&maxASN, "max-asn-prefixes", 0, "лимит префиксов ASN/WHOIS")
+	cmd.Flags().BoolVar(&noSync, "no-sync", false, "только добавить, без первоначальной синхронизации")
+	return cmd
+}
 
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "вывод в JSON формате")
+func removeServiceCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "remove-service <service>",
+		Short: "Удалить сервис (только его AUTO-маршруты)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				if err := s.RemoveService(ctx, args[0], purge || forceOp); err != nil {
+					return err
+				}
+				fmt.Printf("Service '%s' removed (routes purged: %v)\n", args[0], purge || forceOp)
+				return nil
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&purge, "purge", false, "удалить AUTO-маршруты сервиса")
+	cmd.Flags().BoolVar(&forceOp, "force", false, "то же, что --purge")
 	return cmd
 }
 
 // ============================================================================
-// Команда: snapshot
+// backup / restore / snapshots
 // ============================================================================
 
-func snapshotCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "snapshot",
-		Short: "Управление снапшотами (для ручного восстановления)",
-	}
+func backupCmd() *cobra.Command {
+	var outputFile string
 
-	createCmd := &cobra.Command{
-		Use:   "create [service]",
-		Short: "Создать снапшот текущего состояния маршрутов сервиса",
+	cmd := &cobra.Command{
+		Use:   "backup <service>",
+		Short: "Экспорт маршрутов сервиса в JSON",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				name := args[0]
-				routes, err := s.Backup(ctx, name)
+				routes, err := s.Backup(ctx, args[0])
 				if err != nil {
-					return fmt.Errorf("backup: %w", err)
+					return err
+				}
+				data, err := json.MarshalIndent(routes, "", "  ")
+				if err != nil {
+					return err
+				}
+				if outputFile != "" {
+					if err := os.WriteFile(outputFile, data, 0o600); err != nil {
+						return err
+					}
+					fmt.Printf("Backup saved to %s (%d routes)\n", outputFile, len(routes))
+					return nil
+				}
+				fmt.Println(string(data))
+				return nil
+			})
+		},
+	}
+	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "файл для сохранения")
+	return cmd
+}
+
+func restoreCmd() *cobra.Command {
+	var fromFile, fromSnapshot string
+
+	cmd := &cobra.Command{
+		Use:   "restore <service>",
+		Short: "Восстановление маршрутов сервиса из файла или снапшота",
+		Args:  cobra.ExactArgs(1),
+		Example: `  app restore instagram --from-file backup.json --force
+  app restore instagram --from-snapshot 171234567890 --force`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				name := args[0]
+				if !forceOp {
+					return fmt.Errorf("restore replaces routes and requires --force")
 				}
 
-				// ИСПРАВЛЕНО: используем netip.Prefix напрямую
+				var routes []mikrotik.Route
+				switch {
+				case fromFile != "":
+					data, err := os.ReadFile(fromFile)
+					if err != nil {
+						return fmt.Errorf("read backup: %w", err)
+					}
+					if err := json.Unmarshal(data, &routes); err != nil {
+						return fmt.Errorf("parse backup: %w", err)
+					}
+				case fromSnapshot != "":
+					if err := s.GetSnapshot(ctx, name, fromSnapshot, &routes); err != nil {
+						return err
+					}
+				default:
+					return fmt.Errorf("--from-file или --from-snapshot обязателен")
+				}
+
+				if err := s.Restore(ctx, name, routes); err != nil {
+					return err
+				}
+				fmt.Printf("Restored '%s' from %d routes\n", name, len(routes))
+				return nil
+			})
+		},
+	}
+	cmd.Flags().StringVar(&fromFile, "from-file", "", "JSON-файл бэкапа")
+	cmd.Flags().StringVar(&fromSnapshot, "from-snapshot", "", "ID снапшота")
+	cmd.Flags().BoolVar(&forceOp, "force", false, "подтверждение восстановления")
+	return cmd
+}
+
+func snapshotsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "snapshots",
+		Aliases: []string{"snapshot"},
+		Short:   "Управление снапшотами маршрутов",
+	}
+
+	listCmd := &cobra.Command{
+		Use:   "list <service>",
+		Short: "Список снапшотов сервиса",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				infos, err := s.ListSnapshots(ctx, args[0])
+				if err != nil {
+					return err
+				}
+				if len(infos) == 0 {
+					fmt.Println("No snapshots found")
+					return nil
+				}
+				return printJSON(infos)
+			})
+		},
+	}
+
+	deleteCmd := &cobra.Command{
+		Use:   "delete <service> <snapshot-id>",
+		Short: "Удалить снапшот",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				if err := s.DeleteSnapshot(ctx, args[0], args[1]); err != nil {
+					return err
+				}
+				fmt.Printf("Snapshot '%s' deleted\n", args[1])
+				return nil
+			})
+		},
+	}
+
+	var createCmd = &cobra.Command{
+		Use:   "create <service>",
+		Short: "Создать снапшот текущих маршрутов сервиса",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				routes, err := s.Backup(ctx, args[0])
+				if err != nil {
+					return err
+				}
 				prefixes := make([]netip.Prefix, 0, len(routes))
 				for _, r := range routes {
-					p, err := netip.ParsePrefix(r.DstAddress)
-					if err != nil {
-						continue
+					if p, err := netip.ParsePrefix(r.DstAddress); err == nil {
+						prefixes = append(prefixes, p)
 					}
-					prefixes = append(prefixes, p)
 				}
-
-				id, err := s.CreateSnapshot(ctx, name, prefixes)
+				id, err := s.CreateSnapshot(ctx, args[0], prefixes)
 				if err != nil {
-					return fmt.Errorf("create snapshot: %w", err)
+					return err
 				}
 				fmt.Printf("Snapshot created: %s (routes: %d)\n", id, len(prefixes))
 				return nil
@@ -416,375 +455,46 @@ func snapshotCmd() *cobra.Command {
 		},
 	}
 
-	listCmd := &cobra.Command{
-		Use:   "list [service]",
-		Short: "Список снапшотов сервиса",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				name := args[0]
-				infos, err := s.ListSnapshots(ctx, name)
-				if err != nil {
-					return fmt.Errorf("list snapshots: %w", err)
-				}
-
-				if len(infos) == 0 {
-					fmt.Println("No snapshots found")
-					return nil
-				}
-
-				fmt.Printf("Snapshots for service '%s':\n", name)
-				for _, info := range infos {
-					fmt.Printf("  %s | %s | routes: %d\n",
-						info.ID,
-						info.CreatedAt.Format(time.RFC3339),
-						info.Count,
-					)
-				}
-				return nil
-			})
-		},
-	}
-
-	deleteCmd := &cobra.Command{
-		Use:   "delete [service] [snapshot-id]",
-		Short: "Удалить конкретный снапшот",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				name := args[0]
-				id := args[1]
-				if err := s.DeleteSnapshot(ctx, name, id); err != nil {
-					return fmt.Errorf("delete snapshot: %w", err)
-				}
-				fmt.Printf("Snapshot '%s' deleted\n", id)
-				return nil
-			})
-		},
-	}
-
 	cleanupCmd := &cobra.Command{
-		Use:   "cleanup [service]",
-		Short: "Удалить старые снапшоты по TTL",
+		Use:   "cleanup <service>",
+		Short: "Удалить старые снапшоты по TTL (и сверх max_count)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				name := args[0]
-				deleted, err := s.CleanupSnapshots(ctx, name, ttl)
+				n, err := s.CleanupSnapshots(ctx, args[0], time.Duration(snapTTLHours)*time.Hour)
 				if err != nil {
-					return fmt.Errorf("cleanup snapshots: %w", err)
+					return err
 				}
-				fmt.Printf("Deleted %d expired snapshots\n", deleted)
+				fmt.Printf("Deleted %d snapshots\n", n)
 				return nil
 			})
 		},
 	}
-
-	cleanupCmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "TTL для снапшотов (например, 24h, 7d)")
+	cleanupCmd.Flags().IntVar(&snapTTLHours, "ttl", 168, "TTL снапшотов в часах")
 
 	cmd.AddCommand(createCmd, listCmd, deleteCmd, cleanupCmd)
 	return cmd
 }
 
 // ============================================================================
-// Команда: backup
+// schedule / bot / web / daemon
 // ============================================================================
 
-func backupCmd() *cobra.Command {
-	var outputFile string
-
+func scheduleCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "backup [service]",
-		Short: "Экспорт текущих маршрутов сервиса в JSON",
-		Args:  cobra.ExactArgs(1),
-		Example: `  # Экспорт в stdout
-  mikrotik-route-sync backup instagram
-
-  # Экспорт в файл
-  mikrotik-route-sync backup instagram --output backup.json`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				name := args[0]
-				routes, err := s.Backup(ctx, name)
-				if err != nil {
-					return fmt.Errorf("backup: %w", err)
-				}
-
-				data, err := json.MarshalIndent(routes, "", "  ")
-				if err != nil {
-					return fmt.Errorf("marshal backup: %w", err)
-				}
-
-				if outputFile != "" {
-					if err := os.WriteFile(outputFile, data, 0644); err != nil {
-						return fmt.Errorf("write backup file: %w", err)
-					}
-					fmt.Printf("Backup saved to %s (%d routes)\n", outputFile, len(routes))
-				} else {
-					fmt.Println(string(data))
-				}
-				return nil
-			})
-		},
+		Use:     "schedule",
+		Aliases: []string{"scheduler"},
+		Short:   "Расписания синхронизации",
 	}
 
-	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "файл для сохранения резервной копии")
-
-	return cmd
-}
-
-// ============================================================================
-// Команда: restore
-// ============================================================================
-
-func restoreCmd() *cobra.Command {
-	var inputFile string
-	var fromSnapshot string
-
-	cmd := &cobra.Command{
-		Use:   "restore [service]",
-		Short: "Импорт маршрутов сервиса из JSON или снапшота",
-		Args:  cobra.ExactArgs(1),
-		Example: `  mikrotik-route-sync restore instagram --input backup.json
-  mikrotik-route-sync restore instagram --from-snapshot <id>`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				name := args[0]
-
-				if inputFile != "" {
-					data, err := os.ReadFile(inputFile)
-					if err != nil {
-						return fmt.Errorf("read backup file: %w", err)
-					}
-					// ИСПРАВЛЕНО: используем mikrotik.Route
-					var routes []mikrotik.Route
-					if err := json.Unmarshal(data, &routes); err != nil {
-						return fmt.Errorf("parse backup: %w", err)
-					}
-					if err := s.Restore(ctx, name, routes); err != nil {
-						return fmt.Errorf("restore: %w", err)
-					}
-					fmt.Printf("Restored %d routes from file\n", len(routes))
-				} else if fromSnapshot != "" {
-					var routes []mikrotik.Route
-					if err := s.GetSnapshot(ctx, name, fromSnapshot, &routes); err != nil {
-						return fmt.Errorf("load snapshot: %w", err)
-					}
-					if err := s.Restore(ctx, name, routes); err != nil {
-						return fmt.Errorf("restore: %w", err)
-					}
-					fmt.Printf("Restored %d routes from snapshot\n", len(routes))
-				} else {
-					return fmt.Errorf("either --input or --from-snapshot is required")
-				}
-				return nil
-			})
-		},
-	}
-
-	cmd.Flags().StringVarP(&inputFile, "input", "i", "", "файл с резервной копией")
-	cmd.Flags().StringVar(&fromSnapshot, "from-snapshot", "", "ID снапшота для восстановления")
-
-	return cmd
-}
-
-// ============================================================================
-// Команда: check
-// ============================================================================
-
-func checkCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "check",
-		Short: "Проверка конфигурации и соединения с MikroTik",
-		Example: `  mikrotik-route-sync check`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				fmt.Println("Checking configuration...")
-
-				// Проверка конфига
-				if err := cfg.Validate(); err != nil {
-					return fmt.Errorf("config validation failed: %w", err)
-				}
-				fmt.Println("✓ Configuration is valid")
-
-				// Проверка прав доступа к конфиг-файлу
-				if err := verifyConfigAccessible(cfgPath); err != nil {
-					return fmt.Errorf("config permissions check failed: %w", err)
-				}
-				fmt.Println("✓ Config file permissions are secure")
-
-				// Проверка соединения с MikroTik
-				if err := s.PingMikroTik(ctx); err != nil {
-					return fmt.Errorf("MikroTik connection failed: %w", err)
-				}
-				fmt.Println("✓ MikroTik API is reachable")
-
-				// Проверка сервисов
-				services := s.ListServices()
-				fmt.Printf("✓ %d services configured\n", len(services))
-
-				fmt.Println("\nAll checks passed!")
-				return nil
-			})
-		},
-	}
-}
-
-// verifyConfigAccessible проверяет доступность файла конфигурации.
-// Проверка прав выполняется в config.Load().
-func verifyConfigAccessible(path string) error {
-	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("config file not accessible: %w", err)
-	}
-	return nil
-}
-
-// ============================================================================
-// Команда: web
-// ============================================================================
-
-func webCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "web",
-		Short: "Запуск веб-интерфейса",
-		Example: `  mikrotik-route-sync web`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				server := web.NewServer(cfg, s)
-				fmt.Printf("Starting web server on %s\n", cfg.Web.Listen)
-
-				ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-				defer cancel()
-
-				if err := server.Start(ctx); err != nil {
-					return fmt.Errorf("web server error: %w", err)
-				}
-				return nil
-			})
-		},
-	}
-}
-
-// ============================================================================
-// Команда: bot
-// ============================================================================
-
-func botCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "bot",
-		Short: "Запуск Telegram-бота",
-		Example: `  mikrotik-route-sync bot`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				b := bot.NewBot(cfg, s)
-				fmt.Println("Starting Telegram bot...")
-
-				ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-				defer cancel()
-
-				if err := b.Start(ctx); err != nil {
-					return fmt.Errorf("telegram bot error: %w", err)
-				}
-				return nil
-			})
-		},
-	}
-}
-
-// ============================================================================
-// Команда: daemon
-// ============================================================================
-
-func daemonCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "daemon",
-		Short: "Запуск всех сервисов (планировщик + веб + бот)",
-		Example: `  mikrotik-route-sync daemon`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-				defer cancel()
-
-				// Запуск планировщика
-				sched := scheduler.NewScheduler(cfg, s)
-				go func() {
-					if err := sched.Start(ctx); err != nil {
-						fmt.Fprintf(os.Stderr, "Scheduler error: %v\n", err)
-					}
-				}()
-
-				// Запуск веб-сервера
-				server := web.NewServer(cfg, s)
-				go func() {
-					if err := server.Start(ctx); err != nil {
-						fmt.Fprintf(os.Stderr, "Web server error: %v\n", err)
-					}
-				}()
-
-				// Запуск Telegram-бота (если настроен)
-				if cfg.Telegram.BotToken != "" {
-					b := bot.NewBot(cfg, s)
-					go func() {
-						if err := b.Start(ctx); err != nil {
-							fmt.Fprintf(os.Stderr, "Telegram bot error: %v\n", err)
-						}
-					}()
-				}
-
-				fmt.Println("Daemon started. Press Ctrl+C to stop.")
-				<-ctx.Done()
-				fmt.Println("Shutting down gracefully...")
-				return nil
-			})
-		},
-	}
-}
-
-// ============================================================================
-// Команда: scheduler
-// ============================================================================
-
-func schedulerCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "scheduler",
-		Short: "Управление планировщиком задач",
-	}
-
-	// Список расписаний
 	listCmd := &cobra.Command{
 		Use:   "list",
-		Short: "Показать эффективные расписания для всех сервисов",
+		Short: "Показать эффективные расписания",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				services := s.ListServices()
-				if len(services) == 0 {
-					fmt.Println("No services configured")
-					return nil
-				}
-
-				fmt.Println("Effective schedules:")
-				for _, name := range services {
-					schedule := cfg.EffectiveSchedule(name)
-					fmt.Printf("  %-20s → %s\n", name, schedule)
-				}
-				return nil
-			})
-		},
-	}
-
-	startCmd := &cobra.Command{
-		Use:   "start",
-		Short: "Запуск планировщика (без веб и бота)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				sched := scheduler.NewScheduler(cfg, s)
-				fmt.Println("Starting scheduler...")
-
-				ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-				defer cancel()
-
-				if err := sched.Start(ctx); err != nil {
-					return fmt.Errorf("scheduler error: %w", err)
+				fmt.Printf("global: %s\n", cfg.Schedules.Global)
+				for _, name := range s.ListServices() {
+					fmt.Printf("  %-20s → %s\n", name, cfg.EffectiveSchedule(name))
 				}
 				return nil
 			})
@@ -793,64 +503,185 @@ func schedulerCmd() *cobra.Command {
 
 	reloadCmd := &cobra.Command{
 		Use:   "reload",
-		Short: "Перезагрузка конфигурации планировщика",
+		Short: "Перечитать расписания (SIGHUP для daemon)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
 				if err := s.ReloadScheduler(); err != nil {
-					return fmt.Errorf("reload scheduler: %w", err)
+					return err
 				}
-				fmt.Println("Scheduler reloaded")
+				fmt.Println("Scheduler reload requested")
 				return nil
 			})
 		},
 	}
 
-	cmd.AddCommand(listCmd, startCmd, reloadCmd)
+	cmd.AddCommand(listCmd, reloadCmd)
 	return cmd
 }
 
+func botCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "bot",
+		Short: "Запустить Telegram-бота",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				b, err := bot.NewBot(cfg, s)
+				if err != nil {
+					return err
+				}
+				fmt.Println("Telegram bot started (Ctrl+C to stop)")
+				return b.Run(ctx)
+			})
+		},
+	}
+}
+
+func webCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "web",
+		Short: "Запустить Web UI и REST API",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				srv, err := webui.NewServer(cfg, s, slogLogger())
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Web UI: http://%s (Ctrl+C to stop)\n", cfg.Web.Listen)
+				return srv.Start(ctx)
+			})
+		},
+	}
+}
+
+func daemonCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "daemon",
+		Short: "Запустить всё: scheduler + web + bot (SIGHUP — reload)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, cache, log, err := bootstrap()
+			if cache != nil {
+				defer cache.Close()
+			}
+			if err != nil {
+				return err
+			}
+
+			notify := notifier.FromConfig(cfg.Telegram, log)
+			s, err := core.NewSyncer(cfg, log, cache, notify)
+			if err != nil {
+				return err
+			}
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			pidFile := cfgPath + ".pid"
+			if err := os.WriteFile(pidFile, []byte(fmt.Sprint(os.Getpid())), 0o600); err == nil {
+				defer os.Remove(pidFile)
+			}
+
+			sched := scheduler.New(cfg, s, notify, log)
+			s.SetReloadFunc(func() error {
+				newCfg, err := config.Load(cfgPath)
+				if err != nil {
+					return fmt.Errorf("reload config: %w", err)
+				}
+				*cfg = *newCfg
+				return sched.Reload()
+			})
+
+			sched.StartNow()
+
+			// SIGHUP → перечитать конфиг и перестроить расписания.
+			hup := make(chan os.Signal, 1)
+			if supportsSIGHUP() {
+				signal.Notify(hup, sighupSignal)
+				go func() {
+					for range hup {
+						log.Info("SIGHUP received, reloading schedules")
+						if err := s.ReloadScheduler(); err != nil {
+							log.Error("reload failed", "err", err)
+						}
+					}
+				}()
+			}
+
+			errCh := make(chan error, 3)
+			if cfg.Web.Enabled {
+				srv, err := webui.NewServer(cfg, s, log)
+				if err != nil {
+					return fmt.Errorf("web init: %w", err)
+				}
+				go func() { errCh <- srv.Start(ctx) }()
+			}
+			if cfg.Telegram.Enabled {
+				b, err := bot.New(cfg.Telegram, s, log)
+				if err != nil {
+					log.Error("telegram bot init failed, continuing without bot", "err", err)
+				} else {
+					go func() { errCh <- b.Run(ctx) }()
+				}
+			}
+
+			log.Info("daemon started", "version", version.Version, "services", cfg.Services)
+
+			select {
+			case <-ctx.Done():
+				log.Info("shutdown signal received, stopping gracefully")
+			case err := <-errCh:
+				if err != nil {
+					return err
+				}
+			}
+
+			sched.Stop(context.Background())
+			log.Info("daemon stopped")
+			return nil
+		},
+	}
+}
+
 // ============================================================================
-// Команда: config
+// config
 // ============================================================================
 
 func configCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Управление конфигурацией",
+		Short: "Работа с конфигурацией",
 	}
 
 	validateCmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Проверить конфигурацию без применения",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				if err := cfg.Validate(); err != nil {
-					return fmt.Errorf("validation failed: %w", err)
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return err
+			}
+			if err := cfg.Validate(); err != nil {
+				return err
+			}
+			// Проверка парсинга всех расписаний
+			for _, name := range cfg.Services {
+				spec := cfg.EffectiveSchedule(name)
+				if err := scheduler.Validate(spec); err != nil {
+					return fmt.Errorf("schedule %q for %s: %w", spec, name, err)
 				}
-				fmt.Println("✓ Configuration is valid")
-				return nil
-			})
+			}
+			fmt.Println("OK: configuration is valid")
+			return nil
 		},
 	}
 
-	getCmd := &cobra.Command{
-		Use:   "get [key]",
-		Short: "Прочитать параметр конфигурации (секреты маскируются)",
-		Args:  cobra.ExactArgs(1),
+	reloadCmd := &cobra.Command{
+		Use:   "reload",
+		Short: "Отправить SIGHUP запущенному daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			key := args[0]
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				value, err := getConfigValue(cfg, key)
-				if err != nil {
-					return err
-				}
-				// Маскирование секретов
-				if isSecretKey(key) {
-					value = maskSecret(value)
-				}
-				fmt.Printf("%s = %s\n", key, value)
-				return nil
-			})
+			if !supportsSIGHUP() {
+				return fmt.Errorf("SIGHUP is not supported on this platform")
+			}
+			return sighupSelf()
 		},
 	}
 
@@ -863,291 +694,326 @@ func configCmd() *cobra.Command {
 				editor = "vi"
 			}
 			c := exec.Command(editor, cfgPath)
-			c.Stdin = os.Stdin
-			c.Stdout = os.Stdout
-			c.Stderr = os.Stderr
+			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			return c.Run()
 		},
 	}
 
-	reloadCmd := &cobra.Command{
-		Use:   "reload",
-		Short: "Перезагрузить конфигурацию",
+	getCmd := &cobra.Command{
+		Use:   "get <key>",
+		Short: "Прочитать параметр (секреты маскируются)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Для CLI режима просто перечитываем конфиг
-			_, err := config.Load(cfgPath)
+			cfg, err := config.Load(cfgPath)
 			if err != nil {
-				return fmt.Errorf("reload failed: %w", err)
+				return err
 			}
-			fmt.Println("✓ Configuration reloaded")
+			val, err := getConfigValue(cfg, args[0])
+			if err != nil {
+				return err
+			}
+			if config.IsSensitiveKey(args[0]) {
+				val = webui.Mask(val)
+			}
+			fmt.Printf("%s = %s\n", args[0], val)
 			return nil
 		},
 	}
 
-	cmd.AddCommand(validateCmd, getCmd, editCmd, reloadCmd)
+	setCmd := &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Изменить параметр конфигурации (атомарно)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return err
+			}
+			if err := cfg.Set(args[0], args[1]); err != nil {
+				return err
+			}
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+			fmt.Printf("%s = %s saved\n", args[0], args[1])
+			return nil
+		},
+	}
+
+	cmd.AddCommand(validateCmd, reloadCmd, editCmd, getCmd, setCmd)
 	return cmd
 }
 
-// Хелперы для config get
+// getConfigValue читает значение параметра по точечному пути.
 func getConfigValue(cfg *config.Config, key string) (string, error) {
-	parts := strings.Split(key, ".")
-	if len(parts) == 0 {
-		return "", fmt.Errorf("empty key")
+	val, err := cfg.GetPath(key)
+	if err != nil {
+		return "", err
 	}
-
-	switch parts[0] {
-	case "mikrotik":
-		if len(parts) < 2 {
-			return "", fmt.Errorf("specify sub-key (e.g., mikrotik.host)")
-		}
-		switch parts[1] {
-		case "host":
-			return cfg.MikroTik.Host, nil
-		case "port":
-			return fmt.Sprintf("%d", cfg.MikroTik.Port), nil
-		case "username":
-			return cfg.MikroTik.Username, nil
-		case "password":
-			return cfg.MikroTik.Password, nil
-		}
-	case "telegram":
-		if len(parts) < 2 {
-			return "", fmt.Errorf("specify sub-key")
-		}
-		switch parts[1] {
-		case "enabled":
-			return fmt.Sprintf("%v", cfg.Telegram.Enabled), nil
-		case "bot_token":
-			return cfg.Telegram.BotToken, nil
-		}
-	case "timezone":
-		return cfg.Timezone, nil
-	}
-
-	return "", fmt.Errorf("unknown key: %s", key)
-}
-
-func isSecretKey(key string) bool {
-	secrets := []string{"password", "bot_token", "api_key"}
-	for _, s := range secrets {
-		if strings.Contains(strings.ToLower(key), s) {
-			return true
-		}
-	}
-	return false
-}
-
-func maskSecret(s string) string {
-	if len(s) == 0 {
-		return "(empty)"
-	}
-	if len(s) <= 4 {
-		return "****"
-	}
-	return s[:2] + strings.Repeat("*", len(s)-4) + s[len(s)-2:]
+	return fmt.Sprintf("%v", val), nil
 }
 
 // ============================================================================
-// Команда: logs
+// logs
 // ============================================================================
 
 func logsCmd() *cobra.Command {
-	var limit int
-	var follow bool
-
 	cmd := &cobra.Command{
 		Use:   "logs",
-		Short: "Просмотр и управление логами",
+		Short: "Просмотр логов",
 	}
 
 	tailCmd := &cobra.Command{
 		Use:   "tail",
-		Short: "Показать последние записи лога",
+		Short: "Последние строки лога (-f — слежение)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				entries, err := s.GetLogs(ctx, limit)
-				if err != nil {
-					return fmt.Errorf("get logs: %w", err)
-				}
-				for _, e := range entries {
-					ts := fmt.Sprintf("%v", e["time"])
-					msg := fmt.Sprintf("%v", e["msg"])
-					level := fmt.Sprintf("%v", e["level"])
-					fmt.Printf("[%s] %s: %s\n", ts, level, msg)
-				}
-				return nil
-			})
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return err
+			}
+			if cfg.Logging.File == "" {
+				return fmt.Errorf("logging.file is empty")
+			}
+			if logFollow {
+				return tailLogFollow(cfg.Logging.File)
+			}
+			entries, err := logging.TailLogFile(cfg.Logging.File, logLimit)
+			if err != nil {
+				return err
+			}
+			for _, e := range entries {
+				line, _ := json.Marshal(e)
+				fmt.Println(string(line))
+			}
+			return nil
 		},
 	}
-	tailCmd.Flags().IntVarP(&limit, "limit", "n", 100, "количество записей")
-	tailCmd.Flags().BoolVarP(&follow, "follow", "f", false, "следить за логом")
-
-	sizeCmd := &cobra.Command{
-		Use:   "size",
-		Short: "Показать размер и количество лог-файлов",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				logFile := cfg.Logging.File
-				if logFile == "" {
-					fmt.Println("Logging to file is disabled")
-					return nil
-				}
-				info, err := os.Stat(logFile)
-				if err != nil {
-					return fmt.Errorf("stat: %w", err)
-				}
-				fmt.Printf("Log file: %s\n", logFile)
-				fmt.Printf("Size: %.2f MB\n", float64(info.Size())/(1024*1024))
-				return nil
-			})
-		},
-	}
+	tailCmd.Flags().IntVarP(&logLimit, "lines", "n", 100, "количество строк")
+	tailCmd.Flags().BoolVarP(&logFollow, "follow", "f", false, "следить за файлом")
 
 	clearCmd := &cobra.Command{
 		Use:   "clear",
 		Short: "Очистить лог-файл",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				logFile := cfg.Logging.File
-				if logFile == "" {
-					return fmt.Errorf("logging to file is disabled")
-				}
-				if err := os.WriteFile(logFile, []byte{}, 0644); err != nil {
-					return fmt.Errorf("clear: %w", err)
-				}
-				fmt.Println("✓ Log file cleared")
-				return nil
-			})
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return err
+			}
+			if cfg.Logging.File == "" {
+				return fmt.Errorf("logging.file is empty")
+			}
+			if err := os.WriteFile(cfg.Logging.File, nil, 0o600); err != nil {
+				return err
+			}
+			fmt.Println("Log cleared")
+			return nil
 		},
 	}
 
-	cmd.AddCommand(tailCmd, sizeCmd, clearCmd)
+	sizeCmd := &cobra.Command{
+		Use:   "size",
+		Short: "Размер и количество файлов логов",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return err
+			}
+			if cfg.Logging.File == "" {
+				return fmt.Errorf("logging.file is empty")
+			}
+			dir, base := filepath.Split(cfg.Logging.File)
+			matches, err := filepath.Glob(filepath.Join(dir, base+"*"))
+			if err != nil {
+				return err
+			}
+			var total int64
+			for _, m := range matches {
+				fi, err := os.Stat(m)
+				if err != nil {
+					continue
+				}
+				total += fi.Size()
+				fmt.Printf("%10.2f MB  %s\n", float64(fi.Size())/(1<<20), m)
+			}
+			fmt.Printf("files: %d, total: %.2f MB\n", len(matches), float64(total)/(1<<20))
+			return nil
+		},
+	}
+
+	cmd.AddCommand(tailCmd, clearCmd, sizeCmd)
 	return cmd
 }
 
-// ============================================================================
-// Команда: test (test-mikrotik, test-telegram, test-dns)
-// ============================================================================
-
-func testCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "test",
-		Short: "Диагностические тесты",
+// tailLogFollow — простой tail -f: читаем новые данные с poll.
+func tailLogFollow(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
 	}
+	defer f.Close()
 
-	mikrotikCmd := &cobra.Command{
-		Use:   "mikrotik",
-		Short: "Проверить соединение с RouterOS REST API",
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		return err
+	}
+	buf := make([]byte, 4096)
+	partial := ""
+	for {
+		n, err := f.Read(buf)
+		if n > 0 {
+			partial += string(buf[:n])
+			for {
+				i := strings.IndexByte(partial, '\n')
+				if i < 0 {
+					break
+				}
+				fmt.Println(partial[:i])
+				partial = partial[i+1:]
+			}
+		}
+		if err != nil && err != io.EOF {
+			return err
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// ============================================================================
+// test-*
+// ============================================================================
+
+func testTelegramCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "test-telegram",
+		Short: "Проверить Telegram",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return err
+			}
+			n, err := notifier.NewTelegram(cfg.Telegram, slogLogger())
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := n.Send(ctx, "test message from mikrotik-route-sync"); err != nil {
+				return err
+			}
+			fmt.Println("OK: telegram message sent")
+			return nil
+		},
+	}
+	return cmd
+}
+
+func testMikrotikCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "test-mikrotik",
+		Short: "Проверить RouterOS REST API",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
 				if err := s.PingMikroTik(ctx); err != nil {
-					return fmt.Errorf("MikroTik unreachable: %w", err)
+					return err
 				}
-				fmt.Println("✓ MikroTik API is reachable")
+				fmt.Println("OK: RouterOS REST API reachable")
 				return nil
 			})
 		},
 	}
+}
 
-	telegramCmd := &cobra.Command{
-		Use:   "telegram",
-		Short: "Проверить отправку сообщения в Telegram",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				if !cfg.Telegram.Enabled {
-					return fmt.Errorf("telegram is disabled in config")
-				}
-				// ИСПРАВЛЕНО: используем slog.Default() вместо s.Version()
-				notify := notifier.FromConfig(cfg.Telegram, slog.Default())
-				notify.Send(ctx, "✓ Test message from mikrotik-route-sync")
-				fmt.Println("✓ Telegram message sent")
-				return nil
-			})
-		},
-	}
-
-	dnsCmd := &cobra.Command{
-		Use:   "dns [domain]",
-		Short: "Проверить резолвинг домена",
+func testDNSCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "test-dns <domain>",
+		Short: "Проверить DNS-резолвинг",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			domain := args[0]
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				fmt.Printf("Resolving %s...\n", domain)
-				// Базовый DNS резолвинг
-				fmt.Printf("✓ Domain resolved successfully\n")
+				ips, err := s.ResolveDomain(ctx, args[0])
+				if err != nil {
+					return err
+				}
+				fmt.Printf("%s → %v\n", args[0], ips)
 				return nil
 			})
 		},
 	}
-
-	cmd.AddCommand(mikrotikCmd, telegramCmd, dnsCmd)
-	return cmd
 }
 
 // ============================================================================
-// Команда: version
+// version
 // ============================================================================
 
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Вывести версию приложения",
-		Example: `  mikrotik-route-sync version`,
+		Short: "Версия и информация о сборке",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("mikrotik-route-sync version %s\n", version.Version)
-			fmt.Printf("Build: %s\n", version.BuildTime)
-			fmt.Printf("Go: %s\n", version.GoVersion)
+			info := version.Get()
+			fmt.Printf("mikrotik-route-sync %s\ncommit: %s\nbuilt: %s\ngo: %s\nos/arch: %s/%s\n",
+				info.Version, info.Commit, info.BuildDate, info.GoVersion, info.OS, info.Arch)
 		},
 	}
 }
 
 // ============================================================================
-// Вспомогательные функции
+// DI-хелпер: withSyncer
 // ============================================================================
 
-// withSyncer — паттерн инициализации зависимостей.
-// Загружает конфиг, проверяет права, открывает кэш и создаёт Syncer.
-// Гарантирует корректное закрытие ресурсов (кэша) после выполнения функции.
-func withSyncer(fn func(context.Context, *config.Config, *core.Syncer) error) error {
-	// 1. Загрузка конфигурации
+// bootstrap загружает конфиг, открывает bbolt-кэш и инициализирует логгер.
+func bootstrap() (*config.Config, *storage.Cache, *slog.Logger, error) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return nil, nil, nil, fmt.Errorf("load config: %w", err)
 	}
-
-	// 2. Проверка доступности файла конфигурации
-	if err := verifyConfigAccessible(cfgPath); err != nil {
-		return fmt.Errorf("config accessibility: %w", err)
+	log, err := logging.Setup(cfg)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("logging setup: %w", err)
 	}
-
-	// 3. Открытие кэша (bbolt)
 	cachePath := cfg.CachePath
 	if cachePath == "" {
 		cachePath = "cache.db"
 	}
 	cache, err := storage.Open(cachePath)
 	if err != nil {
-		return fmt.Errorf("open cache: %w", err)
+		return cfg, nil, log, fmt.Errorf("open cache: %w", err)
 	}
-	defer cache.Close()
+	return cfg, cache, log, nil
+}
 
-	// 4. Инициализация логгера
-	log := logging.New(cfg.Logging)
+// withSyncer — загружает конфиг, открывает кэш, создаёт Syncer,
+// настраивает graceful shutdown и вызывает fn.
+func withSyncer(fn func(context.Context, *config.Config, *core.Syncer) error) error {
+	cfg, cache, log, err := bootstrap()
+	if cache != nil {
+		defer cache.Close()
+	}
+	if err != nil {
+		return err
+	}
 
-	// 5. Инициализация уведомлений
 	notify := notifier.FromConfig(cfg.Telegram, log)
-
-	// 6. Создание Syncer
 	s, err := core.NewSyncer(cfg, log, cache, notify)
 	if err != nil {
-		return fmt.Errorf("create syncer: %w", err)
+		return err
 	}
 
-	// 7. Создание контекста с поддержкой отмены
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// 8. Вызов пользовательской функции
 	return fn(ctx, cfg, s)
+}
+
+func slogLogger() *slog.Logger { return slog.Default() }
+
+// tabWriter — общий табличный writer для списков.
+func tabWriter() *tabwriter.Writer {
+	return tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+}
+
+// printJSON — машиночитаемый вывод.
+func printJSON(v any) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }

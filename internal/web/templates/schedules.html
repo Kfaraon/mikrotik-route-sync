@@ -5,94 +5,65 @@
   <meta charset="utf-8">
   <title>MikroTik Route Sync — Расписания</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="/static/pico.min.css">
+  <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js"></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <nav class="container-fluid">
-    <ul>
-      <li><a href="/">🏠 Дашборд</a></li>
-      <li><a href="/services">📦 Сервисы</a></li>
-      <li><a href="/schedules" aria-current="page">📅 Расписания</a></li>
-      <li><a href="/settings">⚙️ Настройки</a></li>
-      <li><a href="/logs">📜 Логи</a></li>
-    </ul>
+  <nav class="bar">
+    <span class="brand">MikroTik Route Sync</span>
+    <a href="/">Дашборд</a>
+    <a href="/services">Сервисы</a>
+    <a href="/schedules" class="active">Расписания</a>
+    <a href="/settings">Настройки</a>
+    <a href="/logs">Логи</a>
+    <span class="ver">v{{ .Version }}</span>
   </nav>
 
-  <main class="container">
-    <h1>📅 Расписания</h1>
-    <p class="muted">Приоритет: сервис → группа → глобальное</p>
+  <main class="wrap">
+    <h1>Расписания</h1>
+    <p class="muted">
+      Приоритет: сервис → группа → глобальное.
+      Форматы: <code>every 6h</code>, <code>daily at 03:00</code>, <code>weekly on sunday at 04:00</code>,
+      cron <code>0 */6 * * *</code>, а также <code>manual</code>, <code>disabled</code>, <code>inherit</code>.
+    </p>
+    <p>Глобальное расписание: <b>{{ .Global }}</b></p>
 
-    <table>
-      <thead>
-        <tr>
-          <th>Сервис</th>
-          <th>Эффективное расписание</th>
-          <th>Изменить</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .Services }}
-        <tr>
-          <td>{{ . }}</td>
-          <td><code>{{ effectiveSchedule . }}</code></td>
-          <td>
-            <button class="outline" onclick="editSchedule('{{ . }}')">✏️</button>
-          </td>
-        </tr>
-        {{ else }}
-        <tr><td colspan="3" class="muted">Нет сервисов</td></tr>
-        {{ end }}
-      </tbody>
-    </table>
-  </main>
-
-  <!-- Модальное окно редактирования -->
-  <dialog id="schedule-modal">
     <article>
-      <h3>Изменить расписание</h3>
-      <form id="schedule-form">
-        <input type="hidden" name="csrf_token" value="{{ .CSRF }}">
-        <label for="svc-name">Сервис</label>
-        <input type="text" id="svc-name" name="service" readonly>
-        <label for="svc-schedule">Расписание (cron / every Xh / manual)</label>
-        <input type="text" id="svc-schedule" name="schedule" required
-               placeholder="every 6h | 0 */6 * * * | manual">
-        <div role="group">
-          <button type="submit">💾 Сохранить</button>
-          <button type="button" class="secondary" onclick="closeModal()">Отмена</button>
-        </div>
-      </form>
+      <table>
+        <thead>
+          <tr>
+            <th>Сервис</th>
+            <th>Эффективное</th>
+            <th>Override сервиса</th>
+            <th>Группа</th>
+            <th>Изменить</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .Rows }}
+          <tr>
+            <td>{{ .Name }}</td>
+            <td><b>{{ .Effective }}</b></td>
+            <td>{{ if .ServiceOv }}{{ .ServiceOv }}{{ else }}—{{ end }}</td>
+            <td>{{ if .Group }}{{ .Group }} ({{ .GroupSched }}){{ else }}—{{ end }}</td>
+            <td>
+              <form hx-post="/actions/schedule" hx-swap="none" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ $.CSRF }}">
+                <input type="hidden" name="service" value="{{ .Name }}">
+                <input type="text" name="schedule" placeholder="every 6h" size="16">
+                <button type="submit">💾</button>
+              </form>
+            </td>
+          </tr>
+          {{ else }}
+          <tr><td colspan="5" class="muted">Сервисов нет</td></tr>
+          {{ end }}
+        </tbody>
+      </table>
     </article>
-  </dialog>
-
-  <script>
-    function editSchedule(svc) {
-      document.getElementById('svc-name').value = svc;
-      document.getElementById('svc-schedule').value = '';
-      document.getElementById('schedule-modal').showModal();
-    }
-    function closeModal() {
-      document.getElementById('schedule-modal').close();
-    }
-    document.getElementById('schedule-form').addEventListener('submit', function(e) {
-      e.preventDefault();
-      const svc = document.getElementById('svc-name').value;
-      const schedule = document.getElementById('svc-schedule').value;
-      fetch('/api/v1/schedules/' + encodeURIComponent(svc), {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': this.csrf_token.value
-        },
-        body: JSON.stringify({schedule: schedule})
-      }).then(r => r.json()).then(data => {
-        if (data.status === 'updated') location.reload();
-        else alert('Ошибка: ' + (data.error || 'неизвестная'));
-      });
-    });
-  </script>
+  </main>
 </body>
 </html>
 {{end}}

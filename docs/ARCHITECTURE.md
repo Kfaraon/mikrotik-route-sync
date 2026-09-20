@@ -2,7 +2,7 @@
 
 ## Обзор
 
-MikroTik Route Sync — это приложение на Go для автоматического управления маршрутами на MikroTik RouterOS v7. Система собирает IP-диапазоны сервисов из различных источников, валидирует их, агрегирует и синхронизирует с маршрутизатором через REST API.
+MikroTik Route Sync — это приложение на Go для автоматического управления маршрутами на MikroTik RouterOS v7. Система собирает IPv4-диапазоны сервисов из различных источников, валидирует их, агрегирует и синхронизирует с маршрутизатором через REST API. Проект работает только с IPv4 и намеренно не использует IPv6.
 
 ## Архитектурные принципы
 
@@ -77,13 +77,13 @@ MikroTik Route Sync — это приложение на Go для автома�
       bot/              — Telegram-бот (состояние, callback, auth)
       classifier/       — выбор метода сбора (CDN, ASN, dynamic)
       collectors/       — источники сетей (asn, cdn, dynamic, whois, static)
-      config/           — конфигурация (viper + yaml, hot-reload)
+      config/           — конфигурация (yaml + ENV overrides, hot-reload)
       core/             — оркестратор синхронизации (syncer, diff)
       history/          — история синхронизаций (bbolt)
       logging/          — slog + rotation + redaction
       mikrotik/         — RouterOS REST API (client, transaction, rollback)
       notifier/         — уведомления (Telegram)
-      resolver/         — DNS / ASN resolution (rdap, bgpview, ripestat)
+      resolver/         — DNS / ASN resolution (rdap, bgp.tools, ripestat)
       scheduler/        — расписания (cron + human-readable)
       storage/          — bbolt cache
       validator/        — фильтрация сетей (RFC, ASN-проверка)
@@ -94,7 +94,7 @@ MikroTik Route Sync — это приложение на Go для автома�
       ARCHITECTURE.md   — описание архитектуры
       THREAT_MODEL.md   — модель угроз
       SECURITY.md       — безопасность
-      CHANGES.md        — история изменений
+      PROMPT.md         — исходное ТЗ
 
 ## Поток данных
 
@@ -113,7 +113,7 @@ MikroTik Route Sync — это приложение на Go для автома�
 
 Собирает IP-диапазоны из источников:
 
-- **ASN** — BGPView, RIPEstat, RDAP (основной метод для крупных сервисов)
+- **ASN** — bgp.tools (дамп таблицы BGP), RIPEstat (fallback), RDAP (основной метод для крупных сервисов)
 - **CDN** — Cloudflare, AWS, Google (официальные статические списки)
 - **Dynamic** — DNS-резолвинг + официальные JSON (Google, YouTube, Telegram)
 - **WHOIS** — DNS → ASN → все префиксы (для мелких сайтов)
@@ -121,18 +121,18 @@ MikroTik Route Sync — это приложение на Go для автома�
 
 ### Validator
 
-Многоуровневая валидация:
+Многоуровневая валидация (проект работает только с IPv4; IPv6-префиксы отбрасываются):
 
 1. **Синтаксис** — формат CIDR, нормализация
 2. **Приватные диапазоны** — RFC 1918, IANA (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, CGNAT, loopback, link-local, TEST-NET, multicast, reserved)
-3. **Принадлежность ASN** — проверка через RDAP
-4. **Ширина префикса** — IPv4: min 8, IPv6: min 16
+3. **Принадлежность ASN** — проверка через RDAP (best-effort, выборкой до 32 префиксов для методов asn/whois)
+4. **Ширина префикса** — IPv4: min 8 (настраивается), host-routes /32 — по флагу
 5. **Пользовательские фильтры** — exclude, include_only, max_prefixes
 6. **Дедупликация** — удаление дубликатов и вложенных префиксов
 
 ### Aggregator
 
-Агрегация CIDR через Radix Tree:
+Агрегация IPv4-префиксов через Radix Tree (агрегация IPv6 не выполняется):
 
 - Сложность: O(n·L), где L — длина префикса
 - Объединение только sibling-префиксов
@@ -187,7 +187,7 @@ REST API клиент:
 
 Встроенный дашборд:
 
-- Страницы: Dashboard, Services, Schedules, Settings, Logs, History
+- Страницы: Dashboard, Services, Schedules, Settings, Logs (+ фрагмент /partials/status, история — через API `/api/v1/history`)
 - Фреймворк: net/http + chi
 - Шаблоны: html/template + go:embed
 - CSS: Pico CSS (встроенный)
@@ -210,11 +210,11 @@ REST API клиент:
 ### Сеть
 
 - Web UI слушает только явно указанный адрес (по умолчанию 127.0.0.1:8080)
-- Проверка allowed_cidrs для всех входящих
-- Проверка Origin/Referer для изменяющих запросов
+- Проверка allowed_cidrs для всех входящих, кроме `/healthz`
+- CSRF-токен + SameSite=Strict cookie для изменяющих запросов (Basic-auth запросы освобождены)
 - TLS ≥ 1.2, modern cipher suites
 - HSTS при HTTPS
-- Rate limiting (login: 5/мин, API: 100/мин, WS: 10/IP)
+- Rate limiting: Web — 50 запросов/сек на IP (burst 100); Telegram — на chat_id (`telegram.rate_limit`); RouterOS — `mikrotik.rate_limit` запросов/сек
 - Security headers (CSP, X-Frame-Options: DENY, X-Content-Type-Options: nosniff)
 - Ограничение размера запросов (≤1 МБ)
 
@@ -299,7 +299,7 @@ REST API клиент:
 - Порог открытия: 5 ошибок подряд
 - Таймаут Open: 60 сек
 - Полу-открытое: 1 пробный запрос
-- Отдельный breaker для каждого внешнего сервиса (MikroTik, BGPView, RDAP, Telegram)
+- Отдельный breaker для каждого внешнего сервиса (MikroTik, bgp.tools, RDAP, Telegram)
 
 ### Восстановление после краха
 
@@ -321,20 +321,19 @@ REST API клиент:
 - Формат: JSON через log/slog
 - Вывод: stdout + файл (одновременно)
 - Ротация: gopkg.in/natefinch/lumberjack.v2
-- Параметры: max_size_mb=10, max_files=5, max_total_mb=50, compress=true, level=info
+- Параметры: max_size_mb=10, max_files=5, max_total_mb=50 (ориентировочный: реальный объём ≈ max_size_mb × (max_files+1), compress=true), level=info
 - Структурированные поля: service, method, duration_ms, added, removed, unchanged, error, request_id, user
 - Запрещено логировать: пароли, токены, Authorization, cookie
 
-### Tracing (опционально)
-
-- OpenTelemetry OTLP → Jaeger/Tempo (по флагу tracing.enabled)
-- Propagate trace_id в логи и HTTP-заголовки
-- Sampling 10% по умолчанию
-
 ### Health checks
 
-- `/healthz` — процесс жив (без авторизации)
-- `/readyz` — MikroTik доступен, bot подключён, cache открыт
+- `/healthz` — процесс жив (без авторизации, используется в Docker HEALTHCHECK)
+- `/readyz` — RouterOS REST API доступен и bbolt-кэш открыт; 503 при недоступности MikroTik
+
+### Live-события
+
+- WebSocket `/api/v1/ws` — события sync_start / sync_done / sync_error / skipped / service_added
+- Структурированные поля логов: `service`, `method`, `duration_ms`, `added`, `removed`, `unchanged`, `error`
 
 ## Масштабирование
 
@@ -377,16 +376,17 @@ REST API клиент:
 ### Интеграция с новыми системами
 
 - REST API для внешних интеграций (см. `docs/openapi.yaml`)
-- Webhook уведомления (через Notifier)
-- OpenTelemetry для tracing (через Tracing)
-- Prometheus метрики (опционально, через middleware)
+- Уведомления — через интерфейс `notifier.Notifier` (реализован Telegram;
+  при `telegram.enabled: false` используется `NoopNotifier`)
+- OpenTelemetry/Prometheus сознательно не используются (минимум зависимостей);
+  наблюдаемость — структурированные JSON-логи и `/healthz` + `/readyz`
 
 ## Зависимости
 
 ### Основные
 
 - `github.com/spf13/cobra` — CLI
-- `github.com/spf13/viper` + `gopkg.in/yaml.v3` — конфигурация
+- `gopkg.in/yaml.v3` — конфигурация
 - `github.com/robfig/cron/v3` — планировщик
 - `go.etcd.io/bbolt` — кэш/хранилище
 - `github.com/go-telegram-bot-api/telegram-bot-api/v5` — Telegram
@@ -416,46 +416,44 @@ REST API клиент:
 
 ### Docker
 
-    # Multi-stage build
-    FROM golang:1.27-alpine AS builder
-    WORKDIR /build
-    COPY . .
-    RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /app ./cmd/app
+Multi-stage (`Dockerfile` в корне): builder `golang:1.27.1-alpine` → runtime `alpine:3.20`
+(ca-certificates + tzdata нужны для HTTPS и часовых поясов, поэтому не scratch).
 
-    FROM scratch
-    COPY --from=builder /app /app
-    USER 65534:65534
-    ENTRYPOINT ["/app"]
+Особенности:
 
-### Docker Compose
+- базовые образы тянутся через ARG `REGISTRY` (по умолчанию зеркало `docker.m.daocloud.io/library`;
+  при прямом доступе к Docker Hub: `--build-arg REGISTRY=docker.io/library`);
+- внутри builder `GOPROXY=https://goproxy.cn,direct` (proxy.golang.org может быть недоступен);
+- версия внедряется build-аргументами `VERSION/COMMIT/BUILD_DATE`;
+- непривилегированный `USER 65534:65534` (nobody), `HEALTHCHECK` через `/healthz`,
+  `CMD ["daemon", "--config", "/data/config.yaml"]`.
 
-    version: '3.8'
+### Docker Compose (`docker-compose.yml`)
+
     services:
-      mikrotik-route-sync:
+      mrs:
         build: .
-        container_name: mikrotik-route-sync
         restart: unless-stopped
         read_only: true
-        tmpfs:
-          - /tmp
-        volumes:
-          - ./data:/data
-          - ./logs:/var/log
+        user: "65534:65534"
+        cap_drop: [ALL]
+        security_opt: [no-new-privileges:true]
+        mem_limit: 128m
+        cpus: 1.0
         environment:
-          - MRS_MIKROTIK_PASSWORD_FILE=/run/secrets/mikrotik_password
-          - MRS_TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram_token
-        secrets:
-          - mikrotik_password
-          - telegram_token
-        deploy:
-          resources:
-            limits:
-              cpus: '1.0'
-              memory: 128M
-        security_opt:
-          - no-new-privileges:true
-        cap_drop:
-          - ALL
+          - MRS_REQUIRE_FILE_PERMS=0        # bind-mount с Windows показывает 0777
+          - MRS_MIKROTIK_PASSWORD=${MRS_MIKROTIK_PASSWORD:-}
+          - MRS_TELEGRAM_BOT_TOKEN=${MRS_TELEGRAM_BOT_TOKEN:-}
+          - MRS_WEB_PASSWORD=${MRS_WEB_PASSWORD:-}
+        volumes:
+          - ./config.yaml:/data/config.yaml
+          - ./data:/data
+          - ./logs:/var/log/mikrotik-route-sync
+        ports:
+          - "127.0.0.1:8080:8080"
+
+Примечание: для доступа к Web UI из контейнера в `config.yaml` нужно
+`web.listen: 0.0.0.0:8080` (доступ всё равно ограничен `allowed_cidrs` и пробросом только на 127.0.0.1 хоста).
 
 ### Makefile
 

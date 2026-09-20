@@ -3,9 +3,11 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +18,24 @@ import (
 // Save сохраняет текущее состояние Config в файл атомарно.
 func (c *Config) Save() error {
 	return AtomicWrite(c.path, c)
+}
+
+// fieldNameMatches сопоставляет сегмент пути конфига (snake_case из YAML,
+// напр. "use_ssl", "max_delete_ratio") с именем Go-поля ("UseSSL",
+// "MaxDeleteRatio"). Сравнение регистронезависимое и без подчёркиваний.
+// Используется и для Set, и для GetPath, чтобы API совпадал с YAML-ключами.
+func fieldNameMatches(goName, pathPart string) bool {
+	norm := func(s string) string {
+		var b strings.Builder
+		for _, r := range s {
+			if r == '_' || r == '-' {
+				continue
+			}
+			b.WriteRune(r)
+		}
+		return strings.ToLower(b.String())
+	}
+	return norm(goName) == norm(pathPart)
 }
 
 // Set устанавливает значение параметра по точечному пути.
@@ -68,7 +88,7 @@ func setNestedValue(v reflect.Value, parts []string, value any) error {
 		}
 
 		field := current.FieldByNameFunc(func(name string) bool {
-			return strings.EqualFold(name, part)
+			return fieldNameMatches(name, part)
 		})
 		if !field.IsValid() {
 			return fmt.Errorf("field %s not found in %s", part, current.Type().Name())
@@ -99,7 +119,7 @@ func setNestedValue(v reflect.Value, parts []string, value any) error {
 	}
 
 	field := current.FieldByNameFunc(func(name string) bool {
-		return strings.EqualFold(name, lastPart)
+		return fieldNameMatches(name, lastPart)
 	})
 	if !field.IsValid() {
 		return fmt.Errorf("field %s not found", lastPart)
@@ -114,6 +134,53 @@ func setNestedValue(v reflect.Value, parts []string, value any) error {
 	}
 	field.Set(val)
 	return nil
+}
+
+// GetPath читает значение параметра по точечному пути ("mikrotik.host").
+func (c *Config) GetPath(path string) (any, error) {
+	if path == "" {
+		return nil, fmt.Errorf("empty config path")
+	}
+	parts := strings.Split(path, ".")
+	v := reflect.ValueOf(c).Elem()
+
+	for i, part := range parts {
+		for v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		switch v.Kind() {
+		case reflect.Map:
+			mv := v.MapIndex(reflect.ValueOf(part))
+			if !mv.IsValid() {
+				return nil, fmt.Errorf("key %s not found in map", part)
+			}
+			v = mv
+			_ = i
+		case reflect.Struct:
+			f := v.FieldByNameFunc(func(name string) bool {
+				return fieldNameMatches(name, part)
+			})
+			if !f.IsValid() {
+				return nil, fmt.Errorf("field %s not found in %s", part, v.Type().Name())
+			}
+			v = f
+		default:
+			return nil, fmt.Errorf("cannot navigate %s: not a struct or map", part)
+		}
+	}
+	for v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return nil, nil
+		}
+		v = v.Elem()
+	}
+	if !v.IsValid() {
+		return nil, fmt.Errorf("invalid value at %s", path)
+	}
+	if v.Type() == reflect.TypeOf(Duration(0)) {
+		return time.Duration(v.Int()).String(), nil
+	}
+	return v.Interface(), nil
 }
 
 // convertValue приводит значение к целевому типу.
@@ -154,6 +221,20 @@ func convertValue(value any, targetType reflect.Type) (reflect.Value, error) {
 			}
 			return reflect.ValueOf(out), nil
 		case string:
+			// Списки из UI/CLI задаются через запятую или точку с запятой.
+			if strings.ContainsAny(val, ",;") {
+				parts := strings.FieldsFunc(val, func(r rune) bool { return r == ',' || r == ';' })
+				out := make([]string, 0, len(parts))
+				for _, p := range parts {
+					if p = strings.TrimSpace(p); p != "" {
+						out = append(out, p)
+					}
+				}
+				return reflect.ValueOf(out), nil
+			}
+			if val == "" {
+				return reflect.ValueOf([]string{}), nil
+			}
 			return reflect.ValueOf([]string{val}), nil
 		}
 	}
@@ -230,15 +311,24 @@ func toBool(v any) (bool, error) {
 }
 
 // AtomicWrite выполняет атомарную запись конфигурации в файл.
-// Шаги:
-//  1. Читает оригинальный файл и парсит в yaml.Node (сохранение комментариев)
-//  2. Обновляет узел "services" актуальным списком
-//  3. Записывает во временный файл (.tmp)
-//  4. Выполняет fsync для гарантии записи на диск
-//  5. Переименовывает .tmp -> оригинальный путь (атомарная POSIX-операция)
+//
+// Шаги (PROMPT IX):
+//  1. Marshal полного состояния Config в YAML
+//  2. Запись во временный файл (.tmp) с правами 0600
+//  3. fsync для гарантии записи на диск
+//  4. os.Rename .tmp -> оригинальный путь (атомарная POSIX-операция)
+//
+// Полная сериализация гарантирует, что изменения, сделанные через
+// веб-интерфейс (настройки, расписания, overrides), реально сохраняются.
 func AtomicWrite(path string, c *Config) error {
 	if path == "" {
 		return fmt.Errorf("config path is empty")
+	}
+	if c == nil {
+		return fmt.Errorf("config is nil")
+	}
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("refusing to save invalid config: %w", err)
 	}
 
 	dir := filepath.Dir(path)
@@ -246,30 +336,11 @@ func AtomicWrite(path string, c *Config) error {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
-	originalData, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read original config: %w", err)
-	}
-
-	var doc yaml.Node
-	if err := yaml.Unmarshal(originalData, &doc); err != nil {
-		return fmt.Errorf("parse yaml: %w", err)
-	}
-
-	// Обновляем узел services
-	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
-		rootNode := doc.Content[0]
-		if rootNode.Kind == yaml.MappingNode {
-			if err := updateServicesNode(rootNode, c.Services); err != nil {
-				return fmt.Errorf("update services: %w", err)
-			}
-		}
-	}
-
 	var buf bytes.Buffer
+	buf.WriteString("# ВНИМАНИЕ: файл содержит секреты. Права 0600, добавлен в .gitignore.\n")
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
-	if err := encoder.Encode(&doc); err != nil {
+	if err := encoder.Encode(c); err != nil {
 		return fmt.Errorf("encode yaml: %w", err)
 	}
 	if err := encoder.Close(); err != nil {
@@ -287,50 +358,64 @@ func AtomicWrite(path string, c *Config) error {
 		_ = f.Close()
 	}
 
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("rename: %w", err)
+	// На Windows chmod(0600) делает файл read-only и блокирует последующий
+	// rename поверх него — снимаем атрибут перед заменой.
+	if _, err := os.Stat(path); err == nil {
+		_ = os.Chmod(path, 0o666)
 	}
 
-	// Гарантируем права 0600
-	_ = os.Chmod(path, 0o600)
+	// renameFunc — точка расширения для тестов.
+	var renameErr error
+	if renameFunc == nil {
+		renameFunc = os.Rename
+	}
+	if renameErr = renameFunc(tmpPath, path); renameErr != nil {
+		// Fallback: rename невозможен поверх bind-mount / между устройствами
+		// (Docker: "./config.yaml:/data/config.yaml" -> "device or resource busy",
+		// EXDEV и т.п.). Пишем на место: truncate + copy.
+		if copyErr := copyFileSync(tmpPath, path); copyErr != nil {
+			os.Remove(tmpPath)
+			return fmt.Errorf("rename: %v; in-place fallback: %w", renameErr, copyErr)
+		}
+		os.Remove(tmpPath)
+	}
+
+	// Гарантируем права 0600 (POSIX; на Windows пропускаем — см. выше)
+	if runtime.GOOS != "windows" {
+		_ = os.Chmod(path, 0o600)
+	}
 	return nil
 }
 
-// updateServicesNode находит или создаёт узел "services" в корне YAML-документа.
-func updateServicesNode(rootNode *yaml.Node, services []string) error {
-	if rootNode == nil || rootNode.Kind != yaml.MappingNode {
-		return fmt.Errorf("invalid root node")
+// renameFunc переопределяется в тестах для эмуляции недоступности rename.
+var renameFunc func(oldname, newname string) error
+
+// copyFileSync перезаписывает содержимое dst содержимым src
+// (используется, когда атомарный rename недоступен).
+func copyFileSync(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open tmp: %w", err)
+	}
+	defer in.Close()
+
+	fi, err := in.Stat()
+	if err != nil {
+		return fmt.Errorf("stat tmp: %w", err)
 	}
 
-	var servicesValueNode *yaml.Node
-	var servicesKeyNode *yaml.Node
-
-	// Поиск существующего узла "services"
-	for i := 0; i < len(rootNode.Content); i += 2 {
-		if i+1 >= len(rootNode.Content) {
-			break
-		}
-		keyNode := rootNode.Content[i]
-		if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "services" {
-			servicesKeyNode = keyNode
-			servicesValueNode = rootNode.Content[i+1]
-			break
-		}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode().Perm())
+	if err != nil {
+		return fmt.Errorf("open target: %w", err)
 	}
 
-	// Создание нового узла при отсутствии
-	if servicesKeyNode == nil {
-		servicesKeyNode = &yaml.Node{Kind: yaml.ScalarNode, Value: "services", Tag: "!!str"}
-		servicesValueNode = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-		rootNode.Content = append(rootNode.Content, servicesKeyNode, servicesValueNode)
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return fmt.Errorf("copy: %w", err)
 	}
-
-	// Перезаписываем содержимое
-	servicesValueNode.Content = make([]*yaml.Node, 0, len(services))
-	for _, service := range services {
-		node := &yaml.Node{Kind: yaml.ScalarNode, Value: service, Tag: "!!str"}
-		servicesValueNode.Content = append(servicesValueNode.Content, node)
+	if err := out.Sync(); err != nil {
+		out.Close()
+		return fmt.Errorf("sync: %w", err)
 	}
-	return nil
+	return out.Close()
 }

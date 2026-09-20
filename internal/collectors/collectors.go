@@ -1,138 +1,94 @@
+// Package collectors — источники сырых IP-диапазонов.
+//
+// Collector только собирает данные из источника (не валидирует и не агрегирует —
+// это ответственность validator/aggregator, PROMPT X.10.1).
 package collectors
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"strings"
+	"net/netip"
+	"time"
 )
 
-// HTTP обёртка над http.Client с лимитами.
-type HTTP struct {
-	Client    *http.Client
-	MaxBytes  int64
+// Collector — источник сетей для одного метода сбора.
+type Collector interface {
+	Name() string
+	Collect(ctx context.Context, service string, opts Options) (*Result, error)
 }
 
-// NewHTTP создаёт HTTP-клиент с указанными таймаутами.
-func NewHTTP(client *http.Client, maxMB int) *HTTP {
-	if client == nil {
-		client = http.DefaultClient
-	}
-	if maxMB <= 0 {
-		maxMB = 50
-	}
-	return &HTTP{
-		Client:   client,
-		MaxBytes: int64(maxMB) << 20,
-	}
+// Result — сырой результат сбора (до валидации).
+type Result struct {
+	Prefixes []netip.Prefix `json:"prefixes"`
+	Source   string         `json:"source"`
+	Method   string         `json:"method"`
 }
 
-// limitedReader ограничивает размер читаемого тела ответа.
-func limitedReader(r io.Reader, limit int64) io.Reader {
-	return io.LimitReader(r, limit)
+// Options — параметры фильтрации из overrides сервиса.
+type Options struct {
+	Exclude     []string
+	IncludeOnly []string
 }
 
-// FetchLines загружает текстовый ресурс и разбивает на строки.
-//
-// Используется для статических списков (antifilter, static_url).
-// Возвращает непустые строки без комментариев.
-func (h *HTTP) FetchLines(ctx context.Context, u string) ([]string, error) {
-	parsed, err := url.Parse(u)
-	if err != nil {
-		return nil, fmt.Errorf("parse url: %w", err)
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("unsupported scheme %q", parsed.Scheme)
-	}
+// ResolverAPI — интерфейс DNS/ASN-резолвинга (реализуется *resolver.Resolver).
+// Определяется здесь, чтобы collectors не импортировал resolver.
+type ResolverAPI interface {
+	ResolveDomain(ctx context.Context, domain string) ([]string, error)
+	ASNByIP(ctx context.Context, ip string) (int, error)
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
+// PrefixCache — кэш префиксов по ASN (реализуется storage.Cache).
+type PrefixCache interface {
+	GetPrefixes(asn int) ([]string, bool)
+	SetPrefixes(asn int, prefixes []string, ttl time.Duration) error
+}
 
-	resp, err := h.Client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", u, err)
-	}
-	defer resp.Body.Close()
+// filterPrefixes применяет exclude/include_only фильтры к набору префиксов.
+func filterPrefixes(in []netip.Prefix, opts Options) []netip.Prefix {
+	excludeSet := parsePrefixSet(opts.Exclude)
+	includeOnly := len(opts.IncludeOnly) > 0
+	includeSet := parsePrefixSet(opts.IncludeOnly)
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %s: %d", u, resp.StatusCode)
+	out := make([]netip.Prefix, 0, len(in))
+	for _, p := range in {
+		p = p.Masked()
+		if _, ok := excludeSet[p]; ok {
+			continue
+		}
+		if includeOnly {
+			if _, ok := includeSet[p]; !ok {
+				continue
+			}
+		}
+		out = append(out, p)
 	}
+	return out
+}
 
-	body, err := io.ReadAll(limitedReader(resp.Body, h.MaxBytes))
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	lines := make([]string, 0)
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			lines = append(lines, line)
+func parsePrefixSet(raw []string) map[netip.Prefix]struct{} {
+	set := make(map[netip.Prefix]struct{}, len(raw))
+	for _, s := range raw {
+		if p, err := netip.ParsePrefix(s); err == nil {
+			set[p.Masked()] = struct{}{}
 		}
 	}
-
-	return lines, nil
+	return set
 }
 
-// BGPViewASN возвращает префиксы для ASN через BGPView API.
-//
-// API: https://api.bgpview.io/asn/{asn}/prefixes
-// Ответ: {"data":{"ipv4_prefixes":[{"prefix":"1.2.3.0/24"}], ...}}
-func BGPViewASN(ctx context.Context, h *HTTP, asn string) ([]string, error) {
-	id := strings.TrimPrefix(strings.ToUpper(asn), "AS")
-	if id == "" {
-		return nil, fmt.Errorf("invalid ASN %q", asn)
+// parsePrefixLines конвертирует строки вида "1.2.3.0/24" в []netip.Prefix.
+// Непарсабельные строки и IPv6-префиксы отбрасываются (проект — только IPv4).
+func parsePrefixLines(lines []string) []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(lines))
+	seen := make(map[netip.Prefix]bool)
+	for _, s := range lines {
+		p, err := netip.ParsePrefix(s)
+		if err != nil || !p.Addr().Is4() {
+			continue
+		}
+		p = p.Masked()
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
 	}
-
-	u := "https://api.bgpview.io/asn/" + id + "/prefixes"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, fmt.Errorf("bgpview: create request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := h.Client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("bgpview: request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bgpview: returned %d", resp.StatusCode)
-	}
-
-	var v struct {
-		Data struct {
-			IPv4Prefixes []struct {
-				Prefix string `json:"prefix"`
-			} `json:"ipv4_prefixes"`
-			IPv6Prefixes []struct {
-				Prefix string `json:"prefix"`
-			} `json:"ipv6_prefixes"`
-		} `json:"data"`
-	}
-
-	decoder := json.NewDecoder(limitedReader(resp.Body, h.MaxBytes))
-	if err := decoder.Decode(&v); err != nil {
-		return nil, fmt.Errorf("bgpview: decode: %w", err)
-	}
-
-	out := make([]string, 0, len(v.Data.IPv4Prefixes)+len(v.Data.IPv6Prefixes))
-	for _, p := range v.Data.IPv4Prefixes {
-		out = append(out, p.Prefix)
-	}
-	for _, p := range v.Data.IPv6Prefixes {
-		out = append(out, p.Prefix)
-	}
-
-	if len(out) == 0 {
-		return nil, fmt.Errorf("bgpview: no prefixes for %s", asn)
-	}
-
-	return out, nil
+	return out
 }

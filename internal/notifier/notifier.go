@@ -17,7 +17,7 @@ type SyncResult struct {
 	Removed    int    `json:"removed"`
 	Unchanged  int    `json:"unchanged"`
 	Error      string `json:"error,omitempty"`
-	DurationMs int    `json:"duration_ms"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 // Notifier — интерфейс для отправки уведомлений (Telegram и др.).
@@ -49,6 +49,19 @@ func NewTelegram(cfg config.TelegramConfig, log *slog.Logger) (Notifier, error) 
 		_, _ = fmt.Sscanf(cfg.ChatID, "%d", &chatID)
 	}
 	return &TelegramNotifier{api: api, chatID: chatID, log: log}, nil
+}
+
+// FromConfig создаёт нотификатор из конфигурации; при ошибке или
+// отключённом Telegram возвращает NoopNotifier (работа продолжается).
+func FromConfig(cfg config.TelegramConfig, log *slog.Logger) Notifier {
+	n, err := NewTelegram(cfg, log)
+	if err != nil {
+		if log != nil {
+			log.Error("telegram notifier init failed, notifications disabled", "err", err)
+		}
+		return &NoopNotifier{}
+	}
+	return n
 }
 
 func (n *TelegramNotifier) Send(ctx context.Context, message string) error {

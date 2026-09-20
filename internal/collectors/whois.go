@@ -4,82 +4,97 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
-
-	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
+	"time"
 )
 
+// WHOISCollector — метод для мелких сайтов без собственного источника:
+// DNS → IP → ASN → все анонсированные префиксы ASN.
+// Ограничен maxPrefixes для защиты от захвата лишнего (PROMPT II.2).
 type WHOISCollector struct {
-	resolver   *resolver.Resolver
-	domains    []string
+	resolver    ResolverAPI
+	http        *HTTP
+	cache       PrefixCache
+	ttl         time.Duration
+	domains     []string
+	ips         []string
 	maxPrefixes int
 }
 
-func NewWHOISCollector(r *resolver.Resolver, domains []string, maxPrefixes int) Collector {
-	return &WHOISCollector{resolver: r, domains: domains, maxPrefixes: maxPrefixes}
+// NewWHOISCollector создаёт whois-коллектор.
+func NewWHOISCollector(r ResolverAPI, h *HTTP, cache PrefixCache, ttl time.Duration, domains, ips []string, maxPrefixes int) *WHOISCollector {
+	if maxPrefixes <= 0 {
+		maxPrefixes = 100
+	}
+	return &WHOISCollector{
+		resolver: r, http: h, cache: cache, ttl: ttl,
+		domains: domains, ips: ips, maxPrefixes: maxPrefixes,
+	}
 }
 
 func (c *WHOISCollector) Name() string { return "whois" }
 
+// Collect: для каждого домена/IP определяет ASN и собирает его префиксы
+// (не более maxPrefixes суммарно).
 func (c *WHOISCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
-	var allPrefixes []netip.Prefix
-	seen := make(map[netip.Prefix]bool)
-
-	excludeSet := make(map[netip.Prefix]bool)
-	for _, ex := range opts.Exclude {
-		excludeSet[ex.Masked()] = true
+	if c.resolver == nil || c.http == nil {
+		return nil, fmt.Errorf("whois: resolver/http not configured")
 	}
 
+	var addresses []string
 	for _, domain := range c.domains {
 		ips, err := c.resolver.ResolveDomain(ctx, domain)
-		if err != nil || len(ips) == 0 {
-			continue
-		}
-
-		// Get ASN from first IP
-		asn, err := c.resolver.ASNByIP(ctx, ips[0])
 		if err != nil {
 			continue
 		}
+		addresses = append(addresses, ips...)
+	}
+	addresses = append(addresses, c.ips...)
 
-		// Get all prefixes for this ASN
-		prefixes, err := c.resolver.GetASPrefixes(ctx, asn)
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("whois: no addresses resolved for service %s", service)
+	}
+
+	asns := map[int]bool{}
+	for _, ipStr := range addresses {
+		asn, err := c.resolver.ASNByIP(ctx, ipStr)
 		if err != nil {
 			continue
 		}
+		asns[asn] = true
+	}
+	if len(asns) == 0 {
+		return nil, fmt.Errorf("whois: cannot determine ASN for service %s", service)
+	}
 
-		for _, p := range prefixes {
-			prefix, err := netip.ParsePrefix(p)
-			if err != nil {
+	seen := map[netip.Prefix]bool{}
+	var all []netip.Prefix
+	for asn := range asns {
+		lines, err := getASPrefixes(ctx, c.http, c.cache, c.ttl, asn)
+		if err != nil {
+			continue
+		}
+		for _, p := range parsePrefixLines(lines) {
+			if seen[p] {
 				continue
 			}
-			prefix = prefix.Masked()
-
-			if excludeSet[prefix] {
-				continue
-			}
-			if seen[prefix] {
-				continue
-			}
-			seen[prefix] = true
-			allPrefixes = append(allPrefixes, prefix)
-
-			if len(allPrefixes) >= c.maxPrefixes {
+			seen[p] = true
+			all = append(all, p)
+			if len(all) >= c.maxPrefixes {
 				break
 			}
 		}
-
-		if len(allPrefixes) >= c.maxPrefixes {
+		if len(all) >= c.maxPrefixes {
 			break
 		}
 	}
 
-	if len(allPrefixes) == 0 {
-		return nil, fmt.Errorf("no prefixes found for service %s", service)
+	all = filterPrefixes(all, opts)
+	if len(all) == 0 {
+		return nil, fmt.Errorf("whois: no prefixes found for service %s", service)
 	}
-
 	return &Result{
-		Prefixes: allPrefixes,
-		Source:   "whois",
+		Prefixes: all,
+		Source:   "whois/cymru+bgp.tools",
 		Method:   "whois",
 	}, nil
 }

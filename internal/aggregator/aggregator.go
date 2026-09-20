@@ -2,7 +2,6 @@ package aggregator
 
 import (
 	"fmt"
-	"math/big"
 	"net/netip"
 	"sort"
 	"strings"
@@ -10,45 +9,31 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 )
 
-// Значения по умолчанию для минимальных масок (используются если не передан SafetyConfig)
-const defaultMinV4Bits = 9
-const defaultMinV6Bits = 32
+// defaultMinV4Bits — минимальная маска IPv4 по умолчанию (допустимый диапазон 8..32).
+// Проект работает только с IPv4: IPv6-префиксы отклоняются валидацией.
+const defaultMinV4Bits = 8
 
-// Validate проверяет префикс на валидность и отсутствие пересечений с зарезервированными диапазонами.
-// Принимает необязательный параметр safety для переопределения минимальных масок из конфига.
+// Validate проверяет IPv4-префикс на валидность и отсутствие пересечений
+// с зарезервированными диапазонами. Не-IPv4 адреса отклоняются.
+// Принимает необязательный параметр safety для переопределения минимальной маски.
 func Validate(p netip.Prefix, safety *config.SafetyConfig) error {
 	if !p.IsValid() {
 		return fmt.Errorf("invalid prefix")
 	}
+	if !p.Addr().Is4() {
+		return fmt.Errorf("prefix %s is not IPv4 (IPv6 is not supported)", p)
+	}
 	p = p.Masked()
-	
-	// Используем значения из конфига или дефолтные
+
 	minV4 := defaultMinV4Bits
-	minV6 := defaultMinV6Bits
-	if safety != nil {
-		if safety.MinPrefixV4 > 0 {
-			minV4 = safety.MinPrefixV4
-		}
-		if safety.MinPrefixV6 > 0 {
-			minV6 = safety.MinPrefixV6
-		}
+	if safety != nil && safety.MinPrefixV4 > 0 {
+		minV4 = safety.MinPrefixV4
 	}
-	
-	if p.Addr().Is4() {
-		if p.Bits() < minV4 {
-			return fmt.Errorf("prefix %s too wide (min /%d)", p, minV4)
-		}
-		for _, r := range reservedV4 {
-			if r.Overlaps(p) {
-				return fmt.Errorf("prefix %s overlaps reserved %s", p, r)
-			}
-		}
-		return nil
+
+	if p.Bits() < minV4 {
+		return fmt.Errorf("prefix %s too wide (min /%d)", p, minV4)
 	}
-	if p.Bits() < minV6 {
-		return fmt.Errorf("prefix %s too wide (min /%d)", p, minV6)
-	}
-	for _, r := range reservedV6 {
+	for _, r := range reservedV4 {
 		if r.Overlaps(p) {
 			return fmt.Errorf("prefix %s overlaps reserved %s", p, r)
 		}
@@ -78,17 +63,17 @@ func ContainsPrefix(outer, inner netip.Prefix) bool {
 	}
 	outer = outer.Masked()
 	inner = inner.Masked()
-	
+
 	// Разные типы адресов не могут содержать друг друга
 	if outer.Addr().Is4() != inner.Addr().Is4() {
 		return false
 	}
-	
+
 	// Outer должен быть шире или равен inner
 	if outer.Bits() > inner.Bits() {
 		return false
 	}
-	
+
 	// Проверяем, что inner.Addr() находится в диапазоне outer
 	return outer.Contains(inner.Addr())
 }
@@ -98,7 +83,7 @@ func RemoveContained(in []netip.Prefix) []netip.Prefix {
 	if len(in) == 0 {
 		return nil
 	}
-	
+
 	// Сортируем по ширине маски (от широких к узким)
 	sorted := make([]netip.Prefix, len(in))
 	copy(sorted, in)
@@ -108,7 +93,7 @@ func RemoveContained(in []netip.Prefix) []netip.Prefix {
 		}
 		return sorted[i].Addr().Less(sorted[j].Addr())
 	})
-	
+
 	var out []netip.Prefix
 	for i, p := range sorted {
 		contained := false
@@ -122,46 +107,45 @@ func RemoveContained(in []netip.Prefix) []netip.Prefix {
 			out = append(out, p)
 		}
 	}
-	
+
 	return out
 }
 
 // NormalizeAll нормализует список строк в список префиксов.
-// Выполняет парсинг, валидацию, фильтрацию и удаление дубликатов.
+//
+// Синтаксическая ошибка в любой строке — жёсткая ошибка (уровень 1 валидации).
+// Приватные/зарезервированные и слишком широкие сети — молча отбрасываются
+// (уровни 2 и 4): источники обязаны очищаться, а не ронять синхронизацию.
+// Дубликаты удаляются.
 func NormalizeAll(raw []string) ([]netip.Prefix, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	
+
 	var prefixes []netip.Prefix
 	var parseErrors []string
-	
+
 	for _, s := range raw {
 		s = strings.TrimSpace(s)
 		if s == "" {
 			continue
 		}
-		
+
 		p, err := netip.ParsePrefix(s)
 		if err != nil {
 			parseErrors = append(parseErrors, fmt.Sprintf("invalid prefix %q: %v", s, err))
 			continue
 		}
-		
+
 		prefixes = append(prefixes, p.Masked())
 	}
-	
+
 	if len(parseErrors) > 0 {
 		return nil, fmt.Errorf("parse errors: %s", strings.Join(parseErrors, "; "))
 	}
-	
-	// Фильтруем и валидируем (используем nil для safety, т.к. NormalizeAll вызывается без контекста конфига)
-	valid, validationErrors := FilterValid(prefixes, nil)
-	if len(validationErrors) > 0 {
-		return nil, fmt.Errorf("validation errors: %v", validationErrors)
-	}
-	
-	// Удаляем дубликаты
+
+	valid, _ := FilterValid(prefixes, nil)
+
 	seen := make(map[netip.Prefix]bool)
 	var unique []netip.Prefix
 	for _, p := range valid {
@@ -170,57 +154,70 @@ func NormalizeAll(raw []string) ([]netip.Prefix, error) {
 			unique = append(unique, p)
 		}
 	}
-	
+
 	return unique, nil
 }
 
-// Aggregate агрегирует список префиксов: удаляет содержащиеся, сортирует и объединяет смежные.
+// Aggregate выполняет безопасную агрегацию набора IPv4-префиксов.
+//
+// Проект работает только с IPv4: не-IPv4 префиксы отбрасываются до агрегации.
+// Агрегация выполняется radix tree (объединение настоящих sibling-префиксов).
+//
+// После агрегации проверяются инварианты (ValidateAggregation):
+// сохранность суммарного объёма адресов и полное покрытие исходного набора.
+// При нарушении инварианта возвращается неагрегированный (но валидированный)
+// список — это безопасный откат, а не ошибка синхронизации.
 func Aggregate(in []netip.Prefix) ([]netip.Prefix, error) {
-	if len(in) == 0 {
+	v4 := make([]netip.Prefix, 0, len(in))
+	for _, p := range in {
+		if p.Addr().Is4() {
+			v4 = append(v4, p)
+		}
+	}
+	if len(v4) == 0 {
 		return nil, nil
 	}
-	
-	// Валидируем
-	valid, errs := FilterValid(in, nil)
+
+	// Валидируем (IPv6 уже отброшен выше)
+	valid, errs := FilterValid(v4, nil)
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("validation errors: %v", errs)
 	}
-	
-	// Удаляем содержащиеся
-	filtered := RemoveContained(valid)
-	
-	// Разделяем IPv4 и IPv6
-	var v4, v6 []netip.Prefix
-	for _, p := range filtered {
-		if p.Addr().Is4() {
-			v4 = append(v4, p)
-		} else {
-			v6 = append(v6, p)
+
+	// Удаляем содержащиеся и дубликаты
+	filtered := dedupe(RemoveContained(valid))
+
+	// Агрегация через radix tree
+	merged := AggregatePrefixes(filtered)
+	if err := ValidateAggregation(filtered, merged); err != nil {
+		return filtered, fmt.Errorf("aggregation rolled back: %w", err)
+	}
+
+	sortPrefixes(merged)
+	return merged, nil
+}
+
+// sortPrefixes сортирует префиксы по возрастанию маски, затем по адресу.
+func sortPrefixes(ps []netip.Prefix) {
+	sort.Slice(ps, func(i, j int) bool {
+		if ps[i].Bits() != ps[j].Bits() {
+			return ps[i].Bits() < ps[j].Bits()
+		}
+		return ps[i].Addr().Less(ps[j].Addr())
+	})
+}
+
+// dedupe удаляет точные дубликаты.
+func dedupe(in []netip.Prefix) []netip.Prefix {
+	seen := make(map[netip.Prefix]bool, len(in))
+	out := make([]netip.Prefix, 0, len(in))
+	for _, p := range in {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
 		}
 	}
-	
-	// Сортируем
-	sort.Slice(v4, func(i, j int) bool {
-		if v4[i].Bits() != v4[j].Bits() {
-			return v4[i].Bits() < v4[j].Bits()
-		}
-		return v4[i].Addr().Less(v4[j].Addr())
-	})
-	sort.Slice(v6, func(i, j int) bool {
-		if v6[i].Bits() != v6[j].Bits() {
-			return v6[i].Bits() < v6[j].Bits()
-		}
-		return v6[i].Addr().Less(v6[j].Addr())
-	})
-	
-	// Объединяем смежные
-	v4 = mergeAdjacent(v4)
-	v6 = mergeAdjacent(v6)
-	
-	// Объединяем результаты
-	result := append(v4, v6...)
-	
-	return result, nil
+	return out
 }
 
 // AggregateStrings агрегирует список строк-префиксов.
@@ -229,18 +226,6 @@ func AggregateStrings(raw []string) ([]netip.Prefix, error) {
 	if err != nil {
 		return nil, fmt.Errorf("normalize: %w", err)
 	}
-	
+
 	return Aggregate(normalized)
-}
-
-// countAddresses подсчитывает количество IP-адресов в списке префиксов.
-func countAddresses(prefixes []netip.Prefix) *big.Int {
-	return sumAddresses(prefixes)
-}
-
-// coverageInvariant проверяет инвариант покрытия: сумма адресов должна быть одинаковой.
-func coverageInvariant(before, after []netip.Prefix) bool {
-	sumBefore := sumAddresses(before)
-	sumAfter := sumAddresses(after)
-	return sumBefore.Cmp(sumAfter) == 0
 }

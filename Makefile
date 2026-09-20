@@ -66,7 +66,7 @@ test-html: ## Сгенерировать HTML-отчет о покрытии
 	@echo "📄 Отчет: coverage.html"
 
 fmt: ## Отформатировать код (gofmt)
-	gofmt -s -w cmd internal pkg
+	gofmt -s -w cmd internal
 	@echo "✅ Код отформатирован"
 
 vet: ## Запустить go vet (статический анализ)

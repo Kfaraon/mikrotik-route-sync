@@ -26,17 +26,6 @@ const (
 	StateDegraded   TransactionState = "degraded"    // ошибка применения + частичный/неуспешный откат
 )
 
-// Route представляет маршрут в MikroTik RouterOS.
-// Используется в транзакциях Apply/Rollback.
-type Route struct {
-	ID           string `json:".id,omitempty"`
-	DstAddress   string `json:"dst-address"`
-	Gateway      string `json:"gateway"`
-	RoutingTable string `json:"routing-table,omitempty"`
-	Distance     string `json:"distance,omitempty"`
-	Comment      string `json:"comment,omitempty"`
-}
-
 // Transaction обеспечивает атомарное применение изменений маршрутов для одного сервиса.
 // Реализует паттерн "применить или откатиться" (компенсирующий откат через REST).
 type Transaction struct {

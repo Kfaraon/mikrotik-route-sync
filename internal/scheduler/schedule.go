@@ -9,9 +9,9 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-var everyRE = regexp.MustCompile(`^every\s+([0-9]+(?:s|m|h))$`)
-var dailyRE = regexp.MustCompile(`^daily at\s+([0-2][0-9]):([0-5][0-9])$`)
-var weeklyRE = regexp.MustCompile(`^weekly on\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday) at\s+([0-2][0-9]):([0-5][0-9])$`)
+var everyRE = regexp.MustCompile(`^every\s+(\d+(?:\.\d+)?(?:s|m|h))$`)
+var dailyRE = regexp.MustCompile(`^daily at\s+([01]?\d|2[0-3]):([0-5]\d)$`)
+var weeklyRE = regexp.MustCompile(`^weekly on\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday) at\s+([01]?\d|2[0-3]):([0-5]\d)$`)
 
 func CronSpec(s string) (string, error) {
 	s = strings.ToLower(strings.TrimSpace(s))

@@ -47,13 +47,13 @@ func (l *Logger) Log(entry Entry) {
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now()
 	}
-	
+
 	// Логируем как структурированное событие
 	attrs := []any{
 		slog.String("audit_action", string(entry.Action)),
 		slog.Time("audit_timestamp", entry.Timestamp),
 	}
-	
+
 	if entry.User != "" {
 		attrs = append(attrs, slog.String("audit_user", entry.User))
 	}
@@ -63,19 +63,19 @@ func (l *Logger) Log(entry Entry) {
 	if entry.Error != "" {
 		attrs = append(attrs, slog.String("audit_error", entry.Error))
 	}
-	
+
 	// Добавляем изменения (без значений секретов)
 	if len(entry.Changes) > 0 {
 		changesJSON, _ := json.Marshal(entry.Changes)
 		attrs = append(attrs, slog.String("audit_changes", string(changesJSON)))
 	}
-	
+
 	// Добавляем метаданные
 	if len(entry.Metadata) > 0 {
 		metadataJSON, _ := json.Marshal(entry.Metadata)
 		attrs = append(attrs, slog.String("audit_metadata", string(metadataJSON)))
 	}
-	
+
 	l.logger.Info("audit_event", attrs...)
 }
 
@@ -129,9 +129,9 @@ func (l *Logger) LogSyncComplete(services []string, duration time.Duration, err 
 	entry := Entry{
 		Action: ActionSyncComplete,
 		Metadata: map[string]any{
-			"services":      services,
-			"count":         len(services),
-			"duration_ms":   duration.Milliseconds(),
+			"services":       services,
+			"count":          len(services),
+			"duration_ms":    duration.Milliseconds(),
 			"duration_human": duration.String(),
 		},
 	}
@@ -180,12 +180,12 @@ func maskString(length int) string {
 // Секретные значения маскируются.
 func ExtractConfigChanges(oldConfig, newConfig map[string]any, secretKeys []string) map[string]string {
 	changes := make(map[string]string)
-	
+
 	secretSet := make(map[string]bool)
 	for _, key := range secretKeys {
 		secretSet[key] = true
 	}
-	
+
 	// Находим изменённые ключи
 	for key, newVal := range newConfig {
 		oldVal, exists := oldConfig[key]
@@ -198,7 +198,7 @@ func ExtractConfigChanges(oldConfig, newConfig map[string]any, secretKeys []stri
 			}
 		}
 	}
-	
+
 	// Находим удалённые ключи
 	for key := range oldConfig {
 		if _, exists := newConfig[key]; !exists {
@@ -209,6 +209,6 @@ func ExtractConfigChanges(oldConfig, newConfig map[string]any, secretKeys []stri
 			}
 		}
 	}
-	
+
 	return changes
 }

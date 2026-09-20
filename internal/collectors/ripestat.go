@@ -2,38 +2,19 @@ package collectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 )
 
-// RIPEstatASN получает анонсированные префиксы для ASN через RIPEstat API.
+// RIPEstatASN получает анонсированные префиксы для ASN через RIPEstat API
+// (fallback при недоступности bgp.tools).
 //
 // API: https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{n}
-// Ответ: {"data":{"prefixes":[{"prefix":"1.2.3.0/24"}, ...]}}
-//
-// Используется как fallback при недоступности BGPView.
 func RIPEstatASN(ctx context.Context, h *HTTP, asn int) ([]string, error) {
-	url := fmt.Sprintf("https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS%d", asn)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("ripestat: create request: %w", err)
+	if asn <= 0 {
+		return nil, fmt.Errorf("invalid ASN %d", asn)
 	}
-	req.Header.Set("User-Agent", "mikrotik-route-sync/1.0")
-	req.Header.Set("Accept", "application/json")
+	u := fmt.Sprintf("https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS%d", asn)
 
-	resp, err := h.Client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ripestat: request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ripestat: returned %d", resp.StatusCode)
-	}
-
-	// Структура ответа RIPEstat API
 	var result struct {
 		Data struct {
 			Prefixes []struct {
@@ -41,10 +22,8 @@ func RIPEstatASN(ctx context.Context, h *HTTP, asn int) ([]string, error) {
 			} `json:"prefixes"`
 		} `json:"data"`
 	}
-
-	decoder := json.NewDecoder(limitedReader(resp.Body, h.MaxBytes))
-	if err := decoder.Decode(&result); err != nil {
-		return nil, fmt.Errorf("ripestat: decode: %w", err)
+	if err := h.FetchJSON(ctx, u, &result); err != nil {
+		return nil, fmt.Errorf("ripestat: %w", err)
 	}
 
 	out := make([]string, 0, len(result.Data.Prefixes))
@@ -53,10 +32,8 @@ func RIPEstatASN(ctx context.Context, h *HTTP, asn int) ([]string, error) {
 			out = append(out, p.Prefix)
 		}
 	}
-
 	if len(out) == 0 {
 		return nil, fmt.Errorf("ripestat: no prefixes for AS%d", asn)
 	}
-
 	return out, nil
 }

@@ -5,110 +5,87 @@
   <meta charset="utf-8">
   <title>MikroTik Route Sync — Настройки</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="/static/pico.min.css">
+  <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js"></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <nav class="container-fluid">
-    <ul>
-      <li><a href="/">🏠 Дашборд</a></li>
-      <li><a href="/services">📦 Сервисы</a></li>
-      <li><a href="/schedules">📅 Расписания</a></li>
-      <li><a href="/settings" aria-current="page">⚙️ Настройки</a></li>
-      <li><a href="/logs">📜 Логи</a></li>
-    </ul>
+  <nav class="bar">
+    <span class="brand">MikroTik Route Sync</span>
+    <a href="/">Дашборд</a>
+    <a href="/services">Сервисы</a>
+    <a href="/schedules">Расписания</a>
+    <a href="/settings" class="active">Настройки</a>
+    <a href="/logs">Логи</a>
+    <span class="ver">v{{ .Version }}</span>
   </nav>
 
-  <main class="container">
-    <h1>⚙️ Настройки</h1>
-
-    <!-- MikroTik -->
-    <section>
-      <h2>MikroTik RouterOS</h2>
-      <table>
-        <tbody>
-          <tr><td>Host</td><td><code>{{ .Cfg.MikroTik.Host }}</code></td></tr>
-          <tr><td>Port</td><td><code>{{ .Cfg.MikroTik.Port }}</code></td></tr>
-          <tr><td>Username</td><td><code>{{ .Cfg.MikroTik.Username }}</code></td></tr>
-          <tr>
-            <td>Password</td>
-            <td class="secret-field">
-              <span class="password-mask">{{ mask .Cfg.MikroTik.Password }}</span>
-            </td>
-          </tr>
-          <tr><td>Gateway</td><td><code>{{ .Cfg.MikroTik.Gateway }}</code></td></tr>
-          <tr><td>Routing Table</td><td><code>{{ .Cfg.MikroTik.RoutingTable }}</code></td></tr>
-          <tr><td>Distance</td><td><code>{{ .Cfg.MikroTik.Distance }}</code></td></tr>
-          <tr><td>Verify SSL</td><td><code>{{ .Cfg.MikroTik.VerifySSL }}</code></td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- Telegram -->
-    <section>
-      <h2>Telegram</h2>
-      <table>
-        <tbody>
-          <tr><td>Enabled</td><td><code>{{ .Cfg.Telegram.Enabled }}</code></td></tr>
-          <tr>
-            <td>Bot Token</td>
-            <td class="secret-field">
-              <span class="password-mask">{{ mask .Cfg.Telegram.BotToken }}</span>
-            </td>
-          </tr>
-          <tr><td>Chat ID</td><td><code>{{ .Cfg.Telegram.ChatID }}</code></td></tr>
-          <tr><td>Authorized</td><td><code>{{ range .Cfg.Telegram.AuthorizedChatIDs }}{{ . }} {{ end }}</code></td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- Web -->
-    <section>
-      <h2>Web</h2>
-      <table>
-        <tbody>
-          <tr><td>Listen</td><td><code>{{ .Cfg.Web.Listen }}</code></td></tr>
-          <tr><td>Auth Enabled</td><td><code>{{ .Cfg.Web.Auth.Enabled }}</code></td></tr>
-          <tr>
-            <td>Password</td>
-            <td class="secret-field">
-              <span class="password-mask">{{ mask .Cfg.Web.Auth.Password }}</span>
-            </td>
-          </tr>
-          <tr><td>Allowed CIDRs</td><td><code>{{ range .Cfg.Web.AllowedCIDRs }}{{ . }} {{ end }}</code></td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- Safety -->
-    <section>
-      <h2>Safety</h2>
-      <table>
-        <tbody>
-          <tr><td>Max Delete Ratio</td><td><code>{{ .Cfg.Safety.MaxDeleteRatio }}</code></td></tr>
-          <tr><td>Min Prefix v4</td><td><code>{{ .Cfg.Safety.MinPrefixV4 }}</code></td></tr>
-          <tr><td>Min Prefix v6</td><td><code>{{ .Cfg.Safety.MinPrefixV6 }}</code></td></tr>
-          <tr><td>Allow Host Routes</td><td><code>{{ .Cfg.Safety.AllowHostRoutes }}</code></td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- Scheduler -->
-    <section>
-      <h2>Scheduler</h2>
-      <table>
-        <tbody>
-          <tr><td>Parallel</td><td><code>{{ .Cfg.Scheduler.Parallel }}</code></td></tr>
-          <tr><td>Max Concurrent</td><td><code>{{ .Cfg.Scheduler.MaxConcurrent }}</code></td></tr>
-          <tr><td>Cache TTL</td><td><code>{{ .Cfg.Scheduler.CacheTTLText }}</code></td></tr>
-        </tbody>
-      </table>
-    </section>
-
+  <main class="wrap">
+    <h1>Настройки</h1>
     <p class="muted">
-      ⚠️ Секреты маскируются. Для изменения используйте <code>app config set</code> или редактирование файла.
+      Все параметры config.yaml. Секреты показаны замаскированными — чтобы оставить
+      значение без изменений, не редактируйте поле; чтобы заменить — введите новое целиком.
+      Изменения сохраняются атомарно (config.yaml, права 0600) и применяются сразу,
+      если это возможно; поля, требующие перезапуска, помечены в описании («?»).
+      Поля «Расписание» и «Overrides» сервисов — на страницах «Расписания» и «Сервисы».
     </p>
+
+    <form hx-post="/actions/settings" hx-target="#settings-result" hx-swap="innerHTML">
+      <input type="hidden" name="csrf_token" value="{{ .CSRF }}">
+
+      {{ range $group := .Groups }}
+      <article class="settings-group">
+        <h2>{{ $group.Title }}</h2>
+        <table>
+          <tbody>
+            {{ range $row := $group.Rows }}
+            <tr class="setting-row">
+              <td class="setting-label">
+                <b>{{ $row.Title }}</b>
+                <code class="key">{{ $row.Key }}</code>
+                <button type="button" class="hint" aria-label="Описание настройки"
+                        data-help="{{ $row.Help }}">?</button>
+              </td>
+              <td class="setting-value">
+                {{ if eq $row.Type "bool" }}
+                  <select name="{{ $row.Key }}">
+                    <option value="true"{{ if eq $row.Value "true" }} selected{{ end }}>Да</option>
+                    <option value="false"{{ if eq $row.Value "false" }} selected{{ end }}>Нет</option>
+                  </select>
+                {{ else if eq $row.Type "level" }}
+                  <select name="{{ $row.Key }}">
+                    {{ range $opt := $row.Options }}
+                    <option value="{{ $opt }}"{{ if eq $opt $row.Value }} selected{{ end }}>{{ $opt }}</option>
+                    {{ end }}
+                  </select>
+                {{ else if eq $row.Type "secret" }}
+                  <span class="secret-field">
+                    <input type="password" name="{{ $row.Key }}" value="{{ $row.Value }}" autocomplete="off">
+                    <button type="button" class="outline" title="Показать на 10 секунд">👁</button>
+                  </span>
+                {{ else if eq $row.Type "number" }}
+                  <input type="number" name="{{ $row.Key }}" value="{{ $row.Value }}" step="1">
+                {{ else if eq $row.Type "float" }}
+                  <input type="number" name="{{ $row.Key }}" value="{{ $row.Value }}" step="0.05">
+                {{ else if eq $row.Type "list" }}
+                  <input type="text" name="{{ $row.Key }}" value="{{ $row.Value }}" placeholder="через запятую">
+                {{ else }}
+                  <input type="text" name="{{ $row.Key }}" value="{{ $row.Value }}">
+                {{ end }}
+              </td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </article>
+      {{ end }}
+
+      <div class="row">
+        <button type="submit">💾 Сохранить и применить</button>
+        <span id="settings-result" class="muted"></span>
+      </div>
+    </form>
   </main>
 </body>
 </html>

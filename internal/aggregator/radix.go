@@ -18,6 +18,8 @@ type node struct {
 	isLeaf   bool
 }
 
+// RadixTree — префиксное дерево (binary trie) для агрегации IPv4.
+// Агрегация IPv6 намеренно НЕ выполняется (решение проекта: только IPv4).
 type RadixTree struct {
 	root *node
 }
@@ -26,14 +28,8 @@ func New() *RadixTree {
 	return &RadixTree{root: &node{}}
 }
 
-func getBit(addr netip.Addr, i int) bit {
-	var b [16]byte
-	if addr.Is4() {
-		b4 := addr.As4()
-		copy(b[12:], b4[:])
-	} else {
-		b = addr.As16()
-	}
+func getBit4(addr netip.Addr, i int) bit {
+	b := addr.As4()
 	byteIdx := i / 8
 	bitIdx := uint(7 - (i % 8))
 	if b[byteIdx]&(1<<bitIdx) != 0 {
@@ -42,12 +38,22 @@ func getBit(addr netip.Addr, i int) bit {
 	return bit0
 }
 
+// Insert добавляет IPv4-префикс. IPv6-префиксы игнорируются.
 func (t *RadixTree) Insert(p netip.Prefix) {
+	if !p.IsValid() {
+		return
+	}
 	p = p.Masked()
+	if !p.Addr().Is4() {
+		return
+	}
+	if p.Bits() > 32 {
+		return
+	}
+
 	n := t.root
-	bits := p.Bits()
-	for i := 0; i < bits; i++ {
-		b := getBit(p.Addr(), i)
+	for i := 0; i < p.Bits(); i++ {
+		b := getBit4(p.Addr(), i)
 		if n.children[b] == nil {
 			n.children[b] = &node{}
 		}
@@ -56,21 +62,29 @@ func (t *RadixTree) Insert(p netip.Prefix) {
 	n.isLeaf = true
 }
 
+// full возвращает true, если поддерево полностью покрывает узел
+// (сам узел — лист или оба ребёнка полные).
+func (n *node) full() bool {
+	if n == nil {
+		return false
+	}
+	if n.isLeaf {
+		return true
+	}
+	return n.children[bit0].full() && n.children[bit1].full()
+}
+
+// Collect возвращает минимальный набор IPv4-префиксов, эквивалентный
+// вставленным. Объединяются только настоящие sibling-поддеревья.
 func (t *RadixTree) Collect() []netip.Prefix {
 	var result []netip.Prefix
-	var walk func(n *node, addr [16]byte, depth int, isIPv4 bool)
-	walk = func(n *node, addr [16]byte, depth int, isIPv4 bool) {
+	var walk func(n *node, addr [4]byte, depth int)
+	walk = func(n *node, addr [4]byte, depth int) {
 		if n == nil {
 			return
 		}
-		if n.isLeaf {
-			var a netip.Addr
-			if isIPv4 {
-				a = netip.AddrFrom4([4]byte{addr[12], addr[13], addr[14], addr[15]})
-			} else {
-				a = netip.AddrFrom16(addr)
-			}
-			result = append(result, netip.PrefixFrom(a, depth))
+		if n.full() {
+			result = append(result, netip.PrefixFrom(netip.AddrFrom4(addr), depth).Masked())
 			return
 		}
 		for b := bit(0); b < 2; b++ {
@@ -83,74 +97,30 @@ func (t *RadixTree) Collect() []netip.Prefix {
 				} else {
 					newAddr[byteIdx] &^= 1 << bitIdx
 				}
-				walk(n.children[b], newAddr, depth+1, isIPv4)
+				walk(n.children[b], newAddr, depth+1)
 			}
 		}
 	}
 
-	walk(t.root, [16]byte{}, 0, false)
+	walk(t.root, [4]byte{}, 0)
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Bits() != result[j].Bits() {
+			return result[i].Bits() < result[j].Bits()
+		}
+		return result[i].Addr().Compare(result[j].Addr()) < 0
+	})
 	return result
 }
 
-func canMerge(a, b netip.Prefix) (netip.Prefix, bool) {
-	if a.Bits() != b.Bits() || a.Bits() == 0 || a.Addr().Is4() != b.Addr().Is4() {
-		return netip.Prefix{}, false
+// AggregatePrefixes — агрегация IPv4-префиксов через radix tree за O(n·L).
+// IPv6-префиксы в дереве не участвуют.
+func AggregatePrefixes(in []netip.Prefix) []netip.Prefix {
+	t := New()
+	for _, p := range in {
+		t.Insert(p)
 	}
-	parentBits := a.Bits() - 1
-	parentA := netip.PrefixFrom(a.Addr(), parentBits).Masked()
-	parentB := netip.PrefixFrom(b.Addr(), parentBits).Masked()
-	if parentA == parentB {
-		return parentA, true
-	}
-	return netip.Prefix{}, false
-}
-
-func mergeAdjacent(prefixes []netip.Prefix) []netip.Prefix {
-	if len(prefixes) == 0 {
-		return nil
-	}
-
-	changed := true
-	current := prefixes
-
-	for changed {
-		changed = false
-		byLen := make(map[int][]netip.Prefix)
-		for _, p := range current {
-			byLen[p.Bits()] = append(byLen[p.Bits()], p)
-		}
-
-		var next []netip.Prefix
-		for bits, group := range byLen {
-			if bits == 0 {
-				next = append(next, group...)
-				continue
-			}
-			sort.Slice(group, func(i, j int) bool {
-				return group[i].Addr().Less(group[j].Addr())
-			})
-
-			merged := make([]bool, len(group))
-			for i := 0; i < len(group); i++ {
-				if merged[i] {
-					continue
-				}
-				if i+1 < len(group) && !merged[i+1] {
-					if parent, ok := canMerge(group[i], group[i+1]); ok {
-						next = append(next, parent)
-						merged[i] = true
-						merged[i+1] = true
-						changed = true
-						continue
-					}
-				}
-				next = append(next, group[i])
-			}
-		}
-		current = next
-	}
-
-	return current
+	return t.Collect()
 }
 
 func sumAddresses(prefixes []netip.Prefix) *big.Int {

@@ -1,7 +1,11 @@
 openapi: 3.1.0
 info:
   title: MikroTik Route Sync API
-  description: REST API для управления маршрутами на MikroTik RouterOS
+  description: >-
+    REST API для автоматического управления маршрутами MikroTik RouterOS v7.
+    Все изменяющие запросы требуют аутентификацию и CSRF-токен
+    (заголовок X-CSRF-Token или поле csrf_token формы).
+    Все ответы в единой схеме { ok, data, error }.
   version: 1.0.0
   contact:
     name: MikroTik Route Sync
@@ -11,29 +15,85 @@ info:
     url: https://opensource.org/licenses/MIT
 
 servers:
-  - url: http://localhost:8080/api/v1
-    description: Локальный сервер разработки
+  - url: http://127.0.0.1:8080
+    description: Локальный сервер (только LAN/loopback по умолчанию)
 
 security:
   - basicAuth: []
-  - cookieAuth: []
+  - sessionCookie: []
+
+tags:
+  - name: System
+    description: Состояние процесса и health-check'и
+  - name: Services
+    description: Управление сервисами и синхронизацией
+  - name: Schedules
+    description: Трёхуровневые расписания
+  - name: Observability
+    description: Логи и история
 
 paths:
-  /status:
+  /healthz:
     get:
-      summary: Получить общий статус системы
+      summary: Liveness-проба (без авторизации)
       tags: [System]
+      security: []
       responses:
         '200':
-          description: Успешный ответ
+          description: Процесс жив
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StatusResponse'
+                $ref: '#/components/schemas/Envelope'
 
-  /services:
+  /readyz:
     get:
-      summary: Получить список всех сервисов
+      summary: Readiness — доступность RouterOS API и кэша (без авторизации)
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Готов к работе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '503':
+          description: Зависимость недоступна
+
+  /api/v1/status:
+    get:
+      summary: Общий статус системы
+      tags: [System]
+      responses:
+        '200':
+          description: Статус
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      version: { type: string }
+                      uptime: { type: string }
+                      last_sync: { type: string, format: date-time }
+                      mikrotik_ok: { type: boolean }
+                      services:
+                        type: array
+                        items: { type: string }
+                      degraded:
+                        type: array
+                        items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/services:
+    get:
+      summary: Список сервисов с расписаниями и количеством маршрутов
       tags: [Services]
       responses:
         '200':
@@ -43,17 +103,73 @@ paths:
               schema:
                 type: object
                 properties:
-                  ok:
-                    type: boolean
+                  ok: { type: boolean }
                   data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Service'
-
-  /services/sync:
+                    type: object
+                    properties:
+                      count: { type: integer }
+                      services:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            Name: { type: string }
+                            Schedule: { type: string }
+                            Routes: { type: integer }
+                            Overrides: { type: boolean }
     post:
-      summary: Запустить синхронизацию набора сервисов
+      summary: Добавить сервис
       tags: [Services]
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,63}$' }
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/services/{name}:
+    delete:
+      summary: Удалить сервис и (опционально) его AUTO-маршруты
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: purge
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/services/sync:
+    post:
+      summary: Запустить синхронизацию набора сервисов (асинхронно)
+      tags: [Services]
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -63,237 +179,146 @@ paths:
               properties:
                 services:
                   type: array
-                  items:
-                    type: string
-                force:
-                  type: boolean
-                  default: false
+                  items: { type: string }
+                dry_run: { type: boolean, default: false }
+                force: { type: boolean, default: false }
       responses:
         '200':
-          description: Синхронизация запущена
+          description: Синхронизация запущена, результат придёт по WebSocket
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SyncResponse'
-        '400':
-          description: Ошибка валидации
-        '409':
-          description: Конфликт (синхронизация уже запущена)
+                $ref: '#/components/schemas/Envelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
-  /services/{name}/sync:
+  /api/v1/services/{name}/sync:
     post:
-      summary: Синхронизировать конкретный сервис
+      summary: Синхронизировать один сервис (синхронно)
       tags: [Services]
       parameters:
         - name: name
           in: path
           required: true
-          schema:
-            type: string
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
       requestBody:
+        required: false
         content:
           application/json:
             schema:
               type: object
               properties:
-                force:
-                  type: boolean
-                  default: false
+                dry_run: { type: boolean, default: false }
+                force: { type: boolean, default: false }
       responses:
         '200':
-          description: Синхронизация завершена
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SyncResponse'
-        '404':
-          description: Сервис не найден
-
-  /services/{name}/dry-run:
-    post:
-      summary: Получить план изменений без применения
-      tags: [Services]
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: План изменений
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DryRunResponse'
-
-  /services/{name}:
-    delete:
-      summary: Удалить сервис и его маршруты
-      tags: [Services]
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '204':
-          description: Сервис удалён
-        '404':
-          description: Сервис не найден
-
-  /schedules:
-    get:
-      summary: Получить все расписания
-      tags: [Schedules]
-      responses:
-        '200':
-          description: Расписания
+          description: Результат синхронизации
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  ok:
-                    type: boolean
-                  data:
-                    $ref: '#/components/schemas/Schedules'
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/SyncResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500':
+          description: Ошибка синхронизации (fail-closed, маршруты не изменены)
 
-  /schedules/{service}:
+  /api/v1/services/{name}/dry-run:
+    post:
+      summary: Расчёт diff для сервиса без применения изменений
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Diff без изменений
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { $ref: '#/components/schemas/SyncResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/schedules:
+    get:
+      summary: Все расписания (глобальное, группы, сервисы, эффективные)
+      tags: [Schedules]
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/schedules/{service}:
     put:
       summary: Изменить расписание сервиса
+      description: >-
+        Форматы: cron 5 полей ("0 */6 * * *"), "every 6h", "daily at 03:00",
+        "weekly on sunday at 04:00", "manual", "disabled", "inherit".
       tags: [Schedules]
       parameters:
         - name: service
           in: path
           required: true
-          schema:
-            type: string
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [schedule]
               properties:
-                schedule:
-                  type: string
+                schedule: { type: string }
       responses:
-        '200':
-          description: Расписание обновлено
-        '400':
-          description: Невалидное расписание
+        '200': { $ref: '#/components/responses/OK' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
-  /logs:
+  /api/v1/logs:
     get:
-      summary: Получить логи
-      tags: [Logs]
+      summary: Последние записи JSON-лога с фильтрацией
+      tags: [Observability]
       parameters:
-        - name: level
-          in: query
-          schema:
-            type: string
-            enum: [debug, info, warn, error]
-        - name: service
-          in: query
-          schema:
-            type: string
-        - name: since
-          in: query
-          schema:
-            type: string
-            format: date-time
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 100
-            maximum: 10000
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 10000 } }
+        - { name: level, in: query, schema: { type: string, enum: [DEBUG, INFO, WARN, ERROR] } }
+        - { name: service, in: query, schema: { type: string } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
       responses:
-        '200':
-          description: Список логов
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  data:
-                    type: array
-                    items:
-                      type: object
+        '200': { $ref: '#/components/responses/OK' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
-  /history:
+  /api/v1/history:
     get:
-      summary: Получить историю синхронизаций
-      tags: [History]
+      summary: История синхронизаций
+      tags: [Observability]
       parameters:
-        - name: service
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
+        - { name: service, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
       responses:
-        '200':
-          description: История синхронизаций
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/HistoryEntry'
+        '200': { $ref: '#/components/responses/OK' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
-  /healthz:
+  /api/v1/ws:
     get:
-      summary: Liveness probe
-      tags: [Health]
-      security: []
-      responses:
-        '200':
-          description: Сервис жив
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [ok]
-
-  /readyz:
-    get:
-      summary: Readiness probe
-      tags: [Health]
-      security: []
-      responses:
-        '200':
-          description: Сервис готов
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [ok]
-        '503':
-          description: Сервис не готов
-
-  /ws:
-    get:
-      summary: WebSocket для live-обновлений
-      tags: [WebSocket]
+      summary: WebSocket live-событий (sync_start, sync_done, sync_error, service_added, ...)
+      tags: [Observability]
       responses:
         '101':
           description: Switching Protocols
@@ -303,176 +328,45 @@ components:
     basicAuth:
       type: http
       scheme: basic
-    cookieAuth:
+    sessionCookie:
       type: apiKey
       in: cookie
-      name: session_id
+      name: mrs_session
+
+  responses:
+    OK:
+      description: Успешный ответ
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    BadRequest:
+      description: Некорректный запрос
+    Unauthorized:
+      description: Требуется аутентификация
+    Forbidden:
+      description: Доступ запрещён (CSRF, allowed_cidrs или авторизация)
 
   schemas:
-    StatusResponse:
+    Envelope:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        data: {}
+        error: { type: string }
+
+    SyncResult:
       type: object
       properties:
-        ok:
-          type: boolean
-        data:
-          type: object
-          properties:
-            version:
-              type: string
-            uptime:
-              type: string
-            mikrotik_status:
-              type: string
-              enum: [connected, disconnected, error]
-            bot_status:
-              type: string
-              enum: [connected, disconnected]
-            services_count:
-              type: integer
-            routes_count:
-              type: integer
-            last_sync:
-              type: string
-              format: date-time
-            next_sync:
-              type: string
-              format: date-time
-
-    Service:
-      type: object
-      properties:
-        name:
-          type: string
-        method:
-          type: string
-        routes_count:
-          type: integer
-        last_sync:
-          type: string
-          format: date-time
-        next_sync:
-          type: string
-          format: date-time
-        status:
-          type: string
-          enum: [ok, degraded, error]
-        last_duration_ms:
-          type: integer
-
-    SyncResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        data:
-          type: object
-          properties:
-            services:
-              type: array
-              items:
-                type: object
-                properties:
-                  name:
-                    type: string
-                  status:
-                    type: string
-                  added:
-                    type: integer
-                  removed:
-                    type: integer
-                  unchanged:
-                    type: integer
-                  error:
-                    type: string
-        error:
-          type: string
-
-    DryRunResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        data:
-          type: object
-          properties:
-            service:
-              type: string
-            method:
-              type: string
-            collected:
-              type: integer
-            aggregated:
-              type: integer
-            existing:
-              type: integer
-            to_add:
-              type: integer
-            to_remove:
-              type: integer
-            unchanged:
-              type: integer
-
-    Schedules:
-      type: object
-      properties:
-        global:
-          type: string
-        groups:
-          type: object
-          additionalProperties:
-            type: object
-            properties:
-              schedule:
-                type: string
-              services:
-                type: array
-                items:
-                  type: string
-        services:
-          type: object
-          additionalProperties:
-            type: object
-            properties:
-              schedule:
-                type: string
-
-    HistoryEntry:
-      type: object
-      properties:
-        timestamp:
-          type: string
-          format: date-time
-        service:
-          type: string
-        method:
-          type: string
-        collected:
-          type: integer
-        aggregated:
-          type: integer
-        added:
-          type: integer
-        removed:
-          type: integer
-        status:
-          type: string
-        duration_ms:
-          type: integer
-        error:
-          type: string
-
-tags:
-  - name: System
-    description: Системные операции
-  - name: Services
-    description: Управление сервисами
-  - name: Schedules
-    description: Управление расписаниями
-  - name: Logs
-    description: Просмотр логов
-  - name: History
-    description: История синхронизаций
-  - name: Health
-    description: Health checks
-  - name: WebSocket
-    description: WebSocket соединения
+        service: { type: string }
+        success: { type: boolean }
+        added: { type: integer }
+        removed: { type: integer }
+        unchanged: { type: integer }
+        error: { type: string }
+        dry_run: { type: boolean }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        duration: { type: string }
+        version: { type: string }

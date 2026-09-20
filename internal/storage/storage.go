@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -45,7 +46,7 @@ type cachedEntry struct {
 // Open открывает или создаёт базу bbolt и инициализирует все бакеты.
 func Open(path string) (*Cache, error) {
 	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create dir: %w", err)
 		}
 	}
@@ -222,9 +223,16 @@ func (c *Cache) Get(bucket, key string, v any) error {
 	})
 }
 
-// CreateSnapshot создаёт новый снапшот и возвращает его ID.
-func (c *Cache) CreateSnapshot(service string, routes any) (string, error) {
-	data, err := json.Marshal(routes)
+// snapshotEnvelope — формат хранения снапшота в bbolt.
+type snapshotEnvelope struct {
+	CreatedAt time.Time `json:"created_at"`
+	Prefixes  []string  `json:"prefixes"`
+}
+
+// CreateSnapshot создаёт новый снапшот (список CIDR-строк) и возвращает его ID.
+func (c *Cache) CreateSnapshot(service string, prefixes []string) (string, error) {
+	env := snapshotEnvelope{CreatedAt: time.Now().UTC(), Prefixes: prefixes}
+	data, err := json.Marshal(env)
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
@@ -248,7 +256,7 @@ func (c *Cache) CreateSnapshot(service string, routes any) (string, error) {
 	return snapshotID, nil
 }
 
-// ListSnapshots возвращает список снапшотов для сервиса.
+// ListSnapshots возвращает список снапшотов для сервиса (новые первыми).
 func (c *Cache) ListSnapshots(service string) ([]SnapshotInfo, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -261,19 +269,15 @@ func (c *Cache) ListSnapshots(service string) ([]SnapshotInfo, error) {
 		}
 		prefix := []byte(service + ":")
 		cursor := b.Cursor()
-		for key, _ := cursor.Seek(prefix); key != nil && len(key) > 0; key, _ = cursor.Next() {
-			if len(key) < len(prefix) {
-				break
+		for key, val := cursor.Seek(prefix); key != nil && bytes.HasPrefix(key, prefix); key, val = cursor.Next() {
+			snapshotID := string(key[len(prefix):])
+			info := SnapshotInfo{ID: snapshotID, Service: service}
+			var env snapshotEnvelope
+			if err := json.Unmarshal(val, &env); err == nil {
+				info.CreatedAt = env.CreatedAt
+				info.Count = len(env.Prefixes)
 			}
-			if string(key[:len(prefix)]) != string(prefix) {
-				break
-			}
-			keyStr := string(key)
-			snapshotID := keyStr[len(service)+1:]
-			snapshots = append(snapshots, SnapshotInfo{
-				ID:      snapshotID,
-				Service: service,
-			})
+			snapshots = append(snapshots, info)
 		}
 		return nil
 	})
@@ -281,17 +285,44 @@ func (c *Cache) ListSnapshots(service string) ([]SnapshotInfo, error) {
 		return nil, err
 	}
 
-	// Сортировка по ID (новые первые)
+	// Сортировка: новые первыми
 	sort.Slice(snapshots, func(i, j int) bool {
 		return snapshots[i].ID > snapshots[j].ID
 	})
 	return snapshots, nil
 }
 
-// GetSnapshot получает снапшот по ID.
+// GetSnapshot читает список CIDR снапшота в v (*[]string).
 func (c *Cache) GetSnapshot(service, snapshotID string, v any) error {
 	key := fmt.Sprintf("%s:%s", service, snapshotID)
-	return c.Get("snapshots", key, v)
+
+	var raw []byte
+	c.mu.RLock()
+	err := c.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSnapshots)
+		if b == nil {
+			return fmt.Errorf("snapshots bucket not found")
+		}
+		data := b.Get([]byte(key))
+		if data == nil {
+			return fmt.Errorf("snapshot %s not found", snapshotID)
+		}
+		raw = append([]byte(nil), data...)
+		return nil
+	})
+	c.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+
+	// Формат: {"created_at":..., "prefixes":[...]};
+	// обратная совместимость со старым "просто []string".
+	var env snapshotEnvelope
+	if json.Unmarshal(raw, &env) == nil && env.Prefixes != nil {
+		b, _ := json.Marshal(env.Prefixes)
+		return json.Unmarshal(b, v)
+	}
+	return json.Unmarshal(raw, v)
 }
 
 // DeleteSnapshot удаляет конкретный снапшот.

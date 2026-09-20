@@ -1,64 +1,165 @@
-/* Mikrotik Route Sync — дополнительные стили поверх Pico CSS */
-
-.muted {
-  opacity: 0.6;
-  font-size: 0.9rem;
+:root {
+  --bg: #ffffff;
+  --panel: #f6f8fa;
+  --text: #1f2328;
+  --muted: #6e7781;
+  --primary: #0550ae;
+  --ok: #1a7f37;
+  --err: #cf222e;
+  --border: #d0d7de;
+  --code-bg: #f6f8fa;
 }
 
-.secret-field {
-  font-family: monospace;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --primary: #4493f8;
+    --ok: #3fb950;
+    --err: #f85149;
+    --border: #30363d;
+    --code-bg: #161b22;
+  }
 }
 
-.password-mask {
-  color: #888;
-  letter-spacing: 2px;
-}
+* { box-sizing: border-box; }
 
-.status-ok {
-  color: var(--pico-color-success, #4caf50);
-  font-weight: bold;
-}
-
-.status-error {
-  color: var(--pico-color-danger, #f44336);
-  font-weight: bold;
-}
-
-#log-output {
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-nav ul {
-  list-style: none;
-  display: flex;
-  gap: 1rem;
-  padding: 0.5rem 0;
+body {
   margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
 }
 
-nav a {
-  text-decoration: none;
-}
-
-nav a[aria-current="page"] {
-  font-weight: bold;
-  border-bottom: 2px solid var(--pico-primary);
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+.bar {
+  display: flex;
+  align-items: center;
   gap: 1rem;
-  margin-bottom: 1.5rem;
+  padding: .6rem 1.2rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
 }
 
-table {
-  width: 100%;
+.bar .brand { font-weight: 700; }
+.bar a { color: var(--text); text-decoration: none; padding: .2rem .5rem; border-radius: 4px; }
+.bar a:hover, .bar a.active { background: var(--primary); color: #fff; }
+.bar .ver { margin-left: auto; color: var(--muted); font-size: .85rem; }
+
+.wrap { max-width: 1000px; margin: 0 auto; padding: 1.2rem; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem; }
+
+article {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: .9rem 1.1rem;
+  margin: 1rem 0;
 }
 
-td:first-child {
-  font-weight: 600;
-  white-space: nowrap;
-  width: 200px;
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1.15rem; margin-top: 0; }
+h3 { font-size: .95rem; margin: 0 0 .3rem; }
+
+table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--border); }
+
+button {
+  background: var(--primary);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: .45rem .9rem;
+  cursor: pointer;
+  font: inherit;
 }
+button:hover { filter: brightness(1.1); }
+button.secondary { background: var(--muted); }
+button.outline { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+
+input, select {
+  font: inherit;
+  padding: .35rem .5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .6rem 0; }
+.inline { display: inline-flex; gap: .3rem; align-items: center; margin: 0; }
+
+.muted { color: var(--muted); }
+.status-ok { color: var(--ok); font-weight: 600; }
+.status-error { color: var(--err); font-weight: 600; }
+
+code, pre {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  background: var(--code-bg);
+  border-radius: 4px;
+}
+pre { padding: .7rem; overflow: auto; }
+
+.logs { max-height: 60vh; font-size: .8rem; white-space: pre-wrap; word-break: break-all; }
+
+.events { font-family: ui-monospace, Consolas, monospace; font-size: .78rem; max-height: 220px; overflow: auto; }
+.events div { padding: .15rem 0; border-bottom: 1px dashed var(--border); }
+
+.toast {
+  position: fixed;
+  bottom: 1.2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 80vw;
+  background: var(--err);
+  color: #fff;
+  padding: .6rem 1rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.35);
+  font-size: .9rem;
+  display: none;
+  z-index: 1000;
+}
+.toast.show { display: block; }
+
+/* Настройки: подсказка "?" и поповер описания */
+button.hint {
+  background: transparent;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  padding: 0;
+  margin-left: .4rem;
+  font-size: .85rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+button.hint:hover { background: var(--primary); color: #fff; }
+
+.pop {
+  position: absolute;
+  z-index: 50;
+  left: 0;
+  top: calc(100% + 6px);
+  width: min(26rem, 80vw);
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 8px;
+  padding: .55rem .75rem;
+  font-size: .85rem;
+  line-height: 1.45;
+  box-shadow: 0 6px 24px rgba(0,0,0,.28);
+}
+
+.setting-label { width: 42%; vertical-align: top; }
+.setting-label code.key { font-size: .78rem; color: var(--muted); margin-left: .4rem; }
+.setting-value input, .setting-value select { min-width: 14rem; }
+.settings-group h2 { border-bottom: 1px solid var(--border); padding-bottom: .3rem; }

@@ -5,51 +5,50 @@
   <meta charset="utf-8">
   <title>MikroTik Route Sync — Логи</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="/static/pico.min.css">
+  <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js"></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <nav class="container-fluid">
-    <ul>
-      <li><a href="/">🏠 Дашборд</a></li>
-      <li><a href="/services">📦 Сервисы</a></li>
-      <li><a href="/schedules">📅 Расписания</a></li>
-      <li><a href="/settings">⚙️ Настройки</a></li>
-      <li><a href="/logs" aria-current="page">📜 Логи</a></li>
-    </ul>
+  <nav class="bar">
+    <span class="brand">MikroTik Route Sync</span>
+    <a href="/">Дашборд</a>
+    <a href="/services">Сервисы</a>
+    <a href="/schedules">Расписания</a>
+    <a href="/settings">Настройки</a>
+    <a href="/logs" class="active">Логи</a>
+    <span class="ver">v{{ .Version }}</span>
   </nav>
 
-  <main class="container">
-    <h1>📜 Логи</h1>
+  <main class="wrap">
+    <h1>Логи</h1>
+    <p class="muted">Файл: <code>{{ .LogFile }}</code></p>
 
-    <div role="group">
-      <select id="log-level" onchange="refreshLogs()">
+    <div class="row">
+      <select id="log-level">
         <option value="">Все уровни</option>
-        <option value="error">ERROR</option>
-        <option value="warn">WARN</option>
-        <option value="info">INFO</option>
-        <option value="debug">DEBUG</option>
+        <option value="INFO">INFO</option>
+        <option value="WARN">WARN</option>
+        <option value="ERROR">ERROR</option>
       </select>
-      <button onclick="refreshLogs()">🔄 Обновить</button>
-      <button onclick="clearLogs()" class="secondary">🗑 Очистить экран</button>
+      <input type="text" id="log-service" placeholder="фильтр по сервису">
+      <select id="log-limit">
+        <option value="100">100 строк</option>
+        <option value="500">500 строк</option>
+        <option value="1000">1000 строк</option>
+      </select>
+      <button type="button" id="log-refresh">Обновить</button>
+      <button type="button" id="log-download">Скачать</button>
+      <button type="button" class="secondary" id="log-clear"
+              hx-post="/actions/logs-clear" hx-swap="none"
+              hx-confirm="Очистить лог-файл?">Очистить</button>
     </div>
 
-    <pre id="log-output"
-         hx-get="/partials/logs"
-         hx-trigger="load, every 5s"
-         hx-swap="innerHTML"
-         style="max-height: 600px; overflow-y: auto; background: #1a1a2e; color: #0f0; padding: 1rem; border-radius: 8px; font-size: 0.85rem;">{{ .Lines }}</pre>
+    <article>
+      <pre id="log-output" class="logs">Нажмите «Обновить»…</pre>
+    </article>
   </main>
-
-  <script>
-    function refreshLogs() {
-      htmx.trigger('#log-output', 'htmx:refresh');
-    }
-    function clearLogs() {
-      document.getElementById('log-output').innerHTML = '';
-    }
-  </script>
 </body>
 </html>
 {{end}}

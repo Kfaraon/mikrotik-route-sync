@@ -5,9 +5,9 @@ import (
 	"net/netip"
 )
 
-// Минимальная длина маски IPv4: /9 и уже — ок, /8 и шире — отклоняем.
-const minV4Bits = 9
-const minV6Bits = 32
+// reservedV4 — диапазоны, которые никогда не должны попадать в маршрутизацию
+// (RFC 1918, loopback, link-local, CGNAT, TEST-NET, multicast, reserved).
+// Проект работает только с IPv4 (PROMPT II.3, уровень 2).
 
 var reservedV4 = func() []netip.Prefix {
 	raw := []string{
@@ -23,56 +23,42 @@ var reservedV4 = func() []netip.Prefix {
 	return out
 }()
 
-var reservedV6 = func() []netip.Prefix {
-	raw := []string{
-		"::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96",
-		"100::/64", "2001:db8::/32", "fc00::/7", "fe80::/10", "ff00::/8",
+// ValidateAggregation проверяет инварианты безопасной агрегации:
+//  1. сумма адресов до агрегации равна сумме после;
+//  2. каждый исходный префикс полностью покрыт результирующим набором.
+//
+// Нарушение любого из инвариантов означает, что агрегация «раздула» или
+// сузила покрытие, и её результат использовать нельзя.
+func ValidateAggregation(before, after []netip.Prefix) error {
+	if sumAddresses(before).Cmp(sumAddresses(after)) != 0 {
+		return fmt.Errorf("aggregate invariant broken: address sum changed")
 	}
-	out := make([]netip.Prefix, 0, len(raw))
-	for _, s := range raw {
-		out = append(out, netip.MustParsePrefix(s))
-	}
-	return out
-}()
-
-func Validate(p netip.Prefix) error {
-	if !p.IsValid() {
-		return fmt.Errorf("invalid prefix")
-	}
-	p = p.Masked()
-	if p.Addr().Is4() {
-		if p.Bits() < minV4Bits {
-			return fmt.Errorf("prefix %s too wide (min /%d)", p, minV4Bits)
-		}
-		for _, r := range reservedV4 {
-			if r.Overlaps(p) {
-				return fmt.Errorf("prefix %s overlaps reserved %s", p, r)
-			}
-		}
-		return nil
-	}
-	if p.Bits() < minV6Bits {
-		return fmt.Errorf("prefix %s too wide (min /%d)", p, minV6Bits)
-	}
-	for _, r := range reservedV6 {
-		if r.Overlaps(p) {
-			return fmt.Errorf("prefix %s overlaps reserved %s", p, r)
+	for _, in := range before {
+		if !coversPrefix(after, in) {
+			return fmt.Errorf("aggregate invariant broken: %s not covered by result", in)
 		}
 	}
 	return nil
 }
 
-func FilterValid(in []netip.Prefix) ([]netip.Prefix, []error) {
-	out := make([]netip.Prefix, 0, len(in))
-	var errs []error
-	for _, p := range in {
-		if err := Validate(p); err != nil {
-			errs = append(errs, err)
+// coversPrefix проверяет, что префикс p целиком покрыт хотя бы одним
+// префиксом из набора set.
+func coversPrefix(set []netip.Prefix, p netip.Prefix) bool {
+	p = p.Masked()
+	for _, q := range set {
+		q = q.Masked()
+		if q.Addr().Is4() != p.Addr().Is4() {
 			continue
 		}
-		out = append(out, p.Masked())
+		if q.Bits() > p.Bits() {
+			continue
+		}
+		// p ⊆ q тогда и только тогда, когда усечение p до маски q даёт ровно q.
+		if netip.PrefixFrom(p.Addr(), q.Bits()).Masked() == q {
+			return true
+		}
 	}
-	return out, errs
+	return false
 }
 
 // SumAddresses — суммарное количество адресов (uint64, IPv6 клампится на MaxUint64).

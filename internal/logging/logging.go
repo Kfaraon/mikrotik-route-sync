@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,7 +14,7 @@ import (
 	"time"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"gopkg.in/natefinsh/lumberjack.v2"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // SyncResult — результат синхронизации для логирования.
@@ -47,15 +48,25 @@ func isSensitiveKey(key string) bool {
 	return false
 }
 
+// levelVar — общий уровень логирования: позволяет менять logging.level на лету
+// без пересоздания логгеров (SetLevel из web UI при сохранении настроек).
+var levelVar = new(slog.LevelVar)
+
+// SetLevel применяет уровень логирования на лету ("debug"|"info"|"warn"|"error").
+func SetLevel(level string) {
+	levelVar.Set(parseLevel(level))
+}
+
 // Setup настраивает глобальное логирование на основе конфигурации.
 func Setup(cfg *config.Config) (*slog.Logger, error) {
-	level := parseLevel(cfg.Logging.Level)
+	levelVar.Set(parseLevel(cfg.Logging.Level))
+
 	var writers []io.Writer
 
 	// Файл с ротацией
 	if cfg.Logging.File != "" {
 		logDir := filepath.Dir(cfg.Logging.File)
-		if err := os.MkdirAll(logDir, 0o755); err != nil {
+		if err := os.MkdirAll(logDir, 0o700); err != nil {
 			return nil, fmt.Errorf("create log dir: %w", err)
 		}
 		maxSize := cfg.Logging.MaxSizeMB
@@ -87,7 +98,7 @@ func Setup(cfg *config.Config) (*slog.Logger, error) {
 
 	// ReplaceAttr для redaction чувствительных полей
 	opts := &slog.HandlerOptions{
-		Level: level,
+		Level: levelVar,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if isSensitiveKey(a.Key) {
 				return slog.String(a.Key, "[REDACTED]")
@@ -132,6 +143,15 @@ func RedactString(s string) string {
 		result = maskKeyValue(result, key)
 	}
 	return result
+}
+
+// RedactError возвращает копию ошибки с замаскированными секретами.
+// Используется перед отправкой в Telegram / API (PROMPT XI.7).
+func RedactError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(RedactString(err.Error()))
 }
 
 // maskKeyValue маскирует значение указанного ключа в строке.
