@@ -7,8 +7,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/schedule.css">
+  <script src="/static/schedule.js" defer></script>
 </head>
 <body>
   <nav class="bar">
@@ -21,47 +21,192 @@
     <span class="ver">v{{ .Version }}</span>
   </nav>
 
-  <main class="wrap">
-    <h1>Расписания</h1>
-    <p class="muted">
-      Приоритет: сервис → группа → глобальное.
-      Форматы: <code>every 6h</code>, <code>daily at 03:00</code>, <code>weekly on sunday at 04:00</code>,
-      cron <code>0 */6 * * *</code>, а также <code>manual</code>, <code>disabled</code>, <code>inherit</code>.
-    </p>
-    <p>Глобальное расписание: <b>{{ .Global }}</b></p>
+  <main class="wrap schedule-page" id="schedule-page" data-global="{{ .Global }}">
+    <header class="page-header">
+      <div>
+        <h1>Расписания</h1>
+        <p class="muted">
+          Глобальное расписание:
+          <code>{{ .Global }}</code>
+        </p>
+      </div>
+    </header>
 
-    <article>
-      <table>
+    <section class="sched-summary" aria-label="Сводка по расписаниям">
+      <div class="summary-card">
+        <span>Сервисов</span>
+        <strong id="sum-total">0</strong>
+      </div>
+      <div class="summary-card">
+        <span>Показано</span>
+        <strong id="sum-visible">0</strong>
+      </div>
+      <div class="summary-card">
+        <span>Авто</span>
+        <strong id="sum-auto">0</strong>
+      </div>
+      <div class="summary-card">
+        <span>Вручную</span>
+        <strong id="sum-manual">0</strong>
+      </div>
+      <div class="summary-card">
+        <span>Отключено</span>
+        <strong id="sum-disabled">0</strong>
+      </div>
+      <div class="summary-card">
+        <span>Override</span>
+        <strong id="sum-override">0</strong>
+      </div>
+      <div class="summary-card">
+        <span>Групп</span>
+        <strong id="sum-groups">0</strong>
+      </div>
+    </section>
+
+    <section class="sched-toolbar" aria-label="Фильтры расписаний">
+      <div class="toolbar-main">
+        <input
+          type="search"
+          id="sched-search"
+          placeholder="Поиск: сервис, группа, расписание"
+          autocomplete="off"
+        >
+
+        <select id="sched-filter" aria-label="Фильтр">
+          <option value="all">Все</option>
+          <option value="auto">Автоматические</option>
+          <option value="manual">Вручную</option>
+          <option value="disabled">Отключённые</option>
+          <option value="override">С override</option>
+          <option value="inherited">Наследуемые</option>
+          <option value="grouped">В группах</option>
+        </select>
+
+        <select id="sched-sort" aria-label="Сортировка">
+          <option value="name">По сервису</option>
+          <option value="schedule">По расписанию</option>
+          <option value="next">По ближайшему запуску</option>
+          <option value="source">По источнику</option>
+        </select>
+      </div>
+
+      <div class="toolbar-actions">
+        <button type="button" id="sched-copy">Скопировать JSON</button>
+        <button type="button" id="sched-reset-filters" class="secondary">Сбросить фильтры</button>
+      </div>
+    </section>
+
+    <details class="sched-help">
+      <summary>Поддерживаемые форматы и подсказки</summary>
+      <ul>
+        <li><code>every 30m</code>, <code>every 6h</code>, <code>every 1d</code>, <code>every 1w</code> — интервал.</li>
+        <li><code>daily at 03:00</code> — ежедневно во указанное время.</li>
+        <li><code>weekly on sunday at 04:00</code> — еженедельно в указанный день.</li>
+        <li><code>0 */6 * * *</code> — cron из 5 полей.</li>
+        <li><code>manual</code> — только вручную.</li>
+        <li><code>disabled</code> — синхронизация отключена.</li>
+        <li>Пустое значение override — наследовать расписание группы или глобальное расписание.</li>
+      </ul>
+      <p class="muted small">
+        Ближайший запуск рассчитывается приблизительно по тексту расписания и не учитывает фактическое время последнего запуска.
+      </p>
+    </details>
+
+    <article class="sched-table-wrap">
+      <table class="sched-table">
         <thead>
           <tr>
             <th>Сервис</th>
-            <th>Эффективное</th>
-            <th>Override сервиса</th>
+            <th>Эффективное расписание</th>
+            <th>Источник</th>
             <th>Группа</th>
             <th>Изменить</th>
           </tr>
         </thead>
-        <tbody>
-          {{ range .Rows }}
-          <tr>
-            <td>{{ .Name }}</td>
-            <td><b>{{ .Effective }}</b></td>
-            <td>{{ if .ServiceOv }}{{ .ServiceOv }}{{ else }}—{{ end }}</td>
-            <td>{{ if .Group }}{{ .Group }} ({{ .GroupSched }}){{ else }}—{{ end }}</td>
-            <td>
-              <form hx-post="/actions/schedule" hx-swap="none" class="inline">
-                <input type="hidden" name="csrf_token" value="{{ $.CSRF }}">
-                <input type="hidden" name="service" value="{{ .Name }}">
-                <input type="text" name="schedule" placeholder="every 6h" size="16">
-                <button type="submit">💾</button>
-              </form>
+        <tbody id="sched-body">
+          {{range .Rows}}
+          <tr
+            class="sched-row"
+            data-service="{{ .Name }}"
+            data-effective="{{ .Effective }}"
+            data-override="{{ .ServiceOv }}"
+            data-group="{{ .Group }}"
+            data-group-schedule="{{ .GroupSched }}"
+          >
+            <td data-label="Сервис">
+              <div class="cell-service">
+                <span class="service-name">{{ .Name }}</span>
+                {{if .ServiceOv}}<span class="badge badge-override">override</span>{{end}}
+              </div>
+            </td>
+
+            <td data-label="Расписание">
+              <div class="cell-schedule">
+                <code class="effective">{{ .Effective }}</code>
+                <div class="schedule-meta">
+                  <span class="badge type-badge"></span>
+                  <span class="badge next-badge"></span>
+                </div>
+              </div>
+            </td>
+
+            <td data-label="Источник">
+              <span class="badge source-badge"></span>
+            </td>
+
+            <td data-label="Группа">
+              <div class="cell-group">
+                {{if .Group}}
+                  <span class="badge badge-group">{{ .Group }}</span>
+                  {{if .GroupSched}}
+                    <div class="muted small group-sched">{{ .GroupSched }}</div>
+                  {{end}}
+                {{else}}
+                  <span class="muted">—</span>
+                {{end}}
+              </div>
+            </td>
+
+            <td data-label="Изменить">
+              <div class="edit-block">
+                <select class="preset" aria-label="Быстрый пресет для {{ .Name }}">
+                  <option value="">— пресет —</option>
+                  <option value="inherit">наследовать</option>
+                  <option value="manual">manual</option>
+                  <option value="disabled">disabled</option>
+                  <option value="every 1h">every 1h</option>
+                  <option value="every 6h">every 6h</option>
+                  <option value="every 12h">every 12h</option>
+                  <option value="daily at 03:00">daily at 03:00</option>
+                  <option value="weekly on sunday at 04:00">weekly on sunday at 04:00</option>
+                  <option value="custom">custom…</option>
+                </select>
+
+                <input
+                  type="text"
+                  class="schedule-input"
+                  value="{{ .ServiceOv }}"
+                  placeholder="{{ .Effective }}"
+                  aria-label="Переопределение расписания для {{ .Name }}"
+                  autocomplete="off"
+                >
+
+                <div class="edit-buttons">
+                  <button type="button" class="save-btn">Сохранить</button>
+                  <button type="button" class="reset-btn secondary">Сбросить</button>
+                </div>
+
+                <div class="row-status" aria-live="polite"></div>
+              </div>
             </td>
           </tr>
-          {{ else }}
-          <tr><td colspan="5" class="muted">Сервисов нет</td></tr>
-          {{ end }}
+          {{end}}
         </tbody>
       </table>
+
+      <div id="sched-empty" class="empty-state" hidden>
+        Нет сервисов или ничего не найдено.
+      </div>
     </article>
   </main>
 </body>
