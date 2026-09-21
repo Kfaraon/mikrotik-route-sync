@@ -7,8 +7,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/services.css">
+  <script src="/static/services.js" defer></script>
 </head>
 <body>
   <nav class="bar">
@@ -21,65 +21,206 @@
     <span class="ver">v{{ .Version }}</span>
   </nav>
 
-  <main class="wrap">
-    <h1>Сервисы</h1>
+  <main class="wrap services-page" id="services-page">
+    <header class="svc-header">
+      <div>
+        <h1>Сервисы</h1>
+        <p class="muted">
+          Управление сервисами, синхронизация маршрутов, статусы, расписания и история в одном месте.
+        </p>
+      </div>
 
-    <article>
-      <h2>Список сервисов</h2>
-      <form hx-post="/actions/sync-selected" hx-target="#sync-result" hx-swap="innerHTML">
-        <input type="hidden" name="csrf_token" value="{{ .CSRF }}">
-        <table>
-          <thead>
-            <tr>
-              <th><input type="checkbox" id="check-all"></th>
-              <th>Сервис</th>
-              <th>Расписание</th>
-              <th>Маршрутов</th>
-              <th>Overrides</th>
-              <th>Действия</th>
-            </tr>
-          </thead>
-          <tbody>
-            {{ range .Services }}
-            <tr>
-              <td><input type="checkbox" name="service" value="{{ .Name }}"></td>
-              <td>{{ .Name }}</td>
-              <td>{{ .Schedule }}</td>
-              <td>{{ .Routes }}</td>
-              <td>{{ if .Overrides }}есть{{ else }}—{{ end }}</td>
-              <td>
-                <button type="button" class="outline"
-                        hx-post="/actions/service-delete"
-                        hx-vals='{"name": "{{ .Name }}", "purge": "on"}'
-                        hx-confirm="Удалить сервис {{ .Name }} и ВСЕ его AUTO-маршруты?">🗑</button>
-              </td>
-            </tr>
-            {{ else }}
-            <tr><td colspan="6" class="muted">Сервисов нет</td></tr>
-            {{ end }}
-          </tbody>
-        </table>
-        <div class="row">
-          <button type="submit">▶️ Синхронизировать выбранные</button>
-        </div>
-      </form>
-      <div id="sync-result"></div>
-    </article>
-
-    <article>
-      <h2>Добавить сервис</h2>
-      <form hx-post="/actions/service-add" hx-target="#add-result" hx-swap="innerHTML">
-        <input type="hidden" name="csrf_token" value="{{ .CSRF }}">
-        <label>Имя сервиса (домен / IPv4 / ASN тоже подходят)
-          <input type="text" name="name" placeholder="youtube.com" required
-                 pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,253}"
-                 title="строчные латиница/цифры, точки, дефис, подчёркивание; например instagram, youtube.com, 8.8.8.8, AS13335">
+      <div class="svc-header-actions">
+        <label class="svc-switch">
+          <input type="checkbox" id="svc-auto-refresh" checked>
+          <span>Авто 60с</span>
         </label>
-        <button type="submit">➕ Добавить</button>
-        <span id="add-result" class="muted"></span>
+        <button type="button" id="svc-refresh" class="svc-primary">⟳ Обновить</button>
+      </div>
+    </header>
+
+    <div id="svc-alert" class="svc-alert" hidden></div>
+
+    <section class="svc-kpi-grid" aria-label="Сводка по сервисам">
+      <article class="svc-kpi-card">
+        <span class="svc-kpi-label">Сервисы</span>
+        <strong class="svc-kpi-value" id="svc-total-value">…</strong>
+        <small class="svc-kpi-note" id="svc-total-note">загрузка</small>
+      </article>
+
+      <article class="svc-kpi-card">
+        <span class="svc-kpi-label">Маршруты</span>
+        <strong class="svc-kpi-value" id="svc-routes-value">…</strong>
+        <small class="svc-kpi-note" id="svc-routes-note">управляемые IPv4</small>
+      </article>
+
+      <article class="svc-kpi-card">
+        <span class="svc-kpi-label">Авто</span>
+        <strong class="svc-kpi-value" id="svc-auto-value">…</strong>
+        <small class="svc-kpi-note" id="svc-auto-note">по расписанию</small>
+      </article>
+
+      <article class="svc-kpi-card">
+        <span class="svc-kpi-label">Проблемы</span>
+        <strong class="svc-kpi-value" id="svc-problems-value">…</strong>
+        <small class="svc-kpi-note" id="svc-problems-note">ошибки / degraded</small>
+      </article>
+
+      <article class="svc-kpi-card">
+        <span class="svc-kpi-label">Последняя активность</span>
+        <strong class="svc-kpi-value" id="svc-last-value">…</strong>
+        <small class="svc-kpi-note" id="svc-last-note">история синхронизаций</small>
+      </article>
+
+      <article class="svc-kpi-card">
+        <span class="svc-kpi-label">Выбрано</span>
+        <strong class="svc-kpi-value" id="svc-selected-value">0</strong>
+        <small class="svc-kpi-note" id="svc-selected-note">для массовых действий</small>
+      </article>
+    </section>
+
+    <section class="svc-toolbar" aria-label="Фильтры и действия">
+      <div class="svc-toolbar-main">
+        <input
+          type="search"
+          id="svc-search"
+          placeholder="Поиск: сервис, расписание, группа"
+          autocomplete="off"
+        >
+
+        <select id="svc-filter" aria-label="Фильтр">
+          <option value="all">Все</option>
+          <option value="auto">Автоматические</option>
+          <option value="manual">Manual</option>
+          <option value="disabled">Disabled</option>
+          <option value="routes">С маршрутами</option>
+          <option value="problems">Проблемные</option>
+          <option value="override">С override</option>
+        </select>
+
+        <select id="svc-sort" aria-label="Сортировка">
+          <option value="name">По имени</option>
+          <option value="status">По проблемам</option>
+          <option value="routes">По маршрутам</option>
+          <option value="next">По ближайшему запуску</option>
+          <option value="last">По последней синхронизации</option>
+        </select>
+      </div>
+
+      <div class="svc-toolbar-actions">
+        <span class="svc-muted" id="svc-selected-info">выбрано: 0</span>
+        <button type="button" id="svc-bulk-sync" disabled>Синхр. выбранные</button>
+        <button type="button" id="svc-bulk-dry" class="svc-outline" disabled>Dry-run выбранные</button>
+        <button type="button" id="svc-bulk-clear" class="svc-secondary">Снять выбор</button>
+      </div>
+    </section>
+
+    <section class="svc-add-card">
+      <form id="svc-add-form" class="svc-add-form">
+        <input
+          type="text"
+          id="svc-add-name"
+          placeholder="Добавить сервис: cloudflare, example.com, 1.1.1.1, AS13335"
+          autocomplete="off"
+        >
+        <button type="submit" id="svc-add-btn" class="svc-primary">Добавить</button>
       </form>
+      <p class="svc-muted svc-small">
+        Сервис будет добавлен в конфигурацию и первоначально синхронизирован.
+      </p>
+    </section>
+
+    <article class="svc-table-wrap">
+      <table class="svc-table">
+        <thead>
+          <tr>
+            <th class="svc-col-check">
+              <input type="checkbox" id="svc-select-all" aria-label="Выбрать все">
+            </th>
+            <th>Сервис</th>
+            <th>Состояние</th>
+            <th>Расписание</th>
+            <th>Ближайший запуск</th>
+            <th>Маршрутов</th>
+            <th>Последняя синхр.</th>
+            <th>Действия</th>
+          </tr>
+        </thead>
+        <tbody id="services-body">
+          {{range .Services}}
+          <tr>
+            <td></td>
+            <td><strong>{{ .Name }}</strong></td>
+            <td><span class="svc-badge svc-badge-muted">—</span></td>
+            <td><code>{{ .Schedule }}</code></td>
+            <td><span class="svc-muted">—</span></td>
+            <td>{{ .Routes }}</td>
+            <td><span class="svc-muted">—</span></td>
+            <td><span class="svc-muted">JS выключен</span></td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+
+      <div id="services-empty" class="svc-empty" hidden>
+        Нет сервисов.
+      </div>
     </article>
   </main>
+
+  <div id="svc-drawer" class="svc-drawer" hidden aria-hidden="true">
+    <div class="svc-drawer-backdrop" data-svc-close></div>
+
+    <aside class="svc-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="svc-drawer-title">
+      <header class="svc-drawer-header">
+        <div class="svc-drawer-title-wrap">
+          <h2 id="svc-drawer-title">Сервис</h2>
+          <p id="svc-drawer-subtitle" class="svc-muted"></p>
+        </div>
+        <button type="button" class="svc-icon-btn" data-svc-close aria-label="Закрыть">✕</button>
+      </header>
+
+      <nav class="svc-tabs" role="tablist">
+        <button type="button" class="svc-tab active" data-svc-tab="overview">Обзор</button>
+        <button type="button" class="svc-tab" data-svc-tab="history">История</button>
+        <button type="button" class="svc-tab" data-svc-tab="logs">Логи</button>
+      </nav>
+
+      <div class="svc-drawer-body" id="svc-drawer-body">
+        <div class="svc-empty">Загрузка…</div>
+      </div>
+
+      <footer class="svc-drawer-footer">
+        <button type="button" id="svc-drawer-sync" class="svc-primary">Синхронизировать</button>
+        <button type="button" id="svc-drawer-dry" class="svc-outline">Dry-run</button>
+        <button type="button" id="svc-drawer-delete" class="svc-danger">Удалить…</button>
+      </footer>
+    </aside>
+  </div>
+
+  <div id="svc-delete-modal" class="svc-modal" hidden>
+    <div class="svc-modal-backdrop" data-svc-delete-cancel></div>
+
+    <div class="svc-modal-panel" role="dialog" aria-modal="true" aria-labelledby="svc-delete-title">
+      <h3 id="svc-delete-title">Удаление сервиса <span id="svc-delete-name"></span></h3>
+      <p class="svc-muted">
+        Маршруты сервиса помечаются комментарием <code>AUTO:&lt;service&gt;</code>.
+        Выберите, нужно ли удалять сами маршруты из RouterOS.
+      </p>
+
+      <div class="svc-modal-actions">
+        <button type="button" id="svc-delete-keep" class="svc-secondary">
+          Удалить сервис, сохранить маршруты
+        </button>
+        <button type="button" id="svc-delete-purge" class="svc-danger">
+          Удалить сервис и маршруты
+        </button>
+        <button type="button" id="svc-delete-cancel" class="svc-outline">
+          Отмена
+        </button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
 {{end}}
