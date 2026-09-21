@@ -65,7 +65,8 @@ func TestAddRouteReturnsID(t *testing.T) {
 		if r.Method != http.MethodPut {
 			t.Errorf("add must use PUT, got %s", r.Method)
 		}
-		_, _ = w.Write([]byte(`[{".id":"*1A"}]`))
+		// Формат реального RouterOS v7: объект {"id":"*1A"}
+		_, _ = w.Write([]byte(`{"id":"*1A"}`))
 	})
 	defer srv.Close()
 
@@ -75,6 +76,43 @@ func TestAddRouteReturnsID(t *testing.T) {
 	}
 	if id != "*1A" {
 		t.Fatalf("expected *1A, got %q", id)
+	}
+}
+
+func TestAddRouteArrayAndDotID(t *testing.T) {
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{".id":"*2B"}]`))
+	})
+	defer srv.Close()
+
+	id, err := c.AddRoute(context.Background(), Route{DstAddress: "8.8.8.0/24"})
+	if err != nil || id != "*2B" {
+		t.Fatalf("expected *2B/nil, got %q/%v", id, err)
+	}
+}
+
+func TestListServiceRoutesNoServerCommentFilter(t *testing.T) {
+	var gotPath string
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.String()
+		_ = json.NewEncoder(w).Encode([]Route{
+			{ID: "*1", DstAddress: "8.8.8.0/24", Comment: "AUTO:youtube"},
+			{ID: "*2", DstAddress: "1.1.1.0/24", Comment: "AUTO:youtube"},
+			{ID: "*3", DstAddress: "9.9.9.9/32", Comment: "AUTO:instagram"},
+			{ID: "*4", DstAddress: "5.5.5.0/24"},
+		})
+	})
+	defer srv.Close()
+
+	got, err := c.ListServiceRoutes(context.Background(), "youtube")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(gotPath, "comment=") {
+		t.Fatalf("must not rely on server-side comment filter: %s", gotPath)
+	}
+	if len(got) != 2 || got[0].ID != "*1" || got[1].ID != "*2" {
+		t.Fatalf("bad filter result: %+v", got)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -75,27 +77,35 @@ func (n *TelegramNotifier) Send(ctx context.Context, message string) error {
 }
 
 func (n *TelegramNotifier) SyncStart(ctx context.Context, services []string, trigger, spec string) error {
-	return n.Send(ctx, fmt.Sprintf("Sync started: %v (trigger: %s, schedule: %s)", services, trigger, spec))
+	return n.Send(ctx, fmt.Sprintf("▶️ Запуск синхронизации: %s\nИсточник: %s, расписание: %s",
+		strings.Join(services, ", "), trigger, spec))
 }
 
 func (n *TelegramNotifier) SyncDone(ctx context.Context, results []SyncResult, elapsed any, dryRun bool) error {
-	msg := "Sync completed:\n"
+	msg := "✅ Синхронизация завершена:\n"
 	if dryRun {
-		msg = "Dry-run completed:\n"
+		msg = "🔎 Пробный запуск (dry-run), изменения не применялись:\n"
 	}
 	for _, r := range results {
-		status := "+"
-		if !r.Success {
-			status = "-"
+		if r.Success {
+			msg += fmt.Sprintf("• %s: + %d добавлено, − %d удалено, %d без изменений\n",
+				r.Service, r.Added, r.Removed, r.Unchanged)
+		} else {
+			reason := r.Error
+			if reason == "" {
+				reason = "неизвестная ошибка"
+			}
+			msg += fmt.Sprintf("• %s: ОШИБКА — %s\n", r.Service, reason)
 		}
-		msg += fmt.Sprintf("%s %s: +%d -%d =%d\n",
-			status, r.Service, r.Added, r.Removed, r.Unchanged)
+	}
+	if sp, ok := elapsed.(time.Duration); ok && sp > 0 {
+		msg += fmt.Sprintf("Время выполнения: %s", sp.Round(100*time.Millisecond))
 	}
 	return n.Send(ctx, msg)
 }
 
 func (n *TelegramNotifier) Error(ctx context.Context, service string, err error) error {
-	return n.Send(ctx, fmt.Sprintf("Error in %s: %v", service, err))
+	return n.Send(ctx, fmt.Sprintf("⛔ Ошибка синхронизации «%s»: %v", service, err))
 }
 
 // NoopNotifier — пустой нотификатор (когда Telegram отключён).

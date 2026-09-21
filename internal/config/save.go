@@ -136,6 +136,15 @@ func setNestedValue(v reflect.Value, parts []string, value any) error {
 	return nil
 }
 
+// SetServiceSchedule задаёт расписание сервиса напрямую (без разбора пути
+// по '.', который ломается на именах-доменах вида youtube.com).
+func (c *Config) SetServiceSchedule(service, spec string) {
+	if c.Schedules.Services == nil {
+		c.Schedules.Services = map[string]ServiceSchedule{}
+	}
+	c.Schedules.Services[service] = ServiceSchedule{Schedule: spec}
+}
+
 // GetPath читает значение параметра по точечному пути ("mikrotik.host").
 func (c *Config) GetPath(path string) (any, error) {
 	if path == "" {

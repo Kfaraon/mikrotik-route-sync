@@ -102,6 +102,39 @@ func TestSetAndGetPathAndSave(t *testing.T) {
 	}
 }
 
+func TestValidateSSLPortMismatch(t *testing.T) {
+	cfg := &Config{
+		MikroTik:  MikroTikConfig{Host: "h", Username: "u", Port: 443, UseSSL: false},
+		Schedules: SchedulesConfig{Global: "every 6h"},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected rejection of use_ssl=false + port=443")
+	}
+	cfg.MikroTik.UseSSL = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("use_ssl=true + port=443 must pass: %v", err)
+	}
+	cfg.MikroTik = MikroTikConfig{Host: "h", Username: "u", Port: 80}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("use_ssl=false + port=80 must pass: %v", err)
+	}
+}
+
+func TestValidateServiceNameDomains(t *testing.T) {
+	ok := []string{"instagram", "youtube.com", "rutor.info", "8.8.8.8", "cdn.fastly.net", "a-b_c"}
+	bad := []string{".youtube.com", "youtube.", "you..tube", "UPPER.com", "bad name"}
+	for _, n := range ok {
+		if !ValidateServiceName(n) {
+			t.Errorf("ValidateServiceName(%q) = false, want true", n)
+		}
+	}
+	for _, n := range bad {
+		if ValidateServiceName(n) {
+			t.Errorf("ValidateServiceName(%q) = true, want false", n)
+		}
+	}
+}
+
 func TestSetGetSnakeCaseKeys(t *testing.T) {
 	path := writeTempConfig(t, minimalYAML)
 	cfg, err := Load(path)

@@ -285,6 +285,29 @@ func TestCIDREnforcement(t *testing.T) {
 	}
 }
 
+func TestSettingsRejectedKeepsLiveConfig(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+	start := strings.Index(page, `name="csrf-token" content="`)
+	rest := page[start+len(`name="csrf-token" content="`):]
+	token := rest[:strings.Index(rest, `"`)]
+
+	// В тест-конфиге port=9; пробуем set port=443 при use_ssl=false —
+	// невалидная комбинация, сохранение отклоняется целиком.
+	resp, body := doAuth(client, ts.URL, "POST", "/actions/settings", token,
+		strings.NewReader("csrf_token="+token+"&mikrotik.port=443"))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for use_ssl=false+port443, got %d: %s", resp.StatusCode, body)
+	}
+	if cfg.MikroTik.Port != 9 {
+		t.Fatalf("rejected save must not mutate live config (port flipped): %d", cfg.MikroTik.Port)
+	}
+}
+
 func newJar(t *testing.T) http.CookieJar {
 	t.Helper()
 	jar, err := cookiejar.New(nil)

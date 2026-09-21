@@ -62,6 +62,27 @@ func TestComputeDiffAddRemove(t *testing.T) {
 	}
 }
 
+func TestComputeDiffRemovesDuplicates(t *testing.T) {
+	desired := []RouteKey{
+		{CIDR: "34.64.0.0/10", Gateway: "wg0", Table: "main", Distance: 3},
+	}
+	existing := []mikrotik.Route{
+		{ID: "*1", DstAddress: "34.64.0.0/10", Gateway: "wg0", RoutingTable: "main", Distance: "3"},
+		{ID: "*2", DstAddress: "34.64.0.0/10", Gateway: "wg0", RoutingTable: "main", Distance: "3"},
+		{ID: "*3", DstAddress: "34.64.0.0/10", Gateway: "wg0", RoutingTable: "main", Distance: "3"},
+	}
+	d, err := ComputeDiff(desired, existing)
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	if d.Unchanged != 1 || len(d.Add) != 0 {
+		t.Fatalf("expected 1 unchanged, 0 add; got %+v", d)
+	}
+	if len(d.Remove) != 2 || d.Remove[0].ID != "*2" || d.Remove[1].ID != "*3" {
+		t.Fatalf("expected 2 duplicates removed, got %+v", d.Remove)
+	}
+}
+
 func TestComputeDiffSkipsBrokenExisting(t *testing.T) {
 	desired := []RouteKey{{CIDR: "1.1.1.0/24", Gateway: "wg0", Table: "main", Distance: 2}}
 	existing := []mikrotik.Route{

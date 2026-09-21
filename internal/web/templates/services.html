@@ -70,8 +70,10 @@
       <h2>Добавить сервис</h2>
       <form hx-post="/actions/service-add" hx-target="#add-result" hx-swap="innerHTML">
         <input type="hidden" name="csrf_token" value="{{ .CSRF }}">
-        <label>Имя сервиса (домен / IP / ASN тоже подходят)
-          <input type="text" name="name" placeholder="instagram" required pattern="^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$">
+        <label>Имя сервиса (домен / IPv4 / ASN тоже подходят)
+          <input type="text" name="name" placeholder="youtube.com" required
+                 pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,253}"
+                 title="строчные латиница/цифры, точки, дефис, подчёркивание; например instagram, youtube.com, 8.8.8.8, AS13335">
         </label>
         <button type="submit">➕ Добавить</button>
         <span id="add-result" class="muted"></span>

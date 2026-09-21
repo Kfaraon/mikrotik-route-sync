@@ -364,6 +364,11 @@ func (c *Config) Validate() error {
 	if c.Schedules.Global == "" {
 		return fmt.Errorf("schedules.global required")
 	}
+	// Типичная ошибка: http:// на TLS-порт (или наоборот) — коннект виснет по
+	// таймауту и circuit breaker открывается; ловим на этапе валидации.
+	if !c.MikroTik.UseSSL && c.MikroTik.Port == 443 {
+		return fmt.Errorf("mikrotik: use_ssl=false с port=443 — http на HTTPS-порту не заработает (поставьте use_ssl: true или port: 80)")
+	}
 	if c.Logging.File != "" && runtime.GOOS != "windows" && os.Getenv("MRS_REQUIRE_FILE_PERMS") != "0" {
 		dir := filepath.Dir(c.Logging.File)
 		if fi, err := os.Stat(dir); err == nil {
@@ -439,11 +444,16 @@ func (c *Config) ScheduleFor(service string) string {
 }
 
 // serviceNameRE — регулярное выражение для валидации имени сервиса.
-var serviceNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+// Точка разрешена: сервис называют доменом (youtube.com, instagram.com) или
+// IPv4-адресом (8.8.8.8) — classifier сам определит тип по имени (PROMPT I).
+// Дефис/undercore в конце запрещены, чтобы AUTO:-комментарии и ключи bbolt
+// оставались предсказуемыми.
+var serviceNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}(?:\.[a-z0-9][a-z0-9_-]{0,62})*$`)
 
-// ValidateServiceName проверяет корректность имени сервиса.
+// ValidateServiceName проверяет корректность имени сервиса (1..253 символов,
+// как доменное имя: метки через точку).
 func ValidateServiceName(name string) bool {
-	if name == "" || len(name) > 64 {
+	if name == "" || len(name) > 253 {
 		return false
 	}
 	return serviceNameRE.MatchString(name)

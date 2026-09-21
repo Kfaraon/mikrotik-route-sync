@@ -119,12 +119,14 @@ func NewClient(cfg *config.Config, log *slog.Logger) (*Client, error) {
 	return New(cfg.MikroTik, cfg.Retry, log), nil
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+// doRaw выполняет запрос и возвращает сырое тело успешного (2xx, без
+// встроенной ошибки API) ответа.
+func (c *Client) doRaw(ctx context.Context, method, path string, body any) ([]byte, error) {
 	if err := c.limiter.Wait(ctx); err != nil {
-		return fmt.Errorf("rate limit wait: %w", err)
+		return nil, fmt.Errorf("rate limit wait: %w", err)
 	}
 
-	_, err := c.breaker.Execute(func() (interface{}, error) {
+	out, err := c.breaker.Execute(func() (interface{}, error) {
 		var r io.Reader
 		if body != nil {
 			b, e := json.Marshal(body)
@@ -168,16 +170,26 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 				}
 			}
 		}
-
-		if out != nil && len(b) > 0 && string(b) != "[]" {
-			if e = json.Unmarshal(b, out); e != nil {
-				return nil, e
-			}
-		}
-		return nil, nil
+		return b, nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return out.([]byte), nil
+}
 
-	return err
+// do выполняет запрос и декодирует успешный ответ в out.
+func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+	b, err := c.doRaw(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	if out != nil && len(b) > 0 && string(b) != "[]" {
+		if err := json.Unmarshal(b, out); err != nil {
+			return fmt.Errorf("routeros %s %s: decode: %w", method, path, err)
+		}
+	}
+	return nil
 }
 
 func (c *Client) doWithPagination(ctx context.Context, path string, limit int) ([]Route, error) {
@@ -217,20 +229,18 @@ func redact(s string) string {
 }
 
 // ListServiceRoutes возвращает ТОЛЬКО маршруты сервиса (comment == AUTO:<service>).
-// Фильтрация выполняется и на сервере (query) и повторно на клиенте —
-// это гарантия изоляции по сервисам (PROMPT I.1, III.6).
+//
+// Фильтрация выполняется ИСКЛЮЧИТЕЛЬНО на клиенте: server-side фильтр
+// "?comment=..." в RouterOS REST ненадёжен (может молча вернуть пустой список
+// при URL-кодированном значении — реальный случай 2026-09-20, из-за чего diff
+// не видел существующие маршруты и создавал дубли). Точное сравнение комментария
+// — гарантия изоляции сервисов (PROMPT I.1, III.6).
 func (c *Client) ListServiceRoutes(ctx context.Context, service string) ([]Route, error) {
 	comment := c.prefix + ":" + service
-	path := "/ip/route?comment=" + url.QueryEscape(comment)
 
-	routes, err := c.doWithPagination(ctx, path, 1000)
+	routes, err := c.doWithPagination(ctx, "/ip/route", 1000)
 	if err != nil {
-		// Некоторые версии RouterOS игнорируют query-фильтр — fallback:
-		// загрузить всё и отфильтровать на клиенте.
-		routes, err = c.doWithPagination(ctx, "/ip/route", 1000)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	out := make([]Route, 0, len(routes))
@@ -242,17 +252,55 @@ func (c *Client) ListServiceRoutes(ctx context.Context, service string) ([]Route
 	return out, nil
 }
 
-// AddRoute создаёт маршрут (PUT /rest/ip/route) и возвращает новый .id.
-// RouterOS отвечает массивом объектов: [{".id":"*1A", ...}].
+// addReply — форма ответа RouterOS на PUT (создание): объект {"id":"*2F"}
+// (иногда {".id":...} или {"done":...} в разных версиях), исторически
+// встречался и массив [{...}].
+type addReply struct {
+	ID    string `json:"id"`
+	DotID string `json:".id"`
+	Done  string `json:"done"`
+}
+
+func (a addReply) pick() string {
+	for _, s := range []string{a.ID, a.DotID, a.Done} {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// AddRoute создаёт маршрут (PUT /rest/ip/route) и возвращает новый .id
+// (может быть пустым, если RouterOS не вернул идентификатор — не ошибка).
 func (c *Client) AddRoute(ctx context.Context, r Route) (string, error) {
-	var out []Route
-	if err := c.do(ctx, http.MethodPut, "/ip/route", r, &out); err != nil {
+	b, err := c.doRaw(ctx, http.MethodPut, "/ip/route", r)
+	if err != nil {
 		return "", err
 	}
-	if len(out) == 0 {
-		return "", fmt.Errorf("routeros returned no created route object")
+
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "[]" {
+		return "", nil
 	}
-	return out[0].ID, nil
+
+	if b[0] == '[' {
+		var list []addReply
+		if err := json.Unmarshal(b, &list); err != nil {
+			return "", fmt.Errorf("routeros add route: decode array reply: %w", err)
+		}
+		for _, a := range list {
+			if id := a.pick(); id != "" {
+				return id, nil
+			}
+		}
+		return "", nil
+	}
+
+	var one addReply
+	if err := json.Unmarshal(b, &one); err != nil {
+		return "", fmt.Errorf("routeros add route: decode object reply: %w", err)
+	}
+	return one.pick(), nil
 }
 
 // DeleteRoute удаляет маршрут по .id (например "*1A").

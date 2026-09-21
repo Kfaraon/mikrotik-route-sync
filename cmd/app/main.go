@@ -896,7 +896,7 @@ func testTelegramCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := n.Send(ctx, "test message from mikrotik-route-sync"); err != nil {
+			if err := n.Send(ctx, "✅ Проверка Telegram: тестовое сообщение от mikrotik-route-sync"); err != nil {
 				return err
 			}
 			fmt.Println("OK: telegram message sent")

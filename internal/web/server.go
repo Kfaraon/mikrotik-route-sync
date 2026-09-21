@@ -31,11 +31,13 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/websocket"
 	"golang.org/x/time/rate"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed templates/* static/*
@@ -785,7 +787,7 @@ var settingsSpec = []settingSpec{
 	{"MikroTik", "mikrotik.host", "Адрес роутера", "text",
 		"IP или hostname RouterOS (например 192.168.88.1). Применяется сразу — клиент пересоздаётся."},
 	{"MikroTik", "mikrotik.port", "Порт REST API", "number",
-		"443 для HTTPS, 80 для HTTP. Применяется сразу."},
+		"443 — только с use_ssl:true; 80 — с use_ssl:false. Комбинация use_ssl:false + port:443 отклоняется валидацией. Применяется сразу."},
 	{"MikroTik", "mikrotik.username", "API-пользователь", "text",
 		"Отдельный пользователь RouterOS с минимальными правами (read, write, api, rest-api, policy)."},
 	{"MikroTik", "mikrotik.password", "Пароль API", "secret",
@@ -992,7 +994,7 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if !config.ValidateServiceName(req.Name) {
+	if !config.ValidateServiceName(strings.ToLower(req.Name)) {
 		writeErr(w, http.StatusBadRequest, "invalid service name")
 		return
 	}
@@ -1096,14 +1098,19 @@ func (s *Server) apiUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]string{"service": service, "schedule": req.Schedule})
 }
 
+// applySchedule валидирует и сохраняет расписание сервиса.
+// Использует SetServiceSchedule (прямую запись в map), т.к. точечный путь
+// ломается на доменных именах сервисов (youtube.com).
 func (s *Server) applySchedule(service, spec string) error {
+	service = strings.ToLower(strings.TrimSpace(service))
+	spec = strings.TrimSpace(spec)
 	if !config.ValidateServiceName(service) {
 		return fmt.Errorf("invalid service name")
 	}
-	key := "schedules.services." + service + ".schedule"
-	if err := s.cfg.Set(key, spec); err != nil {
-		return err
+	if spec != "" && !scheduler.ValidSpec(spec) {
+		return fmt.Errorf("некорректное расписание %q (ожидается cron, 'every 6h', 'daily at 03:00', manual/disabled/inherit)", spec)
 	}
+	s.cfg.SetServiceSchedule(service, spec)
 	if err := s.cfg.Save(); err != nil {
 		return err
 	}
@@ -1195,7 +1202,7 @@ func (s *Server) actionSyncSelected(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) actionAddService(w http.ResponseWriter, r *http.Request) {
-	name := r.FormValue("name")
+	name := strings.ToLower(strings.TrimSpace(r.FormValue("name")))
 	if !config.ValidateServiceName(name) {
 		http.Error(w, "Некорректное имя сервиса", http.StatusBadRequest)
 		return
@@ -1231,7 +1238,6 @@ func (s *Server) actionUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Refresh", "true")
 	writeOK(w, map[string]string{"service": service, "schedule": spec})
 }
-
 func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	user := s.currentUser(r)
 	if err := r.ParseForm(); err != nil {
@@ -1239,8 +1245,8 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	changed := 0
-	var errs []string
+	type update struct{ key, value string }
+	var updates []update
 	for key, values := range r.PostForm {
 		if key == "csrf_token" || len(values) == 0 {
 			continue
@@ -1249,17 +1255,37 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if IsSecretPartial(key) && (value == "" || strings.HasPrefix(value, "\u2022")) {
 			continue
 		}
-		if err := s.cfg.Set(key, value); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", key, err))
-			continue
-		}
-		changed++
+		updates = append(updates, update{key, value})
 	}
 
+	// Проверяем изменения на КОПИИ конфига: живой конфиг не должен получать
+	// невалидные значения, даже если сохранение будет отклонено.
+	cand, err := s.cloneConfig()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "clone config: "+err.Error())
+		return
+	}
+	var errs []string
+	for _, u := range updates {
+		if err := cand.Set(u.key, u.value); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", u.key, err))
+		}
+	}
+	if len(errs) == 0 {
+		if err := cand.Validate(); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
 	if len(errs) > 0 {
-		// Не сохраняем частично: либо все поля валидны, либо ничего.
 		writeErr(w, http.StatusBadRequest, "не сохранено — ошибки: "+strings.Join(errs, "; "))
 		return
+	}
+
+	for _, u := range updates {
+		if err := s.cfg.Set(u.key, u.value); err != nil {
+			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("apply %s: %v", u.key, err))
+			return
+		}
 	}
 	if err := s.cfg.Save(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed to save config: "+err.Error())
@@ -1269,9 +1295,24 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	// Авто-применение сохранённых настроек без перезапуска процесса.
 	s.applyRuntimeChanges()
 
-	s.log.Info("settings updated", "user", user, "changed_keys", changed)
+	s.log.Info("settings updated", "user", user, "changed_keys", len(updates))
 	w.Header().Set("HX-Refresh", "true")
-	writeOK(w, map[string]any{"updated": changed})
+	writeOK(w, map[string]any{"updated": len(updates)})
+}
+
+// cloneConfig — глубокая копия текущей конфигурации через YAML round-trip.
+// Используется для предпроверки candidate-изменений, чтобы не трогать живой
+// конфиг при невалидных значениях.
+func (s *Server) cloneConfig() (*config.Config, error) {
+	data, err := yaml.Marshal(s.cfg)
+	if err != nil {
+		return nil, err
+	}
+	clone := &config.Config{}
+	if err := yaml.Unmarshal(data, clone); err != nil {
+		return nil, err
+	}
+	return clone, nil
 }
 
 // applyRuntimeChanges переносит только что сохранённую конфигурацию

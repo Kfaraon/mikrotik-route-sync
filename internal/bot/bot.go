@@ -101,20 +101,25 @@ func (b *Bot) menu(id int64) {
 func (b *Bot) statusText(ctx context.Context) string {
 	var sb strings.Builder
 	sb.WriteString("Статус:\n")
-	sb.WriteString(fmt.Sprintf("  uptime: %s\n", time.Since(b.syncer.StartTime()).Truncate(time.Second)))
-	sb.WriteString(fmt.Sprintf("  last sync: %s\n", b.syncer.LastSync().Format(time.RFC3339)))
-	sb.WriteString(fmt.Sprintf("  version: %s\n", b.syncer.Version()))
+	sb.WriteString(fmt.Sprintf("  аптайм: %s\n", time.Since(b.syncer.StartTime()).Truncate(time.Second)))
+	last := b.syncer.LastSync()
+	if last.IsZero() {
+		sb.WriteString("  последняя синхронизация: ещё не выполнялась\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("  последняя синхронизация: %s\n", last.Format(time.RFC3339)))
+	}
+	sb.WriteString(fmt.Sprintf("  версия: %s\n", b.syncer.Version()))
 	if dg := b.syncer.DegradedServices(); len(dg) > 0 {
-		sb.WriteString("  DEGRADED: " + strings.Join(dg, ", ") + "\n")
+		sb.WriteString("  ⚠️ требует внимания (DEGRADED): " + strings.Join(dg, ", ") + "\n")
 	}
 	sb.WriteString("Сервисы:\n")
 	for _, svc := range b.syncer.ListServices() {
 		info, err := b.syncer.InfoService(ctx, svc)
 		if err != nil {
-			sb.WriteString(fmt.Sprintf("  - %s: error (%v)\n", svc, err))
+			sb.WriteString(fmt.Sprintf("  - %s: ошибка (%v)\n", svc, err))
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("  - %s: routes=%d schedule=%s\n",
+		sb.WriteString(fmt.Sprintf("  - %s: маршрутов=%d, расписание=%s\n",
 			svc, info.RouteCount, info.Schedule))
 	}
 	return sb.String()

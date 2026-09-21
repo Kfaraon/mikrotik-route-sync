@@ -328,11 +328,11 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 
 	// Mutex на сервис: повторный запуск пропускается (PROMPT III.2).
 	if !s.acquire(name) {
-		msg := fmt.Sprintf("sync skipped: %s is already running", name)
+		msg := fmt.Sprintf("Синхронизация %s пропущена: предыдущий запуск ещё выполняется", name)
 		s.log.Warn(msg, "service", name)
 		s.emit("skipped", map[string]any{"service": name, "reason": "already running"})
 		if !dry {
-			_ = s.getNotify().SyncStart(ctx, []string{name}, "manual", "skipped: already running")
+			_ = s.getNotify().SyncStart(ctx, []string{name}, "manual", "пропущено: уже выполняется")
 		}
 		res.Error = msg
 		res.FinishedAt = time.Now()
@@ -487,8 +487,8 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		if tx.State() == mikrotik.StateDegraded {
 			s.MarkDegraded(name)
 			_ = s.getNotify().Error(ctx, name, fmt.Errorf(
-				"DEGRADED: rollback partially failed for %s, manual intervention required (snapshot %s)",
-				name, snapshotID))
+				"⚠️ Сервис %s в состоянии DEGRADED: откат (rollback) прошёл лишь частично, нужна ручная проверка. Снимок для восстановления: app restore %s --from-snapshot %s --force",
+				name, name, snapshotID))
 		} else {
 			s.notifyError(ctx, name, err)
 		}
@@ -520,7 +520,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 
 	// Уведомления, аудит, история
 	s.getNotify().Send(ctx, fmt.Sprintf(
-		"✅ Sync %s: +%d -%d =%d (%s)",
+		"✅ %s: +%d добавлено, −%d удалено, %d без изменений (%s)",
 		name, res.Added, res.Removed, res.Unchanged, res.Duration,
 	))
 	s.audit.Log(EntryToAudit(res))
@@ -559,7 +559,7 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 
 	start := time.Now()
 	s.audit.LogSyncStart(services)
-	_ = s.getNotify().SyncStart(ctx, services, "manual", fmt.Sprintf("dry_run=%v force=%v", dry, force))
+	_ = s.getNotify().SyncStart(ctx, services, "вручную", fmt.Sprintf("пробный режим: %v, принудительно: %v", dry, force))
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -1095,8 +1095,9 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	s.serviceMu.Lock()
 	defer s.serviceMu.Unlock()
 
+	name = strings.ToLower(strings.TrimSpace(name))
 	if !config.ValidateServiceName(name) {
-		return fmt.Errorf("invalid service name: %s (must match [a-z0-9-])", name)
+		return fmt.Errorf("invalid service name: %s (allowed: lowercase letters/digits with '-', '_', '.' — e.g. instagram, youtube.com, 8.8.8.8, AS13335)", name)
 	}
 
 	if err := validator.SanitizeComment(name); err != nil {
@@ -1130,6 +1131,7 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	s.serviceMu.Lock()
 	defer s.serviceMu.Unlock()
 
+	name = strings.ToLower(strings.TrimSpace(name))
 	found := false
 	var newServices []string
 

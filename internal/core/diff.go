@@ -56,28 +56,31 @@ type routeKeyString struct {
 //   - Пустые значения Gateway/Table трактуются как пустые строки.
 //   - Битые записи в existing (невалидный CIDR) пропускаются и не удаляются
 //     (fail-closed: не трогаем то, что не понимаем).
+//   - Дубли: при нескольких существующих маршрутах с одинаковым ключом
+//     один засчитывается как unchanged, остальные удаляются (самоочистка).
 func ComputeDiff(desired []RouteKey, existing []mikrotik.Route) (*Diff, error) {
 	diff := &Diff{
 		Add:    make([]RouteKey, 0),
 		Remove: make([]mikrotik.Route, 0),
 	}
 
-	// Шаг 1: индексируем existing по нормализованному ключу.
-	// Используем map[routeKeyString]mikrotik.Route для O(1) поиска.
-	existingMap := make(map[routeKeyString]mikrotik.Route, len(existing))
-	seenKeys := make(map[routeKeyString]bool, len(desired))
+	type keySet = map[routeKeyString][]mikrotik.Route
 
+	// Шаг 1: индексируем existing по нормализованному ключу (сохраняем ВСЕ
+	// маршруты с одинаковым ключом — дубли candidate на удаление).
+	existingByKey := make(keySet, len(existing))
 	for _, r := range existing {
 		key, err := mikrotikRouteToKey(r)
 		if err != nil {
 			// Fail-closed: пропускаем битую запись, не удаляем её.
-			// Она останется в MikroTik и будет видна в следующем запуске.
 			continue
 		}
-		existingMap[key] = r
+		existingByKey[key] = append(existingByKey[key], r)
 	}
 
-	// Шаг 2: проходим по desired и формируем Add / Unchanged.
+	seenKeys := make(map[routeKeyString]bool, len(desired))
+
+	// Шаг 2: проходим по desired: Add / Unchanged + удаление дублей.
 	for _, d := range desired {
 		key, err := routeKeyToKeyString(d)
 		if err != nil {
@@ -87,18 +90,25 @@ func ComputeDiff(desired []RouteKey, existing []mikrotik.Route) (*Diff, error) {
 
 		seenKeys[key] = true
 
-		if _, exists := existingMap[key]; exists {
-			diff.Unchanged++
-		} else {
+		existingDupes := existingByKey[key]
+		if len(existingDupes) == 0 {
 			diff.Add = append(diff.Add, d)
+			continue
+		}
+		diff.Unchanged++
+		if len(existingDupes) > 1 {
+			diff.Remove = append(diff.Remove, existingDupes[1:]...)
 		}
 	}
 
-	// Шаг 3: проходим по existing и формируем Remove (всё, что не было "seen").
-	for key, r := range existingMap {
-		if !seenKeys[key] {
-			diff.Remove = append(diff.Remove, r)
+	// Шаг 3: всё, под чем не "увидели" desired-ключа — на удаление
+	// (все экземпляры, включая ранее добавленные в шаге 2 дубли НЕ помечаем
+	// дважды: дубли удалены, оригинал учтён как unchanged).
+	for key, routes := range existingByKey {
+		if seenKeys[key] {
+			continue
 		}
+		diff.Remove = append(diff.Remove, routes...)
 	}
 
 	return diff, nil
