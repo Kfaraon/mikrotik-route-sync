@@ -1,0 +1,453 @@
+/* ==========================================================================
+   Страница расписаний
+   ========================================================================== */
+
+.schedule-page .page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.sched-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.summary-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.summary-card span {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary-card strong {
+  font-size: 1.25rem;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sched-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.toolbar-main {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+#sched-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.sched-help {
+  margin: 0 0 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.55rem 0.8rem;
+}
+
+.sched-help summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.sched-help ul {
+  margin: 0.55rem 0 0.2rem 1.2rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.sched-help code {
+  color: var(--text);
+}
+
+.small {
+  font-size: 0.78rem;
+}
+
+.sched-table-wrap {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.sched-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 980px;
+  font-size: 0.9rem;
+}
+
+.sched-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 0.65rem 0.7rem;
+  text-align: left;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sched-table td {
+  padding: 0.65rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.sched-row:last-child td {
+  border-bottom: none;
+}
+
+.sched-row.saving {
+  opacity: 0.65;
+}
+
+.sched-row.saved {
+  animation: schedSaved 1.4s ease;
+}
+
+@keyframes schedSaved {
+  0% {
+    background: rgba(26, 127, 55, 0.18);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+.cell-service {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.service-name {
+  font-weight: 700;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  word-break: break-word;
+}
+
+.cell-schedule {
+  min-width: 220px;
+}
+
+.cell-schedule code.effective {
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-word;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.35rem;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.schedule-meta {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+
+.next-badge {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.cell-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 120px;
+}
+
+.group-sched {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  word-break: break-word;
+}
+
+.edit-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 280px;
+}
+
+.edit-block select,
+.edit-block input {
+  width: 100%;
+}
+
+.schedule-input {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.edit-buttons {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.edit-buttons button {
+  flex: 1;
+  min-width: 90px;
+}
+
+.row-status {
+  min-height: 1.1rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.row-status.ok {
+  color: var(--ok);
+}
+
+.row-status.err {
+  color: var(--err);
+}
+
+.empty-state {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Badges */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.2;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge-auto {
+  background: rgba(26, 127, 55, 0.13);
+  color: var(--ok);
+  border-color: rgba(26, 127, 55, 0.22);
+}
+
+.badge-manual {
+  background: rgba(5, 80, 174, 0.12);
+  color: var(--primary);
+  border-color: rgba(5, 80, 174, 0.22);
+}
+
+.badge-disabled {
+  background: rgba(110, 119, 129, 0.16);
+  color: var(--muted);
+  border-color: rgba(110, 119, 129, 0.24);
+}
+
+.badge-muted {
+  background: rgba(110, 119, 129, 0.12);
+  color: var(--muted);
+  border-color: rgba(110, 119, 129, 0.2);
+}
+
+.badge-override {
+  background: rgba(210, 153, 34, 0.16);
+  color: #d29922;
+  border-color: rgba(210, 153, 34, 0.28);
+}
+
+.badge-group {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.source-service {
+  background: rgba(210, 153, 34, 0.16);
+  color: #d29922;
+  border-color: rgba(210, 153, 34, 0.28);
+}
+
+.source-group {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.source-global {
+  background: rgba(26, 127, 55, 0.13);
+  color: var(--ok);
+  border-color: rgba(26, 127, 55, 0.22);
+}
+
+@media (prefers-color-scheme: dark) {
+  .badge-auto {
+    background: rgba(63, 185, 80, 0.14);
+    border-color: rgba(63, 185, 80, 0.24);
+  }
+
+  .badge-manual {
+    background: rgba(68, 147, 248, 0.14);
+    border-color: rgba(68, 147, 248, 0.24);
+  }
+
+  .badge-override,
+  .source-service {
+    background: rgba(210, 153, 34, 0.18);
+    border-color: rgba(210, 153, 34, 0.3);
+  }
+
+  .sched-row.saved {
+    animation: schedSavedDark 1.4s ease;
+  }
+
+  @keyframes schedSavedDark {
+    0% {
+      background: rgba(63, 185, 80, 0.18);
+    }
+    100% {
+      background: transparent;
+    }
+  }
+}
+
+.toast.success {
+  background: var(--ok);
+}
+
+/* Mobile cards */
+
+@media (max-width: 980px) {
+  .sched-table {
+    min-width: 0;
+  }
+
+  .sched-table thead {
+    display: none;
+  }
+
+  .sched-table,
+  .sched-table tbody,
+  .sched-table tr,
+  .sched-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .sched-table-wrap {
+    overflow: visible;
+    background: transparent;
+    border: none;
+  }
+
+  .sched-row {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 0.75rem 0;
+    padding: 0.35rem 0.55rem;
+  }
+
+  .sched-table td {
+    border: none;
+    border-bottom: 1px dashed var(--border);
+    padding: 0.5rem 0.15rem;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .sched-table td:last-child {
+    border-bottom: none;
+  }
+
+  .sched-table td::before {
+    content: attr(data-label);
+    flex: 0 0 110px;
+    color: var(--muted);
+    font-weight: 650;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .cell-service,
+  .cell-schedule,
+  .cell-group,
+  .edit-block {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .edit-block {
+    gap: 0.5rem;
+  }
+
+  .edit-buttons button {
+    min-width: 0;
+  }
+}
