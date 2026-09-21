@@ -48,7 +48,7 @@
 - Сравнение CIDR — по нормализованному виду (network + prefix length), без учёта хостовых бит.
 
 ### 1.6 Кэширование
-- Результаты ASN-resolution, WHOIS, RDAP, BGPView, RIPEstat кэшируются в bbolt.
+- Результаты ASN-resolution, WHOIS, RDAP, bgp.tools, RIPEstat кэшируются в bbolt.
 - TTL кэша задаётся в конфиге (`scheduler.cache_ttl`, по умолчанию 24 часа).
 - Периодическая очистка (`scheduler.cache_purge`, по умолчанию `every 1h`).
 - Кэш используется только как оптимизация, но не как источник истины для удаления маршрутов.
@@ -66,7 +66,7 @@
 ### 2.1 Шаг 1. Определить ASN сервиса
 - Если указан IP — использовать напрямую (проверить через RDAP, к какому ASN относится).
 - Если указан домен — резолвить через DNS (A + AAAA, с указанием резолверов из конфига).
-- Через WHOIS/RDAP или BGPView определить ASN. Основной источник — BGPView, fallback — RIPEstat, второй fallback — RDAP-запросы к RIR (ARIN, RIPE, APNIC, LACNIC, AFRINIC).
+- Через WHOIS/RDAP или bgp.tools определить ASN. Основной источник — bgp.tools, fallback — RIPEstat, второй fallback — RDAP-запросы к RIR (ARIN, RIPE, APNIC, LACNIC, AFRINIC).
 - Если указан ASN напрямую — использовать его.
 - Результат кэшируется в bbolt с TTL.
 - При неопределённости (несколько ASN для домена) — использовать эвристику: приоритет ASN с наибольшим количеством анонсируемых префиксов.
@@ -79,7 +79,7 @@
 - Google (AS15169) → `https://www.gstatic.com/ipranges/goog.json`.
 - Fastly → официальный API `https://api.fastly.com/public-ip-list`.
 
-**Крупные сервисы с собственным ASN:** метод `asn` через BGPView/RIPEstat.
+**Крупные сервисы с собственным ASN:** метод `asn` через bgp.tools/RIPEstat.
 
 **Динамические сервисы (Google, YouTube, Telegram):** метод `dynamic` — DNS-резолвинг + официальный JSON, агрегация всех полученных сетей.
 
@@ -212,7 +212,7 @@
 
 ### 6.1 Общая концепция
 - Встроенный в бинарник дашборд через `//go:embed` (папки `internal/web/static` и `internal/web/templates`).
-- Лёгкий, адаптивный, без внешних CDN.
+- Лёгкий, адаптивный, без внешнего CDN.
 
 ### 6.2 Страницы
 
@@ -331,7 +331,7 @@
       notifier/           — уведомления (Telegram)
         notifier.go
       resolver/           — DNS / ASN resolution
-        resolver.go       — BGPView + RIPEstat + RDAP
+        resolver.go       — bgp.tools + RIPEstat + RDAP
         rdap.go           — RDAP-клиент
       scheduler/          — расписания
         schedule.go       — парсинг cron/human-readable
@@ -447,7 +447,7 @@
 - Состояния: Closed → Open → Half-Open → Closed.
 - Порог открытия: 5 ошибок подряд.
 - Таймаут Open: 60 сек.
-- Отдельный breaker для каждого внешнего сервиса (MikroTik, BGPView, RDAP, Telegram).
+- Отдельный breaker для каждого внешнего сервиса (MikroTik, bgp.tools, RDAP, Telegram).
 
 ### 12.3 Восстановление после краха
 - Все критические операции — с записью состояния в bbolt.
@@ -580,7 +580,7 @@
     external:
       http_timeout: 15s
       max_response_mb: 50
-      bgpview_api_key: ""
+      bgp_tools_contact: "you@example.com"
       rdap_timeout: 10s
       resolver: 1.1.1.1:53
 
@@ -720,7 +720,7 @@
 ## XVII. Поведение при ошибках (Troubleshooting)
 
 - **Маршруты не создаются:** проверить REST API, gateway, routing table, права RouterOS-пользователя, логи приложения (`app logs tail -f`), `app test-mikrotik`.
-- **Collector вернул 0 сетей:** это ошибка безопасности. Существующие маршруты не удаляются. Проверить DNS (`app test-dns`), доступ к BGPView/RIPEstat/официальному источнику, `overrides`.
+- **Collector вернул 0 сетей:** это ошибка безопасности. Существующие маршруты не удаляются. Проверить DNS (`app test-dns`), доступ к bgp.tools/RIPEstat/официальному источнику, `overrides`.
 - **Web UI возвращает 401/403:** проверить Basic Auth, `allowed_cidrs`, CSRF. При работе за reverse proxy — проверить `trusted_proxies`.
 - **TLS RouterOS не проходит проверку:** для production установить корректный сертификат. `verify_ssl: false` допустим только в контролируемой домашней сети.
 - **Массовое удаление остановлено safety-check:** проверить diff (`app diff <service>`). Если изменения корректны — `app sync --service <service> --force`.
@@ -757,7 +757,7 @@
 2. Конфигурация (`config/config.go` + `save.go` + yaml + ENV overrides + hot-reload + validation).
 3. Логирование (`logging/logging.go` + slog + lumberjack + redaction).
 4. Storage (`storage/storage.go` — bbolt wrapper).
-5. Resolver (`resolver/resolver.go` + `rdap.go` + BGPView + RIPEstat + cache).
+5. Resolver (`resolver/resolver.go` + `rdap.go` + bgp.tools + RIPEstat + cache).
 6. Classifier (`classifier/classifier.go` + словарь CDN/ASN).
 7. Collectors (`collectors/*.go` + registry + http + Circuit Breaker + Retry).
 8. Validator (`validator/validator.go` + RFC-диапазоны + RDAP-проверка).
