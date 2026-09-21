@@ -25,28 +25,71 @@
     <h1>Логи</h1>
     <p class="muted">Файл: <code>{{ .LogFile }}</code></p>
 
-    <div class="row">
-      <select id="log-level">
-        <option value="">Все уровни</option>
-        <option value="INFO">INFO</option>
-        <option value="WARN">WARN</option>
-        <option value="ERROR">ERROR</option>
-      </select>
-      <input type="text" id="log-service" placeholder="фильтр по сервису">
-      <select id="log-limit">
-        <option value="100">100 строк</option>
-        <option value="500">500 строк</option>
-        <option value="1000">1000 строк</option>
-      </select>
-      <button type="button" id="log-refresh">Обновить</button>
-      <button type="button" id="log-download">Скачать</button>
-      <button type="button" class="secondary" id="log-clear"
-              hx-post="/actions/logs-clear" hx-swap="none"
-              hx-confirm="Очистить лог-файл?">Очистить</button>
+    <div class="log-toolbar">
+      <div class="log-filters">
+        <div class="filter-group">
+          <label for="log-level">Уровень:</label>
+          <select id="log-level">
+            <option value="">Все уровни</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="log-service">Сервис:</label>
+          <input type="text" id="log-service" placeholder="например: youtube">
+        </div>
+
+        <div class="filter-group">
+          <label for="log-limit">Лимит:</label>
+          <select id="log-limit">
+            <option value="50">50 строк</option>
+            <option value="100" selected>100 строк</option>
+            <option value="500">500 строк</option>
+            <option value="1000">1000 строк</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <span class="filter-label">Вид:</span>
+          <label class="checkbox-label">
+            <input type="checkbox" id="log-autoscroll" checked>
+            Автопрокрутка
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="log-compact">
+            Компактный вид
+          </label>
+        </div>
+      </div>
+
+      <div class="log-actions">
+        <button type="button" id="log-refresh" class="primary log-refresh">⟳ Обновить</button>
+        <button type="button" id="log-download">⬇ Скачать</button>
+        <button type="button" class="secondary" id="log-clear"
+                hx-post="/actions/logs-clear"
+                hx-swap="none"
+                hx-confirm="Очистить лог-файл?">
+          🗑 Очистить
+        </button>
+      </div>
     </div>
 
-    <article>
-      <pre id="log-output" class="logs">Нажмите «Обновить»…</pre>
+    <div class="log-stats" id="log-stats">
+      <span class="stat-item">Всего: <strong id="stat-total">0</strong></span>
+      <span class="stat-item debug">DEBUG: <strong id="stat-debug">0</strong></span>
+      <span class="stat-item ok">INFO: <strong id="stat-info">0</strong></span>
+      <span class="stat-item warn">WARN: <strong id="stat-warn">0</strong></span>
+      <span class="stat-item err">ERROR: <strong id="stat-err">0</strong></span>
+    </div>
+
+    <article class="log-container">
+      <div id="log-output" class="log-output">
+        <div class="log-placeholder">Загрузка логов…</div>
+      </div>
     </article>
   </main>
 </body>
