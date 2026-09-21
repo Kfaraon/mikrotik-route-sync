@@ -7,8 +7,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script src="/static/dashboard.js" defer></script>
 </head>
 <body>
   <nav class="bar">
@@ -21,35 +21,154 @@
     <span class="ver">v{{ .Version }}</span>
   </nav>
 
-  <main class="wrap">
-    <h1>Дашборд</h1>
-    <p class="muted">Часовой пояс: {{ .Timezone }}</p>
+  <main class="wrap dashboard-page" id="dashboard-page">
+    <header class="dash-header">
+      <div class="dash-title">
+        <h1>Дашборд</h1>
+        <p class="muted">
+          Состояние RouterOS, сервисы, расписания, маршруты и последняя активность в одном экране.
+        </p>
+      </div>
 
-    <div id="status" hx-get="/partials/status" hx-trigger="load, every 10s" hx-swap="innerHTML">
-      <p class="muted">Загрузка статуса…</p>
-    </div>
+      <div class="dash-header-actions">
+        <label class="switch">
+          <input type="checkbox" id="auto-refresh" checked>
+          <span>Авто 60с</span>
+        </label>
+        <button type="button" id="toggle-live" class="secondary">Live: выкл</button>
+        <button type="button" id="refresh-all" class="primary">⟳ Обновить</button>
+      </div>
+    </header>
 
-    <section class="grid">
-      <article>
-        <h2>Сервисы ({{ .ServiceCount }})</h2>
-        <table>
-          <thead><tr><th>Сервис</th><th>Расписание</th></tr></thead>
-          <tbody>
-            {{ range .Services }}
-            <tr><td>{{ . }}</td><td>{{ effectiveSchedule . }}</td></tr>
-            {{ else }}
-            <tr><td colspan="2" class="muted">Сервисы не настроены — добавьте на странице «Сервисы»</td></tr>
-            {{ end }}
-          </tbody>
-        </table>
+    <div id="dash-alert" class="dash-alert" hidden></div>
+
+    <section class="kpi-grid" aria-label="Основные показатели">
+      <article class="kpi-card" id="kpi-router">
+        <span class="kpi-label">RouterOS API</span>
+        <strong class="kpi-value" id="kpi-router-value">…</strong>
+        <small class="kpi-note" id="kpi-router-note">проверка подключения</small>
       </article>
 
-      <article>
-        <h2>Быстрые действия</h2>
-        <button type="button" hx-post="/actions/sync-all" hx-swap="none"
-                hx-confirm="Синхронизировать все сервисы?">🔄 Синхронизировать всё</button>
-        <p class="muted">Результат придёт в Telegram и отобразится здесь через WebSocket.</p>
-        <div id="events" class="events"></div>
+      <article class="kpi-card" id="kpi-services">
+        <span class="kpi-label">Сервисы</span>
+        <strong class="kpi-value" id="kpi-services-value">…</strong>
+        <small class="kpi-note" id="kpi-services-note">загрузка</small>
+      </article>
+
+      <article class="kpi-card" id="kpi-routes">
+        <span class="kpi-label">Маршруты</span>
+        <strong class="kpi-value" id="kpi-routes-value">…</strong>
+        <small class="kpi-note" id="kpi-routes-note">управляемые IPv4</small>
+      </article>
+
+      <article class="kpi-card" id="kpi-next">
+        <span class="kpi-label">Ближайший запуск</span>
+        <strong class="kpi-value" id="kpi-next-value">…</strong>
+        <small class="kpi-note" id="kpi-next-note">по расписанию</small>
+      </article>
+
+      <article class="kpi-card" id="kpi-last">
+        <span class="kpi-label">Последняя синхр.</span>
+        <strong class="kpi-value" id="kpi-last-value">…</strong>
+        <small class="kpi-note" id="kpi-last-note">история</small>
+      </article>
+
+      <article class="kpi-card" id="kpi-issues">
+        <span class="kpi-label">Проблемы</span>
+        <strong class="kpi-value" id="kpi-issues-value">…</strong>
+        <small class="kpi-note" id="kpi-issues-note">degraded / логи</small>
+      </article>
+    </section>
+
+    <section class="dash-grid dash-grid-3">
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Быстрые действия</h2>
+          <span class="muted" id="selected-count">выбрано: 0</span>
+        </div>
+        <div class="panel-body action-grid">
+          <button type="button" id="action-sync-all" class="primary">Синхронизировать все</button>
+          <button type="button" id="action-dry-all" class="outline">Dry-run все</button>
+          <button type="button" id="action-sync-selected" disabled>Синхр. выбранные</button>
+          <button type="button" id="action-dry-selected" class="secondary" disabled>Dry-run выбранные</button>
+          <a class="btn-link" href="/services">Сервисы</a>
+          <a class="btn-link" href="/logs">Логи</a>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Здоровье системы</h2>
+        </div>
+        <div class="panel-body health-list" id="health-list">
+          <div class="empty-state">Загрузка…</div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Ближайшие запуски</h2>
+          <span class="muted">≈ по расписанию</span>
+        </div>
+        <div class="panel-body list" id="next-list">
+          <div class="empty-state">Загрузка…</div>
+        </div>
+      </article>
+    </section>
+
+    <section class="dash-grid dash-grid-main">
+      <article class="panel services-panel">
+        <div class="panel-header">
+          <h2>Сервисы</h2>
+          <div class="table-tools">
+            <input type="search" id="service-search" placeholder="Поиск сервиса" autocomplete="off">
+            <select id="service-filter">
+              <option value="all">Все</option>
+              <option value="auto">Авто</option>
+              <option value="manual">Manual</option>
+              <option value="disabled">Disabled</option>
+              <option value="problems">Проблемные</option>
+              <option value="routes">С маршрутами</option>
+              <option value="override">С override</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="panel-body table-wrap">
+          <table class="service-table">
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" id="select-all" aria-label="Выбрать все"></th>
+                <th>Сервис</th>
+                <th>Состояние</th>
+                <th>Расписание</th>
+                <th>Следующий запуск</th>
+                <th>Маршрутов</th>
+                <th>Последняя синхр.</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody id="services-body"></tbody>
+          </table>
+
+          <div id="services-empty" class="empty-state" hidden>
+            Нет сервисов.
+          </div>
+        </div>
+      </article>
+
+      <article class="panel activity-panel">
+        <div class="panel-header">
+          <h2>Активность</h2>
+          <div class="tabs" role="tablist">
+            <button type="button" class="tab active" data-tab="sync">Синхронизации</button>
+            <button type="button" class="tab" data-tab="live">Live</button>
+            <button type="button" class="tab" data-tab="issues">Проблемы</button>
+          </div>
+        </div>
+        <div class="panel-body list" id="activity-list">
+          <div class="empty-state">Загрузка…</div>
+        </div>
       </article>
     </section>
   </main>
