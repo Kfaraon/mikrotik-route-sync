@@ -8,21 +8,6 @@
     return document.getElementById(id);
   }
 
-  function qs(sel) {
-    return document.querySelector(sel);
-  }
-
-  function qsa(sel) {
-    return document.querySelectorAll(sel);
-  }
-
-  function each(list, fn) {
-    if (!list) return;
-    for (var i = 0; i < list.length; i++) {
-      fn(list[i], i);
-    }
-  }
-
   function esc(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
       return {
@@ -47,86 +32,71 @@
     return String(value);
   }
 
-  function truncate(value, max) {
-    var s = text(value);
-    if (s.length <= max) return s;
-    return s.slice(0, max - 1) + "…";
+  function trim(value) {
+    return text(value).trim();
+  }
+
+  function lower(value) {
+    return trim(value).toLowerCase();
   }
 
   function pad(n) {
     return n < 10 ? "0" + n : String(n);
   }
 
-  function lower(value) {
-    return text(value).trim().toLowerCase();
+  function plural(n, forms) {
+    n = Math.abs(Number(n) || 0) % 100;
+    var n1 = n % 10;
+
+    if (n > 10 && n < 20) return forms[2];
+    if (n1 > 1 && n1 < 5) return forms[1];
+    if (n1 === 1) return forms[0];
+    return forms[2];
   }
 
-  function csrf() {
-    var m = qs('meta[name="csrf-token"]');
-    return m ? m.content : "";
+  function objKeys(obj) {
+    return Object.keys(obj || {});
   }
 
-  function closest(el, selector) {
-    return el && el.closest ? el.closest(selector) : null;
+  function toArray(value) {
+    if (Array.isArray(value)) return value;
+    if (value && Array.isArray(value.records)) return value.records;
+    if (value && Array.isArray(value.items)) return value.items;
+    if (value && Array.isArray(value.services)) return value.services;
+    return [];
   }
 
-  function showToast(message, isError) {
-    var t = byId("mrs-toast");
-    if (!t) {
-      t = document.createElement("div");
-      t.id = "mrs-toast";
-      t.className = "toast";
-      document.body.appendChild(t);
-    }
+  function api(path, options) {
+    options = options || {};
+    options.credentials = "same-origin";
+    options.headers = options.headers || {};
+    options.headers.Accept = "application/json";
 
-    t.textContent = message;
-    t.className = "toast show" + (isError ? "" : " success");
+    return fetch(path, options).then(function (response) {
+      return response.text().then(function (body) {
+        var parsed = null;
 
-    clearTimeout(t._timer);
-    t._timer = setTimeout(function () {
-      t.className = "toast";
-    }, 5000);
+        try {
+          parsed = body ? JSON.parse(body) : null;
+        } catch (e) {
+          parsed = null;
+        }
+
+        if (!response.ok || !parsed || parsed.ok !== true) {
+          throw new Error(parsed && parsed.error ? parsed.error : "HTTP " + response.status);
+        }
+
+        return parsed.data;
+      });
+    });
   }
 
   var els = {
     alert: byId("dash-alert"),
-    refresh: byId("refresh-all"),
-    toggleLive: byId("toggle-live"),
-    autoRefresh: byId("auto-refresh"),
-    selectedCount: byId("selected-count"),
+    refresh: byId("dash-refresh"),
+    auto: byId("dash-auto-refresh"),
     health: byId("health-list"),
-    next: byId("next-list"),
-    servicesBody: byId("services-body"),
-    servicesEmpty: byId("services-empty"),
-    serviceSearch: byId("service-search"),
-    serviceFilter: byId("service-filter"),
-    selectAll: byId("select-all"),
-    activityList: byId("activity-list"),
-    tabs: qsa(".tabs .tab"),
-    actionSyncAll: byId("action-sync-all"),
-    actionDryAll: byId("action-dry-all"),
-    actionSyncSelected: byId("action-sync-selected"),
-    actionDrySelected: byId("action-dry-selected"),
-    kpi: {
-      router: byId("kpi-router"),
-      routerValue: byId("kpi-router-value"),
-      routerNote: byId("kpi-router-note"),
-      services: byId("kpi-services"),
-      servicesValue: byId("kpi-services-value"),
-      servicesNote: byId("kpi-services-note"),
-      routes: byId("kpi-routes"),
-      routesValue: byId("kpi-routes-value"),
-      routesNote: byId("kpi-routes-note"),
-      next: byId("kpi-next"),
-      nextValue: byId("kpi-next-value"),
-      nextNote: byId("kpi-next-note"),
-      last: byId("kpi-last"),
-      lastValue: byId("kpi-last-value"),
-      lastNote: byId("kpi-last-note"),
-      issues: byId("kpi-issues"),
-      issuesValue: byId("kpi-issues-value"),
-      issuesNote: byId("kpi-issues-note")
-    }
+    next: byId("next-list")
   };
 
   var state = {
@@ -139,54 +109,11 @@
       effective: {}
     },
     history: [],
-    sortedHistory: [],
-    historyByService: {},
     logs: [],
-    issueLogs: [],
-    live: [],
-    degraded: {},
-    selection: {},
-    visibleItems: [],
-    visibleKeys: [],
-    activeTab: "sync",
+    derived: null,
     loading: false,
-    ws: null,
-    liveUserEnabled: false,
     autoTimer: null
   };
-
-  function api(path, options) {
-    options = options || {};
-    options.credentials = "same-origin";
-    options.headers = options.headers || {};
-    options.headers.Accept = "application/json";
-
-    var method = options.method ? options.method.toUpperCase() : "GET";
-    if (method !== "GET") {
-      options.headers["X-CSRF-Token"] = csrf();
-      if (options.body && !options.headers["Content-Type"]) {
-        options.headers["Content-Type"] = "application/json";
-      }
-    }
-
-    return fetch(path, options).then(function (response) {
-      return response.text().then(function (body) {
-        var parsed = null;
-        try {
-          parsed = body ? JSON.parse(body) : null;
-        } catch (e) {
-          parsed = null;
-        }
-
-        if (!response.ok || !parsed || parsed.ok !== true) {
-          var msg = parsed && parsed.error ? parsed.error : "HTTP " + response.status;
-          throw new Error(msg);
-        }
-
-        return parsed.data;
-      });
-    });
-  }
 
   function setAlert(kind, message) {
     if (!els.alert) return;
@@ -209,25 +136,7 @@
     if (!els.refresh) return;
 
     els.refresh.disabled = loading;
-    els.refresh.textContent = loading ? "Загрузка…" : "⟳ Обновить";
-
-    if (loading) {
-      els.refresh.classList.add("loading");
-    } else {
-      els.refresh.classList.remove("loading");
-    }
-  }
-
-  function setKpi(key, value, note, stateName) {
-    var card = els.kpi[key];
-    var valueEl = els.kpi[key + "Value"];
-    var noteEl = els.kpi[key + "Note"];
-
-    if (!card || !valueEl || !noteEl) return;
-
-    card.className = "kpi-card" + (stateName ? " state-" + stateName : "");
-    valueEl.textContent = text(value);
-    noteEl.textContent = text(note);
+    els.refresh.textContent = loading ? "Загрузка…" : "Обновить";
   }
 
   function parseTime(value) {
@@ -242,14 +151,21 @@
     return isNaN(parsed.getTime()) ? null : parsed;
   }
 
-  function formatClock(value) {
-    var d = parseTime(value);
-    if (!d) return "—";
-    return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
   }
 
-  function formatDateTime(d) {
+  function formatNextTime(d) {
     if (!d) return "—";
+
+    var now = new Date();
+
+    if (sameDay(d, now)) {
+      return pad(d.getHours()) + ":" + pad(d.getMinutes());
+    }
+
     return pad(d.getDate()) + "." + pad(d.getMonth() + 1) + " " +
       pad(d.getHours()) + ":" + pad(d.getMinutes());
   }
@@ -265,13 +181,17 @@
     if (sec < 45) return "только что";
 
     var min = Math.floor(sec / 60);
-    if (min < 60) return min + " мин назад";
+    if (min < 60) {
+      return min + " " + plural(min, ["минута", "минуты", "минут"]) + " назад";
+    }
 
     var hr = Math.floor(min / 60);
-    if (hr < 24) return hr + " ч назад";
+    if (hr < 24) {
+      return hr + " " + plural(hr, ["час", "часа", "часов"]) + " назад";
+    }
 
     var day = Math.floor(hr / 24);
-    return day + " дн назад";
+    return day + " " + plural(day, ["день", "дня", "дней"]) + " назад";
   }
 
   function relativeNext(d) {
@@ -284,17 +204,21 @@
     if (sec < 60) return "меньше минуты";
 
     var min = Math.floor(sec / 60);
-    if (min < 60) return "через " + min + " мин";
+    if (min < 60) {
+      return "через " + min + " " + plural(min, ["минута", "минуты", "минут"]);
+    }
 
     var hr = Math.floor(min / 60);
-    if (hr < 24) return "через " + hr + " ч";
+    if (hr < 24) {
+      return "через " + hr + " " + plural(hr, ["час", "часа", "часов"]);
+    }
 
     var day = Math.floor(hr / 24);
-    return "через " + day + " дн";
+    return "через " + day + " " + plural(day, ["день", "дня", "дней"]);
   }
 
   function normalizeSpec(value) {
-    return text(value).trim();
+    return trim(value);
   }
 
   function parseDuration(spec) {
@@ -305,6 +229,7 @@
     if (!n || n < 0) return 0;
 
     var unit = m[2].toLowerCase();
+
     if (unit === "m") return n * 60 * 1000;
     if (unit === "h") return n * 60 * 60 * 1000;
     if (unit === "d") return n * 24 * 60 * 60 * 1000;
@@ -313,23 +238,33 @@
     return 0;
   }
 
-  function formatDurationMs(ms) {
-    if (!ms) return "";
+  function formatIntervalHuman(ms) {
+    var min = 60 * 1000;
+    var hour = 60 * min;
+    var day = 24 * hour;
+    var week = 7 * day;
 
-    if (ms >= 7 * 24 * 60 * 60 * 1000 && ms % (7 * 24 * 60 * 60 * 1000) === 0) {
-      return (ms / (7 * 24 * 60 * 60 * 1000)) + " нед.";
-    }
-    if (ms >= 24 * 60 * 60 * 1000 && ms % (24 * 60 * 60 * 1000) === 0) {
-      return (ms / (24 * 60 * 60 * 1000)) + " дн.";
-    }
-    if (ms >= 60 * 60 * 1000 && ms % (60 * 60 * 1000) === 0) {
-      return (ms / (60 * 60 * 1000)) + " ч.";
-    }
-    if (ms >= 60 * 1000 && ms % (60 * 1000) === 0) {
-      return (ms / (60 * 1000)) + " мин.";
+    if (ms % week === 0) {
+      var w = ms / week;
+      return w === 1 ? "каждую неделю" : "каждые " + w + " " + plural(w, ["неделя", "недели", "недель"]);
     }
 
-    return Math.round(ms / 1000) + " сек.";
+    if (ms % day === 0) {
+      var d = ms / day;
+      return d === 1 ? "каждый день" : "каждые " + d + " " + plural(d, ["день", "дня", "дней"]);
+    }
+
+    if (ms % hour === 0) {
+      var h = ms / hour;
+      return h === 1 ? "каждый час" : "каждые " + h + " " + plural(h, ["час", "часа", "часов"]);
+    }
+
+    if (ms % min === 0) {
+      var m = ms / min;
+      return m === 1 ? "каждую минуту" : "каждые " + m + " " + plural(m, ["минута", "минуты", "минут"]);
+    }
+
+    return "каждые " + Math.round(ms / 1000) + " сек.";
   }
 
   function isCronLike(spec) {
@@ -338,82 +273,43 @@
     return parts.length === 5 && /^[\d*\/,\-\s]+$/.test(s);
   }
 
-  function classify(spec) {
+  function humanSchedule(spec) {
     var s = normalizeSpec(spec);
 
-    if (!s) {
-      return { key: "empty", label: "не задано", className: "badge-muted" };
+    if (!s) return "не задано";
+
+    var l = s.toLowerCase();
+
+    if (l === "manual") return "только вручную";
+    if (l === "disabled") return "отключено";
+    if (l === "inherit") return "наследуется";
+
+    var ms = parseDuration(s);
+    if (ms > 0) return formatIntervalHuman(ms);
+
+    var daily = s.match(/^daily at (\d{1,2}):(\d{2})$/i);
+    if (daily) {
+      return "ежедневно в " + daily[1] + ":" + daily[2];
     }
 
-    var lowerSpec = s.toLowerCase();
+    var weekly = s.match(/^weekly on ([a-z]+) at (\d{1,2}):(\d{2})$/i);
+    if (weekly) {
+      var days = {
+        sunday: "воскресеньям",
+        monday: "понедельникам",
+        tuesday: "вторникам",
+        wednesday: "средам",
+        thursday: "четвергам",
+        friday: "пятницам",
+        saturday: "субботам"
+      };
 
-    if (lowerSpec === "manual") {
-      return { key: "manual", label: "вручную", className: "badge-manual" };
-    }
-
-    if (lowerSpec === "disabled") {
-      return { key: "disabled", label: "отключено", className: "badge-disabled" };
-    }
-
-    if (lowerSpec === "inherit") {
-      return { key: "inherit", label: "наследуется", className: "badge-muted" };
-    }
-
-    if (parseDuration(s) > 0) {
-      return { key: "interval", label: "интервал", className: "badge-auto" };
-    }
-
-    if (/^daily at \d{1,2}:\d{2}$/i.test(s)) {
-      return { key: "daily", label: "ежедневно", className: "badge-auto" };
-    }
-
-    if (/^weekly on [a-z]+ at \d{1,2}:\d{2}$/i.test(s)) {
-      return { key: "weekly", label: "еженедельно", className: "badge-auto" };
+      var day = weekly[1].toLowerCase();
+      return "по " + (days[day] || day) + " в " + weekly[2] + ":" + weekly[3];
     }
 
     if (isCronLike(s)) {
-      return { key: "cron", label: "cron", className: "badge-auto" };
-    }
-
-    return { key: "custom", label: "custom", className: "badge-auto" };
-  }
-
-  function humanSchedule(spec) {
-    var s = normalizeSpec(spec);
-    var c = classify(s);
-
-    if (!s) return "не задано";
-    if (c.key === "manual") return "только вручную";
-    if (c.key === "disabled") return "синхронизация отключена";
-    if (c.key === "inherit") return "наследуется";
-
-    if (c.key === "interval") {
-      return "каждые " + formatDurationMs(parseDuration(s));
-    }
-
-    if (c.key === "daily") {
-      var d = s.match(/^daily at (\d{1,2}):(\d{2})$/i);
-      if (d) return "ежедневно в " + d[1] + ":" + d[2];
-    }
-
-    if (c.key === "weekly") {
-      var w = s.match(/^weekly on ([a-z]+) at (\d{1,2}):(\d{2})$/i);
-      if (w) {
-        var days = {
-          sunday: "воскресенье",
-          monday: "понедельник",
-          tuesday: "вторник",
-          wednesday: "среда",
-          thursday: "четверг",
-          friday: "пятница",
-          saturday: "суббота"
-        };
-        return "каждую " + (days[w[1].toLowerCase()] || w[1]) + " в " + w[2] + ":" + w[3];
-      }
-    }
-
-    if (c.key === "cron") {
-      return "cron: " + s;
+      return "по cron: " + s;
     }
 
     return s;
@@ -423,27 +319,26 @@
     var s = normalizeSpec(spec);
     if (!s) return null;
 
-    var c = classify(s);
-    if (c.key === "manual" || c.key === "disabled" || c.key === "inherit" || c.key === "empty") {
-      return null;
-    }
+    var l = s.toLowerCase();
+    if (l === "manual" || l === "disabled" || l === "inherit") return null;
 
     var ms = parseDuration(s);
-    if (ms > 0) {
-      return new Date(Date.now() + ms);
-    }
+    if (ms > 0) return new Date(Date.now() + ms);
 
     var daily = s.match(/^daily at (\d{1,2}):(\d{2})$/i);
     if (daily) {
       var dh = parseInt(daily[1], 10);
       var dm = parseInt(daily[2], 10);
+
       if (dh < 0 || dh > 23 || dm < 0 || dm > 59) return null;
 
       var now = new Date();
       var d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), dh, dm, 0, 0);
+
       if (d.getTime() <= now.getTime()) {
         d.setDate(d.getDate() + 1);
       }
+
       return d;
     }
 
@@ -464,11 +359,13 @@
 
       var wh = parseInt(weekly[2], 10);
       var wm = parseInt(weekly[3], 10);
+
       if (wh < 0 || wh > 23 || wm < 0 || wm > 59) return null;
 
       var n = new Date();
       var wd = new Date(n.getFullYear(), n.getMonth(), n.getDate(), wh, wm, 0, 0);
       var delta = (target - wd.getDay() + 7) % 7;
+
       wd.setDate(wd.getDate() + delta);
 
       if (wd.getTime() <= n.getTime()) {
@@ -487,8 +384,10 @@
 
   function serviceRoutes(row) {
     if (!row) return 0;
+
     var v = row.Routes;
     if (v === undefined) v = row.routes;
+
     return Number(v) || 0;
   }
 
@@ -497,59 +396,43 @@
     return text(row.Schedule || row.schedule);
   }
 
-  function serviceHasOverride(row) {
-    if (!row) return false;
-    return Boolean(row.Overrides || row.overrides || row.HasOverride || row.has_override);
-  }
-
   function getEffective(name) {
     var n = text(name);
     var ln = lower(n);
-    var eff = state.schedules && state.schedules.effective ? state.schedules.effective : {};
+    var eff = state.schedules && state.schedules.effective;
 
-    if (eff[n]) return normalizeSpec(eff[n]);
+    if (eff && typeof eff === "object") {
+      if (eff[n]) return normalizeSpec(eff[n]);
+      if (eff[ln]) return normalizeSpec(eff[ln]);
 
-    for (var k in eff) {
-      if (Object.prototype.hasOwnProperty.call(eff, k) && lower(k) === ln) {
-        return normalizeSpec(eff[k]);
+      for (var k in eff) {
+        if (Object.prototype.hasOwnProperty.call(eff, k) && lower(k) === ln) {
+          return normalizeSpec(eff[k]);
+        }
       }
     }
 
     for (var i = 0; i < state.services.length; i++) {
-      var row = state.services[i];
-      if (lower(serviceName(row)) === ln) {
-        return normalizeSpec(serviceSchedule(row));
+      if (lower(serviceName(state.services[i])) === ln) {
+        return normalizeSpec(serviceSchedule(state.services[i]));
       }
     }
 
     return normalizeSpec(state.schedules && state.schedules.global);
   }
 
-  function mikrotikOk() {
-    return Boolean(state.status && state.status.mikrotik_ok !== false);
-  }
-
-  function statusLabel(status) {
-    if (status === "success") return "успех";
-    if (status === "error") return "ошибка";
-    if (status === "running") return "выполняется";
-    return "нет данных";
-  }
-
-  function statusBadge(status) {
-    var map = {
-      success: ["OK", "badge-ok"],
-      error: ["Ошибка", "badge-err"],
-      running: ["Выполняется", "badge-auto"],
-      unknown: ["—", "badge-muted"]
-    };
-    var item = map[status] || map.unknown;
-    return '<span class="dash-badge ' + item[1] + '">' + esc(item[0]) + "</span>";
-  }
-
   function historyTime(rec) {
     if (!rec) return "";
-    return rec.time || rec.started_at || rec.finished_at || rec.timestamp || rec.created_at || "";
+
+    return rec.time ||
+      rec.started_at ||
+      rec.finished_at ||
+      rec.timestamp ||
+      rec.created_at ||
+      rec.Time ||
+      rec.StartedAt ||
+      rec.FinishedAt ||
+      "";
   }
 
   function historyService(rec) {
@@ -559,7 +442,7 @@
 
   function historyError(rec) {
     if (!rec) return "";
-    return text(rec.error || rec.err || rec.message || rec.reason);
+    return text(rec.error || rec.err || rec.message || rec.reason || rec.Error || rec.Err);
   }
 
   function historyStatus(rec) {
@@ -567,8 +450,10 @@
 
     if (historyError(rec)) return "error";
 
-    var st = lower(rec.status || rec.result || rec.state);
+    var st = lower(rec.status || rec.result || rec.state || rec.Status);
+
     if (st === "error" || st === "failed" || st === "fail") return "error";
+    if (st === "warning" || st === "warn") return "warning";
     if (st === "ok" || st === "success" || st === "completed") return "success";
     if (st === "running" || st === "started") return "running";
 
@@ -578,97 +463,38 @@
     return "unknown";
   }
 
-  function isDryRun(rec) {
-    return Boolean(rec && (rec.dry_run || rec.dryrun || rec.dry));
+  function statusLabel(status) {
+    if (status === "success") return "успех";
+    if (status === "error") return "ошибка";
+    if (status === "warning") return "предупреждение";
+    if (status === "running") return "выполняется";
+    return "нет данных";
   }
 
-  function numField(obj, names) {
-    if (!obj) return 0;
-    for (var i = 0; i < names.length; i++) {
-      var v = obj[names[i]];
-      if (v !== undefined && v !== null) {
-        return Number(v) || 0;
-      }
-    }
-    return 0;
-  }
-
-  function historyCounts(rec) {
-    return {
-      added: numField(rec, ["added", "routes_added", "add", "Added"]),
-      deleted: numField(rec, ["deleted", "routes_deleted", "del", "Deleted"]),
-      unchanged: numField(rec, ["unchanged", "same", "unchanged_count", "Unchanged"])
-    };
-  }
-
-  function historySubtitle(rec) {
-    if (!rec) return "нет данных";
-
-    var parts = [];
-    if (isDryRun(rec)) parts.push("dry-run");
-
-    var c = historyCounts(rec);
-    if (c.added) parts.push("+" + c.added);
-    if (c.deleted) parts.push("-" + c.deleted);
-    if (c.unchanged) parts.push("=" + c.unchanged);
-
-    var err = historyError(rec);
-    if (err) parts.push(truncate(err, 120));
-
-    return parts.length ? parts.join(" · ") : "без деталей";
+  function statusClass(status) {
+    if (status === "success") return "ok";
+    if (status === "error") return "err";
+    if (status === "warning") return "warn";
+    return "muted";
   }
 
   function logLevel(entry) {
     return text(entry && (entry.level || entry.Level)).toUpperCase() || "INFO";
   }
 
-  function isIssueLog(entry) {
-    var l = logLevel(entry);
-    return l === "ERROR" || l === "WARN";
-  }
-
-  function logMessage(entry) {
-    return text(entry && (entry.msg || entry.message || entry.Message)) || "сообщение";
-  }
-
   function logService(entry) {
-    return text(entry && (entry.service || entry.Service)) || "—";
+    return text(entry && (entry.service || entry.Service));
   }
 
-  function logError(entry) {
-    return text(entry && (entry.err || entry.error || entry.Error));
-  }
-
-  function logLevelBadge(level) {
-    var cls = "badge-muted";
-    if (level === "ERROR") cls = "badge-err";
-    else if (level === "WARN") cls = "badge-warn";
-    else if (level === "INFO") cls = "badge-ok";
-
-    return '<span class="dash-badge ' + cls + '">' + esc(level) + "</span>";
-  }
-
-  function summarizeEventData(data) {
-    if (data === null || data === undefined) return "";
-    if (typeof data !== "object") return truncate(text(data), 140);
-
-    var keys = Object.keys(data).slice(0, 4);
-    var parts = [];
-
-    for (var i = 0; i < keys.length; i++) {
-      parts.push(keys[i] + "=" + truncate(text(data[keys[i]]), 42));
-    }
-
-    return parts.join(", ");
-  }
-
-  function buildIndexes() {
-    state.degraded = {};
-
+  function buildDerived() {
+    var degraded = {};
     var deg = state.status && state.status.degraded;
+
     if (Array.isArray(deg)) {
-      each(deg, function (item) {
+      for (var i = 0; i < deg.length; i++) {
+        var item = deg[i];
         var name = "";
+
         if (typeof item === "string") {
           name = item;
         } else if (item) {
@@ -676,11 +502,26 @@
         }
 
         name = lower(name);
-        if (name) state.degraded[name] = true;
-      });
+        if (name) degraded[name] = true;
+      }
     }
 
-    state.sortedHistory = state.history.slice().sort(function (a, b) {
+    var errorSvc = {};
+    var warnSvc = {};
+
+    for (var j = 0; j < state.logs.length; j++) {
+      var entry = state.logs[j];
+      var svc = lower(logService(entry));
+
+      if (!svc) continue;
+
+      var level = logLevel(entry);
+
+      if (level === "ERROR") errorSvc[svc] = true;
+      else if (level === "WARN") warnSvc[svc] = true;
+    }
+
+    var sortedHistory = state.history.slice().sort(function (a, b) {
       var ta = parseTime(historyTime(a));
       var tb = parseTime(historyTime(b));
 
@@ -691,174 +532,55 @@
       return tb.getTime() - ta.getTime();
     });
 
-    state.historyByService = {};
-    each(state.sortedHistory, function (rec) {
-      var name = lower(historyService(rec));
-      if (name && !state.historyByService[name]) {
-        state.historyByService[name] = rec;
+    var latestByService = {};
+
+    for (var k = 0; k < sortedHistory.length; k++) {
+      var rec = sortedHistory[k];
+      var recService = lower(historyService(rec));
+
+      if (recService && !latestByService[recService]) {
+        latestByService[recService] = rec;
       }
-    });
-
-    state.issueLogs = state.logs.filter(isIssueLog).slice(0, 80);
-  }
-
-  function scheduleCounts() {
-    var counts = { auto: 0, manual: 0, disabled: 0, other: 0 };
-
-    each(state.services, function (row) {
-      var name = serviceName(row);
-      var c = classify(getEffective(name));
-
-      if (c.key === "manual") counts.manual++;
-      else if (c.key === "disabled") counts.disabled++;
-      else if (c.key === "interval" || c.key === "daily" || c.key === "weekly" || c.key === "cron" || c.key === "custom") counts.auto++;
-      else counts.other++;
-    });
-
-    return counts;
-  }
-
-  function totalRoutes() {
-    var sum = 0;
-    each(state.services, function (row) {
-      sum += serviceRoutes(row);
-    });
-    return sum;
-  }
-
-  function computeNextItems() {
-    var items = [];
-
-    each(state.services, function (row) {
-      var name = serviceName(row);
-      if (!name) return;
-
-      var eff = getEffective(name);
-      var next = nextRun(eff);
-
-      if (next) {
-        items.push({
-          name: name,
-          eff: eff,
-          next: next
-        });
-      }
-    });
-
-    items.sort(function (a, b) {
-      return a.next.getTime() - b.next.getTime() || a.name.localeCompare(b.name);
-    });
-
-    return items;
-  }
-
-  function serviceHealth(name, hist) {
-    if (!state.status) {
-      return { label: "нет данных", cls: "badge-muted" };
     }
 
-    if (!mikrotikOk()) {
-      return { label: "API ошибка", cls: "badge-err" };
+    for (var nameKey in latestByService) {
+      if (!Object.prototype.hasOwnProperty.call(latestByService, nameKey)) continue;
+
+      var st = historyStatus(latestByService[nameKey]);
+
+      if (st === "error") errorSvc[nameKey] = true;
+      else if (st === "warning") warnSvc[nameKey] = true;
     }
 
-    if (state.degraded[lower(name)]) {
-      return { label: "degraded", cls: "badge-warn" };
+    var problem = {};
+
+    for (var dk in degraded) {
+      if (Object.prototype.hasOwnProperty.call(degraded, dk)) problem[dk] = true;
     }
 
-    var st = hist ? historyStatus(hist) : "unknown";
-
-    if (st === "error") {
-      return { label: "ошибка", cls: "badge-err" };
+    for (var ek in errorSvc) {
+      if (Object.prototype.hasOwnProperty.call(errorSvc, ek)) problem[ek] = true;
     }
 
-    if (st === "success") {
-      return { label: "OK", cls: "badge-ok" };
+    for (var wk in warnSvc) {
+      if (Object.prototype.hasOwnProperty.call(warnSvc, wk)) problem[wk] = true;
     }
 
-    return { label: "нет данных", cls: "badge-muted" };
-  }
+    var routes = 0;
 
-  function healthPriority(health) {
-    if (health.cls.indexOf("badge-err") !== -1) return 0;
-    if (health.cls.indexOf("badge-warn") !== -1) return 1;
-    return 2;
-  }
-
-  function serviceComparator(a, b) {
-    var pa = healthPriority(a.health);
-    var pb = healthPriority(b.health);
-
-    if (pa !== pb) return pa - pb;
-
-    if (a.next && b.next) return a.next.getTime() - b.next.getTime();
-    if (a.next) return -1;
-    if (b.next) return 1;
-
-    return a.name.localeCompare(b.name);
-  }
-
-  function renderKpis() {
-    var ok = mikrotikOk();
-    var uptime = state.status ? text(state.status.uptime || "—") : "нет данных";
-
-    setKpi(
-      "router",
-      state.status ? (ok ? "Доступен" : "Недоступен") : "…",
-      "uptime: " + uptime,
-      state.status ? (ok ? "ok" : "err") : "muted"
-    );
-
-    var counts = scheduleCounts();
-    setKpi(
-      "services",
-      String(state.services.length),
-      counts.auto + " авто · " + counts.manual + " manual · " + counts.disabled + " disabled",
-      "muted"
-    );
-
-    var routes = totalRoutes();
-    setKpi(
-      "routes",
-      String(routes),
-      routes ? "управляемых IPv4-маршрутов" : "маршрутов пока нет",
-      routes ? "ok" : "muted"
-    );
-
-    var nextItems = computeNextItems();
-    if (nextItems.length) {
-      setKpi(
-        "next",
-        nextItems[0].name,
-        formatDateTime(nextItems[0].next) + " · " + relativeNext(nextItems[0].next),
-        "ok"
-      );
-    } else {
-      setKpi("next", "—", "нет автоматических запусков", "muted");
+    for (var s = 0; s < state.services.length; s++) {
+      routes += serviceRoutes(state.services[s]);
     }
 
-    var latest = state.sortedHistory && state.sortedHistory[0];
-    if (latest) {
-      var st = historyStatus(latest);
-      setKpi(
-        "last",
-        historyService(latest) || "—",
-        statusLabel(st) + " · " + relativeTime(historyTime(latest)),
-        st === "success" ? "ok" : st === "error" ? "err" : "muted"
-      );
-    } else {
-      setKpi("last", "—", "нет истории синхронизаций", "muted");
-    }
-
-    var degCount = Object.keys(state.degraded).length;
-    var logCount = state.issueLogs ? state.issueLogs.length : 0;
-    var issueTotal = degCount + logCount;
-
-    setKpi(
-      "issues",
-      String(issueTotal),
-      degCount + " degraded · " + logCount + " ошибок/предупреждений",
-      issueTotal ? "err" : "ok"
-    );
+    state.derived = {
+      degraded: degraded,
+      errorSvc: errorSvc,
+      warnSvc: warnSvc,
+      latestByService: latestByService,
+      latestHistory: sortedHistory[0] || null,
+      totalRoutes: routes,
+      problemCount: objKeys(problem).length
+    };
   }
 
   function healthRow(label, value, note, cls) {
@@ -872,54 +594,84 @@
   function renderHealth() {
     if (!els.health) return;
 
-    var counts = scheduleCounts();
-    var degCount = Object.keys(state.degraded).length;
-    var logCount = state.issueLogs ? state.issueLogs.length : 0;
-    var latest = state.sortedHistory && state.sortedHistory[0];
+    var d = state.derived || {};
+    var degraded = d.degraded || {};
+    var errorSvc = d.errorSvc || {};
+    var warnSvc = d.warnSvc || {};
+
+    var mikrotikValue;
+    var mikrotikNote;
+    var mikrotikCls;
+
+    if (!state.status) {
+      mikrotikValue = "Нет данных";
+      mikrotikNote = "статус недоступен";
+      mikrotikCls = "muted";
+    } else if (state.status.mikrotik_ok === false) {
+      mikrotikValue = "Недоступен";
+      mikrotikNote = "проверьте REST API и сеть";
+      mikrotikCls = "err";
+    } else {
+      mikrotikValue = "Доступен";
+      mikrotikNote = "Uptime: " + text(state.status.uptime || "—");
+      mikrotikCls = "ok";
+    }
+
+    var total = state.services.length;
+    var routes = d.totalRoutes || 0;
+
+    var servicesNote;
+
+    if (total === 0) {
+      servicesNote = "сервисы не добавлены";
+    } else if (routes === 0) {
+      servicesNote = "маршрутов пока нет";
+    } else {
+      servicesNote = routes + " " + plural(routes, ["маршрут", "маршрута", "маршрутов"]);
+    }
+
+    var degradedCount = objKeys(degraded).length;
+    var errorCount = objKeys(errorSvc).length;
+    var warnCount = objKeys(warnSvc).length;
+    var problemCount = d.problemCount || 0;
+
+    var problemParts = [];
+
+    if (degradedCount) {
+      problemParts.push("сбойных: " + degradedCount);
+    }
+
+    if (errorCount) {
+      problemParts.push("ошибок: " + errorCount);
+    }
+
+    if (warnCount) {
+      problemParts.push("предупреждений: " + warnCount);
+    }
+
+    var problemNote = problemParts.length
+      ? problemParts.join(" · ")
+      : "проблем не обнаружено";
+
+    var problemCls = "ok";
+
+    if (problemCount) {
+      problemCls = (degradedCount || errorCount) ? "err" : "warn";
+    }
+
+    var latest = d.latestHistory;
+    var latestValue = latest ? (historyService(latest) || "—") : "—";
+    var latestStatus = latest ? historyStatus(latest) : "unknown";
+    var latestNote = latest
+      ? statusLabel(latestStatus) + " · " + relativeTime(historyTime(latest))
+      : "история пуста";
 
     var html = "";
 
-    html += healthRow(
-      "RouterOS REST API",
-      state.status ? (mikrotikOk() ? "доступен" : "ошибка") : "нет данных",
-      state.status ? "uptime: " + text(state.status.uptime || "—") : "запрос /api/v1/status не выполнен",
-      state.status ? (mikrotikOk() ? "ok" : "err") : "muted"
-    );
-
-    html += healthRow(
-      "Сервисы",
-      String(state.services.length),
-      counts.auto + " авто · " + counts.manual + " manual · " + counts.disabled + " disabled",
-      "muted"
-    );
-
-    html += healthRow(
-      "Degraded",
-      String(degCount),
-      degCount ? "есть сервисы в degraded-состоянии" : "проблем не обнаружено",
-      degCount ? "warn" : "ok"
-    );
-
-    html += healthRow(
-      "Ошибки и предупреждения",
-      String(logCount),
-      logCount ? "смотрите вкладку «Проблемы»" : "в последних логах нет WARN/ERROR",
-      logCount ? "warn" : "ok"
-    );
-
-    html += healthRow(
-      "Последняя синхронизация",
-      latest ? (historyService(latest) || "—") : "—",
-      latest ? statusLabel(historyStatus(latest)) + " · " + relativeTime(historyTime(latest)) : "история пуста",
-      latest ? (historyStatus(latest) === "success" ? "ok" : historyStatus(latest) === "error" ? "err" : "muted") : "muted"
-    );
-
-    html += healthRow(
-      "Глобальное расписание",
-      normalizeSpec(state.schedules.global) || "—",
-      "значение по умолчанию для сервисов без override",
-      "muted"
-    );
+    html += healthRow("RouterOS API", mikrotikValue, mikrotikNote, mikrotikCls);
+    html += healthRow("Сервисы", String(total), servicesNote, "muted");
+    html += healthRow("Проблемы", String(problemCount), problemNote, problemCls);
+    html += healthRow("Последняя синхронизация", latestValue, latestNote, latest ? statusClass(latestStatus) : "muted");
 
     els.health.innerHTML = html;
   }
@@ -927,312 +679,56 @@
   function renderNext() {
     if (!els.next) return;
 
-    var items = computeNextItems().slice(0, 8);
+    var items = [];
+
+    for (var i = 0; i < state.services.length; i++) {
+      var name = serviceName(state.services[i]);
+      if (!name) continue;
+
+      var effective = getEffective(name);
+      var next = nextRun(effective);
+
+      if (next) {
+        items.push({
+          name: name,
+          effective: effective,
+          next: next
+        });
+      }
+    }
+
+    items.sort(function (a, b) {
+      return a.next.getTime() - b.next.getTime() || a.name.localeCompare(b.name);
+    });
 
     if (!items.length) {
-      els.next.innerHTML = '<div class="empty-state">Нет автоматических запусков.</div>';
+      els.next.innerHTML = '<div class="empty-state">Нет запланированных запусков.</div>';
       return;
     }
 
+    var limit = Math.min(items.length, 8);
     var html = "";
 
-    each(items, function (item) {
+    for (var j = 0; j < limit; j++) {
+      var item = items[j];
+
       html += '<div class="list-row">' +
-        '<span class="activity-time">' + esc(formatDateTime(item.next)) + "</span>" +
-        '<div class="activity-main">' +
-        '<div class="primary-text">' + esc(item.name) + "</div>" +
-        '<div class="secondary-text">' + esc(humanSchedule(item.eff)) + "</div>" +
+        '<span class="activity-time">' + esc(formatNextTime(item.next)) + "</span>" +
+        "<div>" +
+          '<div class="primary-text">' + esc(item.name) + "</div>" +
+          '<div class="secondary-text">' + esc(humanSchedule(item.effective)) + "</div>" +
         "</div>" +
         '<div class="activity-right">' +
-        '<span class="dash-badge badge-auto">' + esc(relativeNext(item.next)) + "</span>" +
+          '<span class="muted">' + esc(relativeNext(item.next)) + "</span>" +
         "</div>" +
         "</div>";
-    });
+    }
 
     els.next.innerHTML = html;
   }
 
-  function serviceRowHtml(item) {
-    var checked = state.selection[item.key] ? " checked" : "";
-    var selectedClass = state.selection[item.key] ? " selected" : "";
-    var scheduleClass = classify(item.eff).className;
-
-    var nextHtml = item.next
-      ? esc(formatDateTime(item.next)) + '<div class="muted small">' + esc(relativeNext(item.next)) + "</div>"
-      : '<span class="muted">—</span>';
-
-    var lastHtml = item.hist
-      ? statusBadge(historyStatus(item.hist)) + '<div class="muted small">' + esc(relativeTime(historyTime(item.hist))) + "</div>"
-      : '<span class="muted">—</span>';
-
-    return '<tr class="' + selectedClass + '" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '">' +
-      '<td><input type="checkbox" class="row-select" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '"' + checked + "></td>" +
-      "<td>" +
-      '<div class="svc-name">' +
-      "<strong>" + esc(item.name) + "</strong>" +
-      (item.hasOverride ? '<span class="dash-badge badge-override">override</span>' : "") +
-      "</div>" +
-      "</td>" +
-      '<td><span class="dash-badge ' + esc(item.health.cls) + '">' + esc(item.health.label) + "</span></td>" +
-      "<td>" +
-      "<code>" + esc(item.eff || "—") + "</code>" +
-      '<div class="muted small">' + esc(humanSchedule(item.eff)) + "</div>" +
-      '<div style="margin-top:.25rem"><span class="dash-badge ' + esc(scheduleClass) + '">' + esc(classify(item.eff).label) + "</span></div>" +
-      "</td>" +
-      "<td>" + nextHtml + "</td>" +
-      "<td>" + esc(String(item.routes)) + "</td>" +
-      "<td>" + lastHtml + "</td>" +
-      "<td>" +
-      '<div class="row-actions">' +
-      '<button type="button" class="outline" data-action="dry" data-service="' + esc(item.name) + '">Dry</button>' +
-      '<button type="button" data-action="sync" data-service="' + esc(item.name) + '">Синхр.</button>' +
-      "</div>" +
-      "</td>" +
-      "</tr>";
-  }
-
-  function renderServices() {
-    if (!els.servicesBody || !els.servicesEmpty) return;
-
-    var q = lower(els.serviceSearch ? els.serviceSearch.value : "");
-    var filter = els.serviceFilter ? els.serviceFilter.value : "all";
-    var items = [];
-
-    each(state.services, function (row) {
-      var name = serviceName(row);
-      if (!name) return;
-
-      var key = lower(name);
-      var eff = getEffective(name);
-      var cls = classify(eff);
-      var next = nextRun(eff);
-      var hist = state.historyByService[key];
-      var health = serviceHealth(name, hist);
-
-      var item = {
-        key: key,
-        name: name,
-        row: row,
-        eff: eff,
-        cls: cls,
-        next: next,
-        hist: hist,
-        health: health,
-        routes: serviceRoutes(row),
-        degraded: Boolean(state.degraded[key]),
-        hasOverride: serviceHasOverride(row)
-      };
-
-      if (q) {
-        var hay = [name, eff, text(hist && historyService(hist))].join(" ").toLowerCase();
-        if (hay.indexOf(q) === -1) return;
-      }
-
-      if (filter === "auto") {
-        if (!(cls.key === "interval" || cls.key === "daily" || cls.key === "weekly" || cls.key === "cron" || cls.key === "custom")) return;
-      } else if (filter === "manual") {
-        if (cls.key !== "manual") return;
-      } else if (filter === "disabled") {
-        if (cls.key !== "disabled") return;
-      } else if (filter === "problems") {
-        if (!item.degraded && item.health.cls.indexOf("badge-err") === -1 && item.health.cls.indexOf("badge-warn") === -1) return;
-      } else if (filter === "routes") {
-        if (item.routes <= 0) return;
-      } else if (filter === "override") {
-        if (!item.hasOverride) return;
-      }
-
-      items.push(item);
-    });
-
-    items.sort(serviceComparator);
-
-    state.visibleItems = items;
-    state.visibleKeys = items.map(function (item) {
-      return item.key;
-    });
-
-    if (!items.length) {
-      els.servicesBody.innerHTML = "";
-      els.servicesEmpty.hidden = false;
-      els.servicesEmpty.textContent = state.services.length
-        ? "Ничего не найдено. Измените поиск или фильтр."
-        : "Нет сервисов. Добавьте сервис на странице «Сервисы».";
-      updateSelectionUI();
-      return;
-    }
-
-    els.servicesEmpty.hidden = true;
-
-    var html = "";
-    each(items, function (item) {
-      html += serviceRowHtml(item);
-    });
-
-    els.servicesBody.innerHTML = html;
-    updateSelectionUI();
-  }
-
-  function selectedNames() {
-    var arr = [];
-    for (var k in state.selection) {
-      if (Object.prototype.hasOwnProperty.call(state.selection, k)) {
-        arr.push(state.selection[k]);
-      }
-    }
-    return arr;
-  }
-
-  function updateSelectionUI() {
-    var count = Object.keys(state.selection).length;
-
-    if (els.selectedCount) {
-      els.selectedCount.textContent = "выбрано: " + count;
-    }
-
-    if (els.actionSyncSelected) {
-      els.actionSyncSelected.disabled = count === 0;
-    }
-
-    if (els.actionDrySelected) {
-      els.actionDrySelected.disabled = count === 0;
-    }
-
-    each(els.servicesBody ? els.servicesBody.querySelectorAll("tr[data-key]") : [], function (tr) {
-      var key = tr.getAttribute("data-key");
-      var isSelected = Boolean(state.selection[key]);
-
-      if (tr.classList) {
-        tr.classList.toggle("selected", isSelected);
-      }
-
-      var cb = tr.querySelector(".row-select");
-      if (cb) cb.checked = isSelected;
-    });
-
-    if (els.selectAll) {
-      var visibleKeys = state.visibleKeys || [];
-      var selectedVisible = 0;
-
-      each(visibleKeys, function (key) {
-        if (state.selection[key]) selectedVisible++;
-      });
-
-      els.selectAll.checked = visibleKeys.length > 0 && selectedVisible === visibleKeys.length;
-      els.selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleKeys.length;
-    }
-  }
-
-  function toggleSelect(key, name, checked) {
-    if (checked) {
-      state.selection[key] = name;
-    } else {
-      delete state.selection[key];
-    }
-    updateSelectionUI();
-  }
-
-  function syncActivityHtml() {
-    var list = state.sortedHistory.slice(0, 20);
-
-    if (!list.length) {
-      return '<div class="empty-state">История синхронизаций пуста.</div>';
-    }
-
-    var html = "";
-
-    each(list, function (rec) {
-      var st = historyStatus(rec);
-
-      html += '<div class="list-row activity-item">' +
-        '<span class="activity-time">' + esc(formatClock(historyTime(rec))) + "</span>" +
-        '<div class="activity-main">' +
-        '<div class="primary-text">' + esc(historyService(rec) || "—") + "</div>" +
-        '<div class="secondary-text">' + esc(historySubtitle(rec)) + "</div>" +
-        "</div>" +
-        '<div class="activity-right">' + statusBadge(st) + "</div>" +
-        "</div>";
-    });
-
-    return html;
-  }
-
-  function liveActivityHtml() {
-    if (!state.live.length) {
-      return '<div class="empty-state">Live-событий пока нет. Включите Live и дождитесь событий WebSocket.</div>';
-    }
-
-    var html = "";
-
-    each(state.live.slice(0, 50), function (item) {
-      html += '<div class="list-row activity-item">' +
-        '<span class="activity-time">' + esc(formatClock(item.time)) + "</span>" +
-        '<div class="activity-main">' +
-        '<div class="primary-text">' + esc(item.event || "event") + "</div>" +
-        '<div class="secondary-text">' + esc(summarizeEventData(item.data)) + "</div>" +
-        "</div>" +
-        '<div class="activity-right">' +
-        '<span class="dash-badge badge-auto">WS</span>' +
-        "</div>" +
-        "</div>";
-    });
-
-    return html;
-  }
-
-  function issuesActivityHtml() {
-    if (!state.issueLogs.length) {
-      return '<div class="empty-state">Ошибок и предупреждений в последних логах нет.</div>';
-    }
-
-    var html = "";
-
-    each(state.issueLogs.slice(0, 40), function (entry) {
-      var level = logLevel(entry);
-      var err = logError(entry);
-      var subtitle = logService(entry);
-
-      if (err) {
-        subtitle += " · " + truncate(err, 140);
-      }
-
-      html += '<div class="list-row activity-item">' +
-        '<span class="activity-time">' + esc(formatClock(entry.time)) + "</span>" +
-        '<div class="activity-main">' +
-        '<div class="primary-text">' + esc(logMessage(entry)) + "</div>" +
-        '<div class="secondary-text">' + esc(subtitle) + "</div>" +
-        "</div>" +
-        '<div class="activity-right">' + logLevelBadge(level) + "</div>" +
-        "</div>";
-    });
-
-    return html;
-  }
-
-  function renderActivity() {
-    if (!els.activityList) return;
-
-    if (state.activeTab === "live") {
-      els.activityList.innerHTML = liveActivityHtml();
-    } else if (state.activeTab === "issues") {
-      els.activityList.innerHTML = issuesActivityHtml();
-    } else {
-      els.activityList.innerHTML = syncActivityHtml();
-    }
-  }
-
-  function renderAll() {
-    renderKpis();
-    renderHealth();
-    renderNext();
-    renderServices();
-    renderActivity();
-  }
-
   function loadAll(force) {
-    if (state.loading && !force) {
-      return Promise.resolve();
-    }
+    if (state.loading && !force) return Promise.resolve();
 
     setRefreshing(true);
 
@@ -1240,232 +736,81 @@
       api("/api/v1/status"),
       api("/api/v1/services"),
       api("/api/v1/schedules"),
-      api("/api/v1/history?limit=20"),
-      api("/api/v1/logs?limit=120")
+      api("/api/v1/history?limit=120"),
+      api("/api/v1/logs?limit=250")
     ]).then(function (results) {
-      var errors = [];
+      var labels = {
+        status: "статус",
+        services: "сервисы",
+        schedules: "расписания",
+        history: "история",
+        logs: "логи"
+      };
+
+      var failed = [];
 
       if (results[0].status === "fulfilled") {
         state.status = results[0].value || null;
       } else {
         state.status = null;
-        errors.push("status");
+        failed.push(labels.status);
       }
 
       if (results[1].status === "fulfilled") {
-        var servicesData = results[1].value;
-        state.services = servicesData && Array.isArray(servicesData.services) ? servicesData.services : [];
+        state.services = toArray(results[1].value);
       } else {
         state.services = [];
-        errors.push("services");
+        failed.push(labels.services);
       }
 
       if (results[2].status === "fulfilled") {
-        state.schedules = results[2].value || { global: "", groups: {}, services: {}, effective: {} };
+        state.schedules = results[2].value || {
+          global: "",
+          groups: {},
+          services: {},
+          effective: {}
+        };
       } else {
-        state.schedules = { global: "", groups: {}, services: {}, effective: {} };
-        errors.push("schedules");
+        state.schedules = {
+          global: "",
+          groups: {},
+          services: {},
+          effective: {}
+        };
+        failed.push(labels.schedules);
       }
 
       if (results[3].status === "fulfilled") {
-        var historyData = results[3].value;
-        state.history = Array.isArray(historyData) ? historyData : [];
+        state.history = toArray(results[3].value);
       } else {
         state.history = [];
-        errors.push("history");
+        failed.push(labels.history);
       }
 
       if (results[4].status === "fulfilled") {
-        var logsData = results[4].value;
-        state.logs = Array.isArray(logsData) ? logsData : [];
+        state.logs = toArray(results[4].value);
       } else {
         state.logs = [];
-        errors.push("logs");
+        failed.push(labels.logs);
       }
 
-      if (errors.length) {
+      if (failed.length) {
         setAlert(
-          errors.length >= 4 ? "error" : "warn",
-          "Не удалось загрузить: " + errors.join(", ")
+          failed.length >= 4 ? "error" : "warn",
+          "Не удалось загрузить: " + failed.join(", ")
         );
       } else {
         setAlert("", "");
       }
 
-      buildIndexes();
-      renderAll();
+      buildDerived();
+      renderHealth();
+      renderNext();
     }).catch(function (err) {
-      setAlert("error", "Ошибка загрузки дашборда: " + text(err && err.message));
+      setAlert("error", "Не удалось обновить дашборд: " + text(err && err.message));
     }).then(function () {
       setRefreshing(false);
     });
-  }
-
-  function withButton(btn, fn) {
-    if (!btn) return Promise.resolve(fn());
-
-    var old = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "…";
-
-    return Promise.resolve()
-      .then(fn)
-      .then(function (value) {
-        btn.disabled = false;
-        btn.textContent = old;
-        return value;
-      }, function (err) {
-        btn.disabled = false;
-        btn.textContent = old;
-        throw err;
-      });
-  }
-
-  function handlePromise(promise) {
-    if (promise && promise.catch) {
-      promise.catch(function (err) {
-        showToast("Ошибка: " + text(err && err.message), true);
-      });
-    }
-  }
-
-  function runBulk(names, dry, btn) {
-    var payload = {
-      services: names,
-      dry_run: dry,
-      force: false
-    };
-
-    return withButton(btn, function () {
-      return api("/api/v1/services/sync", {
-        method: "POST",
-        body: JSON.stringify(payload)
-      }).then(function () {
-        var label = dry ? "Dry-run запущен: " : "Синхронизация запущена: ";
-        label += names.length ? names.length + " сервисов" : "все сервисы";
-        showToast(label);
-
-        setTimeout(function () {
-          loadAll(true);
-        }, 1500);
-      });
-    });
-  }
-
-  function runOne(name, dry, btn) {
-    var path = dry
-      ? "/api/v1/services/" + encodeURIComponent(name) + "/dry-run"
-      : "/api/v1/services/" + encodeURIComponent(name) + "/sync";
-
-    var body = dry ? "{}" : JSON.stringify({ dry_run: false, force: false });
-
-    return withButton(btn, function () {
-      return api(path, {
-        method: "POST",
-        body: body
-      }).then(function (data) {
-        var c = historyCounts(data);
-        var parts = [];
-
-        if (c.added) parts.push("+" + c.added);
-        if (c.deleted) parts.push("-" + c.deleted);
-        if (c.unchanged) parts.push("=" + c.unchanged);
-
-        var msg = (dry ? "Dry-run " : "Синхронизация ") + name;
-        if (parts.length) msg += ": " + parts.join(" ");
-
-        showToast(msg);
-
-        setTimeout(function () {
-          loadAll(true);
-        }, 1000);
-      });
-    });
-  }
-
-  function updateLiveButton() {
-    if (!els.toggleLive) return;
-
-    els.toggleLive.textContent = state.liveUserEnabled ? "Live: вкл" : "Live: выкл";
-
-    if (els.toggleLive.classList) {
-      els.toggleLive.classList.toggle("live-on", state.liveUserEnabled);
-    }
-  }
-
-  function connectLive() {
-    if (state.ws) return;
-
-    var proto = location.protocol === "https:" ? "wss:" : "ws:";
-    var url = proto + "//" + location.host + "/api/v1/ws";
-
-    try {
-      state.ws = new WebSocket(url);
-    } catch (e) {
-      showToast("WebSocket недоступен: " + text(e && e.message), true);
-      state.liveUserEnabled = false;
-      updateLiveButton();
-      return;
-    }
-
-    state.ws.onopen = function () {
-      updateLiveButton();
-    };
-
-    state.ws.onmessage = function (ev) {
-      try {
-        var msg = JSON.parse(ev.data);
-        if (!msg || msg.event === "welcome") return;
-
-        state.live.unshift({
-          time: msg.time || new Date().toISOString(),
-          event: msg.event || "event",
-          data: msg.data
-        });
-
-        if (state.live.length > 100) {
-          state.live.pop();
-        }
-
-        if (state.activeTab === "live") {
-          renderActivity();
-        }
-      } catch (e) {
-        // Игнорируем некорректные сообщения.
-      }
-    };
-
-    state.ws.onerror = function () {
-      showToast("Ошибка WebSocket", true);
-    };
-
-    state.ws.onclose = function () {
-      state.ws = null;
-
-      if (state.liveUserEnabled) {
-        setTimeout(connectLive, 5000);
-      }
-
-      updateLiveButton();
-    };
-  }
-
-  function disconnectLive() {
-    if (state.ws) {
-      var ws = state.ws;
-      state.ws = null;
-
-      ws.onopen = null;
-      ws.onmessage = null;
-      ws.onerror = null;
-      ws.onclose = null;
-
-      try {
-        ws.close();
-      } catch (e) {}
-    }
-
-    updateLiveButton();
   }
 
   function scheduleAuto() {
@@ -1474,7 +819,7 @@
       state.autoTimer = null;
     }
 
-    if (els.autoRefresh && els.autoRefresh.checked) {
+    if (els.auto && els.auto.checked) {
       state.autoTimer = setInterval(function () {
         if (document.visibilityState === "visible" && !state.loading) {
           loadAll(false);
@@ -1486,142 +831,24 @@
   function bindEvents() {
     if (els.refresh) {
       els.refresh.addEventListener("click", function () {
-        handlePromise(loadAll(true));
+        loadAll(true);
       });
     }
 
-    if (els.toggleLive) {
-      els.toggleLive.addEventListener("click", function () {
-        state.liveUserEnabled = !state.liveUserEnabled;
-
-        if (state.liveUserEnabled) {
-          connectLive();
-        } else {
-          disconnectLive();
-        }
-
-        updateLiveButton();
-      });
+    if (els.auto) {
+      els.auto.addEventListener("change", scheduleAuto);
     }
-
-    if (els.autoRefresh) {
-      els.autoRefresh.addEventListener("change", scheduleAuto);
-    }
-
-    if (els.actionSyncAll) {
-      els.actionSyncAll.addEventListener("click", function () {
-        handlePromise(runBulk([], false, els.actionSyncAll));
-      });
-    }
-
-    if (els.actionDryAll) {
-      els.actionDryAll.addEventListener("click", function () {
-        handlePromise(runBulk([], true, els.actionDryAll));
-      });
-    }
-
-    if (els.actionSyncSelected) {
-      els.actionSyncSelected.addEventListener("click", function () {
-        var names = selectedNames();
-        if (!names.length) return;
-        handlePromise(runBulk(names, false, els.actionSyncSelected));
-      });
-    }
-
-    if (els.actionDrySelected) {
-      els.actionDrySelected.addEventListener("click", function () {
-        var names = selectedNames();
-        if (!names.length) return;
-        handlePromise(runBulk(names, true, els.actionDrySelected));
-      });
-    }
-
-    if (els.serviceSearch) {
-      var searchTimer = null;
-      els.serviceSearch.addEventListener("input", function () {
-        clearTimeout(searchTimer);
-        searchTimer = setTimeout(renderServices, 180);
-      });
-    }
-
-    if (els.serviceFilter) {
-      els.serviceFilter.addEventListener("change", renderServices);
-    }
-
-    if (els.selectAll) {
-      els.selectAll.addEventListener("change", function () {
-        var checked = els.selectAll.checked;
-
-        each(state.visibleItems, function (item) {
-          if (checked) {
-            state.selection[item.key] = item.name;
-          } else {
-            delete state.selection[item.key];
-          }
-        });
-
-        renderServices();
-      });
-    }
-
-    if (els.servicesBody) {
-      els.servicesBody.addEventListener("change", function (e) {
-        var cb = e.target;
-        if (!cb || !cb.classList || !cb.classList.contains("row-select")) return;
-
-        toggleSelect(cb.getAttribute("data-key"), cb.getAttribute("data-service"), cb.checked);
-      });
-
-      els.servicesBody.addEventListener("click", function (e) {
-        var btn = closest(e.target, "button[data-action]");
-        if (!btn) return;
-
-        var name = btn.getAttribute("data-service");
-        var action = btn.getAttribute("data-action");
-
-        if (!name) return;
-
-        if (action === "sync") {
-          handlePromise(runOne(name, false, btn));
-        } else if (action === "dry") {
-          handlePromise(runOne(name, true, btn));
-        }
-      });
-    }
-
-    each(els.tabs, function (tab) {
-      tab.addEventListener("click", function () {
-        state.activeTab = tab.getAttribute("data-tab") || "sync";
-
-        each(els.tabs, function (t) {
-          if (t.classList) {
-            t.classList.toggle("active", t === tab);
-          }
-        });
-
-        renderActivity();
-      });
-    });
 
     document.addEventListener("keydown", function (e) {
-      var tag = document.activeElement && document.activeElement.tagName;
-      var typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-
-      if (e.key === "/" && !typing && els.serviceSearch) {
-        e.preventDefault();
-        els.serviceSearch.focus();
-      }
-
       if ((e.ctrlKey || e.metaKey) && e.key === "r") {
         e.preventDefault();
-        handlePromise(loadAll(true));
+        loadAll(true);
       }
     });
   }
 
   function init() {
     bindEvents();
-    updateLiveButton();
     loadAll(true);
     scheduleAuto();
   }
