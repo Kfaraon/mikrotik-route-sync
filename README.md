@@ -1,16 +1,16 @@
-# mikrotik-route-sync
+# mikrotik-route-sync / Firewall Address List mode
 
-> Легковесный сервис на Go для автоматического управления маршрутами **MikroTik RouterOS v7** через REST API.
+> Лёгкий сервис на Go для автоматического управления **Firewall Address List** в **MikroTik RouterOS v7** через REST API.
 
 ![Go](https://img.shields.io/badge/Go-1.27-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![RouterOS](https://img.shields.io/badge/RouterOS-v7-red)
 
-Пользователь указывает сервис, домен, IPv4-адрес или ASN. Приложение определяет подходящий источник сетей, собирает и валидирует CIDR, безопасно агрегирует их и синхронизирует **только маршруты выбранного сервиса**. Каждый управляемый маршрут помечается комментарием `AUTO:<service>`.
+Пользователь указывает сервис, домен, IPv4-адрес или ASN. Приложение определяет подходящий источник сетей, собирает и валидирует IPv4-CIDR, безопасно агрегирует их и синхронизирует **записи Firewall Address List выбранного сервиса**. Все сервисы используют один глобальный список (`firewall.address_list`, например `TO-VPN`); изоляция — по комментарию `AUTO:<service>`.
 
-> **Главный принцип проекта:** один сервис — одна изолированная область синхронизации. Ошибка при обработке `youtube` не должна затрагивать маршруты `instagram`, `cloudflare` или любого другого сервиса.
+> **Главный принцип проекта:** один сервис — одна изолированная область синхронизации. Ошибка при обработке `youtube` не должна затрагивать записи `instagram`, `cloudflare` или другого сервиса.
 
-> **Диапазон адресов:** система управляет **только IPv4-маршрутами**. IPv6 не используется: префиксы IPv6 отбрасываются коллекторами и валидацией.
+> **Диапазон адресов:** система управляет **только IPv4-записями**. IPv6 не используется: префиксы IPv6 отбрасываются коллекторами и валидацией.
 
 ---
 
@@ -24,7 +24,7 @@
 - [Управление сервисами](#управление-сервисами)
 - [Расписания](#расписания)
 - [Конфигурация](#конфигурация)
-- [Изоляция маршрутов](#изоляция-маршрутов)
+- [Изоляция записей](#изоляция-записей)
 - [Безопасность](#безопасность)
 - [Отказоустойчивость](#отказоустойчивость)
 - [Snapshots](#snapshots)
@@ -55,9 +55,9 @@
 - Фильтрация приватных, link-local, multicast и слишком широких сетей
 - Безопасная CIDR-агрегация (radix tree) только настоящих sibling-префиксов
 - Проверка сохранности множества IP-адресов после агрегации
-- Инкрементальная diff-синхронизация RouterOS
-- Точная изоляция по комментарию `AUTO:<service>`
-- Fail-closed: при пустом / ошибочном результате существующие маршруты не удаляются
+- Инкрементальная diff-синхронизация записей Firewall Address List
+- Один глобальный address-list (`firewall.address_list`), изоляция сервисов по комментарию `AUTO:<service>`
+- Fail-closed: при пустом / ошибочном результате существующие записи не удаляются
 - Best-effort rollback при ошибке применения изменений
 - Retry и Circuit Breaker для RouterOS REST API
 - CLI на Cobra
@@ -74,7 +74,7 @@
 
 ---
 
-## Как работает синхронизация
+## Как работает синхронизация (address-list)
 
     service / domain / IPv4 / ASN
                 │
@@ -85,7 +85,7 @@
      ASN / CDN / dynamic / WHOIS / static_url
                 │
                 ▼
-           collection
+           collect IPv4 CIDR
                 │
                 ▼
      validation + exclusions
@@ -94,7 +94,7 @@
        safe CIDR aggregation
                 │
                 ▼
-     GET RouterOS routes with exact AUTO:<service>
+  GET managed address-list entries by list + comment
                 │
                 ▼
            calculate diff
@@ -105,15 +105,15 @@
                   ▼
           result / rollback
 
-Если после сбора и валидации не осталось ни одной сети, приложение завершает синхронизацию с ошибкой и **не изменяет текущие маршруты MikroTik**.
+Если после сбора и валидации не осталось ни одной сети, приложение завершает синхронизацию с ошибкой и **не изменяет текущие записи MikroTik**.
 
 ---
 
 ## Требования
 
 - **Go 1.27.1**
-- MikroTik RouterOS v7 с доступным **REST API**
-- Отдельный RouterOS-пользователь с минимально необходимыми правами
+- MikroTik RouterOS v7 с доступным **REST API** (www-сервис)
+- Отдельный RouterOS-пользователь с минимальными правами (доступ к `/ip/firewall/address-list`: read+write)
 - Доступ приложения к DNS и настроенным внешним источникам (bgp.tools, RIPEstat, официальные CDN-списки)
 - Для Docker / LXC — постоянное хранилище для конфигурации, кэша и логов
 
@@ -138,9 +138,9 @@
       password: CHANGE_ME
       use_ssl: true
       verify_ssl: true
-      gateway: wg-cz-vpn
-      routing_table: main
-      distance: 2
+
+    firewall:
+      address_list: TO-VPN
       comment_prefix: AUTO
 
 > Для production рекомендуется использовать доверенный TLS-сертификат и `verify_ssl: true`.
@@ -169,7 +169,7 @@
 
 ### 7. Проверка в RouterOS
 
-    /ip/route/print where comment="AUTO:cloudflare"
+    /ip/firewall/address-list/print where list="TO-VPN" and comment="AUTO:cloudflare"
 
 ### 8. Запуск как сервис
 
@@ -186,17 +186,21 @@
 | `app sync --group social` | Синхронизировать группу |
 | `app sync --dry-run` | Рассчитать изменения без применения |
 | `app sync --service youtube --force` | Обойти safety-check (max_delete_ratio) |
-| `app diff <service>` | Показать diff в JSON |
+| `app diff <service>` | Показать diff address-list в JSON |
 | `app list` | Список сервисов и их эффективных расписаний |
 | `app info <service>` | Информация о сервисе (расписание, overrides) |
 | `app add-service <service>` | Добавить и первоначально синхронизировать сервис |
-| `app remove-service <service>` | Удалить сервис и только его управляемые маршруты |
-| `app backup <service>` | Экспорт маршрутов сервиса в JSON |
+| `app remove-service <service>` | Удалить сервис и только его управляемые address-list записи |
+| `app backup <service>` | Экспорт управляемых записей сервиса в JSON |
 | `app restore <service> --from-file f.json --force` | Восстановить из файла |
 | `app restore <service> --from-snapshot <id> --force` | Восстановить из снапшота |
 | `app snapshots list <service>` | Список снапшотов сервиса |
 | `app snapshots delete <service> <id>` | Удалить снапшот |
 | `app snapshots cleanup <service> --ttl 168` | Очистка старых снапшотов |
+| `app address-list` | Показать глобальный Firewall Address List |
+| `app address-list --service instagram` | Записи конкретного сервиса |
+| `app audit-address-list` | Найти AUTO-записи без активного сервиса (orphan) |
+| `app cleanup-auto-entries --force` | Удалить orphan AUTO-записи |
 | `app schedule list` | Показать эффективные расписания |
 | `app schedule reload` | Перечитать расписания |
 | `app bot` | Запустить Telegram-бота |
@@ -211,7 +215,7 @@
 | `app logs clear` | Очистить логи |
 | `app logs size` | Размер и количество файлов логов |
 | `app test-telegram` | Проверить Telegram |
-| `app test-mikrotik` | Проверить RouterOS REST API |
+| `app test-mikrotik` | Проверить RouterOS REST API и доступ к address-list |
 | `app test-dns <domain>` | Проверить резолвинг |
 | `app version` | Версия и информация о сборке |
 
@@ -260,7 +264,7 @@
     ./app remove-service instagram
     ./app remove-service rutor --force
 
-Удаляются **только** маршруты с комментарием `AUTO:<service>`. Маршруты других сервисов и обычные пользовательские маршруты не затрагиваются.
+Удаляются **только** управляемые записи `list=firewall.address_list, comment=AUTO:<service>`. Записи других сервисов, dynamic-записи и все прочие объекты RouterOS не затрагиваются.
 
 ---
 
@@ -331,11 +335,13 @@
       use_ssl: true
       verify_ssl: true
       timeout: 30s
-      gateway: wg-cz-vpn
-      routing_table: main
-      distance: 2
-      comment_prefix: AUTO
       rate_limit: 20
+
+    firewall:
+      address_list: TO-VPN
+      comment_prefix: AUTO
+      ignore_dynamic: true
+      manage_disabled: false
 
     telegram:
       enabled: false
@@ -372,7 +378,7 @@
       max_delete_ratio: 0.5
       require_confirmation_over: 100
       min_prefix_v4: 8
-      allow_host_routes: false
+      allow_host_routes: true
       max_asn_prefixes: 100
 
     retry:
@@ -420,15 +426,15 @@ ENV имеют приоритет над `config.yaml`:
 
 ---
 
-## Изоляция маршрутов
+## Изоляция записей address-list
 
-Для каждого сервиса используется отдельный комментарий:
+Все сервисы пишут в один глобальный Firewall Address List (`firewall.address_list`), например `TO-VPN`. Изоляция — по комментарию:
 
     AUTO:instagram
     AUTO:youtube
     AUTO:cloudflare
 
-При синхронизации `instagram` приложение работает **только** с маршрутами `AUTO:instagram`. Маршруты других сервисов и обычные пользовательские маршруты не участвуют в diff и не удаляются.
+При синхронизации `instagram` приложение работает **только** с записями `list=TO-VPN, comment=AUTO:instagram, dynamic=false`. Записи других сервисов, dynamic-записи и вручную созданные объекты не участвуют в diff и не удаляются.
 
 ---
 
@@ -454,7 +460,7 @@ ENV имеют приоритет над `config.yaml`:
 
 ## Отказоустойчивость
 
-- **Fail-closed:** при любой неопределённости существующие маршруты не изменяются
+- **Fail-closed:** при любой неопределённости существующие записи address-list не изменяются
 - **Safe-diff:** массовое удаление блокируется при `deleted / existing > max_delete_ratio` (по умолчанию 0.5)
 - **Best-effort rollback:** при ошибке применения выполняется откат к исходному состоянию
 - **Retry** с экспоненциальной задержкой и jitter
@@ -468,7 +474,7 @@ ENV имеют приоритет над `config.yaml`:
 
 ## Snapshots
 
-Перед каждой синхронизацией создаётся снимок текущих маршрутов сервиса в `bbolt`.
+Перед каждой синхронизацией создаётся снимок текущих управляемых записей address-list сервиса в `bbolt` (bucket `address_list_snapshots`).
 
     # Список снапшотов
     ./app snapshots list instagram
@@ -476,7 +482,7 @@ ENV имеют приоритет над `config.yaml`:
     # Восстановление из снапшота
     ./app restore instagram --from-snapshot <id> --force
 
-    # Экспорт маршрутов в файл
+    # Экспорт записей сервиса в файл
     ./app backup instagram -o instagram-backup.json
 
     # Очистка старых снапшотов
@@ -566,9 +572,9 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
 | `GET` | `/healthz` | liveness-проба (без авторизации) |
 | `GET` | `/readyz` | readiness: доступность RouterOS и кэша (без авторизации) |
 | `GET` | `/api/v1/status` | Общий статус |
-| `GET` | `/api/v1/services` | Список сервисов (расписание, число маршрутов, overrides) |
+| `GET` | `/api/v1/services` | Список сервисов (расписание, число записей, overrides) |
 | `POST` | `/api/v1/services` | Добавить сервис |
-| `DELETE` | `/api/v1/services/{name}` | Удалить сервис (`?purge=true` — удалить и маршруты) |
+| `DELETE` | `/api/v1/services/{name}` | Удалить сервис (`?purge=true` — удалить и его записи) |
 | `POST` | `/api/v1/services/sync` | Запустить синхронизацию набора сервисов (асинхронно) |
 | `POST` | `/api/v1/services/{name}/sync` | Синхронизировать один сервис |
 | `POST` | `/api/v1/services/{name}/dry-run` | Расчёт diff без применения |
@@ -733,4 +739,4 @@ bind-mount всегда показывает права `0777` внутри ко
 
 ---
 
-> Перед использованием в production рекомендуется сначала выполнить `sync --dry-run` для каждого нового сервиса и проверить получившиеся префиксы и diff маршрутов.
+> Перед использованием в production рекомендуется сначала выполнить `sync --dry-run` для каждого нового сервиса и проверить получившиеся префиксы и diff записей.

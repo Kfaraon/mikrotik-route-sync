@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"net/netip"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/audit"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
@@ -31,9 +31,11 @@ import (
 // Типы данных
 // ============================================================================
 
-// Result описывает итог синхронизации одного сервиса.
+// Result — итог синхронизации одного сервиса (address-list записи).
 type Result struct {
 	Service    string    `json:"service"`
+	List       string    `json:"list"`
+	Comment    string    `json:"comment"`
 	Success    bool      `json:"success"`
 	Added      int       `json:"added"`
 	Removed    int       `json:"removed"`
@@ -46,32 +48,18 @@ type Result struct {
 	Version    string    `json:"version,omitempty"`
 }
 
-// RouteKey — нормализованный ключ маршрута для идемпотентного сравнения.
-type RouteKey struct {
-	CIDR     string `json:"cidr"`
-	Gateway  string `json:"gateway"`
-	Table    string `json:"table"`
-	Distance int    `json:"distance"`
-}
-
-// DiffResult описывает вычисленную разницу для команды `app diff`.
-type DiffResult struct {
-	Service   string     `json:"service"`
-	Add       []RouteKey `json:"add"`
-	Remove    []RouteKey `json:"remove"`
-	Unchanged int        `json:"unchanged"`
-}
-
-// ServiceInfo — метаинформация о сервисе для команды `app info`.
+// ServiceInfo — метаинформация о сервисе для `app info` / web / bot.
 type ServiceInfo struct {
 	Name          string                 `json:"name"`
+	List          string                 `json:"list"`
+	Comment       string                 `json:"comment"`
 	Schedule      string                 `json:"schedule"`
 	Override      config.ServiceOverride `json:"override"`
-	RouteCount    int                    `json:"route_count"`
+	EntryCount    int                    `json:"entry_count"`
 	SnapshotCount int                    `json:"snapshot_count"`
 }
 
-// SnapshotInfo — метаинформация о снапшоте для CLI/Web/Telegram.
+// SnapshotInfo — метаинформация о снапшоте (CLI/Web/Telegram).
 type SnapshotInfo struct {
 	ID        string    `json:"id"`
 	Service   string    `json:"service"`
@@ -79,7 +67,22 @@ type SnapshotInfo struct {
 	Count     int       `json:"count"`
 }
 
-// Syncer — главный оркестратор синхронизации маршрутов.
+// BackupFile — формат `app backup <service>` (PROMPT IV.5).
+type BackupFile struct {
+	Service   string              `json:"service"`
+	List      string              `json:"list"`
+	Comment   string              `json:"comment"`
+	CreatedAt time.Time           `json:"created_at"`
+	Entries   []addresslist.Entry `json:"entries"`
+}
+
+// OrphanEntry — AUTO-запись без активного сервиса (PROMPT IV.6).
+type OrphanEntry struct {
+	Addresslist addresslist.Entry `json:"entry"`
+	Service     string            `json:"comment_service"`
+}
+
+// Syncer — главный оркестратор синхронизации Firewall Address List.
 type Syncer struct {
 	cfg     *config.Config
 	cache   *storage.Cache
@@ -87,8 +90,7 @@ type Syncer struct {
 	audit   *audit.Logger
 	history *history.History
 
-	// Горяче-заменяемые зависимости (ApplyConfig) — атомарные указатели,
-	// чтобы синхронизация видела обновлённые клиенты без блокировок.
+	// Горяче-заменяемые зависимости (ApplyConfig).
 	mtPtr  atomic.Pointer[mikrotik.Client]
 	resPtr atomic.Pointer[resolver.Resolver]
 	deps   *collectors.Deps
@@ -97,59 +99,33 @@ type Syncer struct {
 	notifyMu sync.RWMutex
 	notify   notifier.Notifier
 
-	// serviceMu защищает ТОЛЬКО мутации конфига (add/remove service, save)
-	// и запись в history/lastSync. НЕ блокирует параллельную синхронизацию.
+	// serviceMu защищает мутации конфига и запись в history/lastSync.
 	serviceMu sync.Mutex
 	startTime time.Time
 	lastSync  time.Time
 
-	// busyMu — защита от наложения запусков по ОДНОМУ сервису (PROMPT III.2).
+	// busyMu — защита от наложения запусков по ОДНОМУ сервису (PROMPT IV.2).
 	busyMu sync.Mutex
 	busy   map[string]bool
 
-	// degradedMu — статусы сервисов с неуспешным rollback (PROMPT I.3).
+	// degradedMu — статусы сервисов с неуспешным rollback (PROMPT II.5).
 	degradedMu sync.Mutex
 	degraded   map[string]time.Time
 
-	// onEvent — опциональный хук live-событий (WebSocket в web UI).
+	// onEvent — хук live-событий (WebSocket в web UI).
 	onEventMu sync.Mutex
 	onEvent   func(event string, data any)
 
-	// reload — хук перезагрузки планировщика (устанавливается в daemon).
+	// reload — хук перезагрузки планировщика (daemon).
 	reloadMu sync.Mutex
 	reload   func() error
 }
 
-// mt возвращает текущий MikroTik-клиент (горяче заменяемый).
-func (s *Syncer) mt() *mikrotik.Client { return s.mtPtr.Load() }
-
-// resolver возвращает текущий резолвер.
-func (s *Syncer) resolver() *resolver.Resolver { return s.resPtr.Load() }
-
-// registry возвращает текущий реестр коллекторов.
-func (s *Syncer) registry() *collectors.Registry { return s.regPtr.Load() }
-
-// getNotify возвращает нотификатор (потокобезопасно).
-func (s *Syncer) getNotify() notifier.Notifier {
-	s.notifyMu.RLock()
-	defer s.notifyMu.RUnlock()
-	return s.notify
-}
-
-// SetNotifier подменяет канал уведомлений (например, после включения Telegram в web UI).
-func (s *Syncer) SetNotifier(n notifier.Notifier) {
-	s.notifyMu.Lock()
-	s.notify = n
-	s.notifyMu.Unlock()
-}
-
 // ============================================================================
-// Конструктор
+// Конструктор и горячее применение
 // ============================================================================
 
-// NewSyncer создает инициализированный экземпляр Syncer.
-// Принимает уже сконфигурированные зависимости (cache, notify),
-// что позволяет переиспользовать их между CLI, Web и Scheduler.
+// NewSyncer создает Syncer с явной передачей зависимостей (PROMPT XI.DI).
 func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, notify notifier.Notifier) (*Syncer, error) {
 	mt, err := mikrotik.NewClient(cfg, log)
 	if err != nil {
@@ -176,8 +152,7 @@ func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, notif
 	return s, nil
 }
 
-// buildDepsLocked пересоздаёт http-клиент, резолвер и реестр коллекторов
-// из текущей конфигурации (вызывается из конструктора и ApplyConfig).
+// buildDepsLocked пересоздаёт http-клиент, резолвер и реестр коллекторов.
 func (s *Syncer) buildDepsLocked() {
 	httpClient := collectors.NewHTTP(s.cfg.External.HTTPTimeout.Duration(), s.cfg.Retry, s.cfg.External.MaxResponseMB, s.cfg.External.BGPToolsContact)
 	res := resolver.NewResolver(s.cfg.External.Resolver, httpClient, s.cache, s.cfg.Scheduler.CacheTTL.Duration())
@@ -195,13 +170,8 @@ func (s *Syncer) buildDepsLocked() {
 	s.regPtr.Store(reg)
 }
 
-// ApplyConfig перечитывает конфигурацию (s.cfg уже обновлён externally) и
-// пересоздаёт клиенты: MikroTik (host/port/ssl/rate-limit/retry), внешний
-// HTTP (таймауты/зеркала), резолвер (DNS/TTL кэша). Вызывается после
-// сохранения настроек из web UI — изменения применяются без рестарта.
-//
-// Не применяются на лету (требуют рестарта процесса): web.listen,
-// logging.file, cache_path — это отмечено в подсказках UI.
+// ApplyConfig пересоздаёт клиенты из текущей конфигурации (web UI save).
+// Не применяются на лету: web.listen, logging.file, cache_path (рестарт).
 func (s *Syncer) ApplyConfig() error {
 	mt, err := mikrotik.NewClient(s.cfg, s.log)
 	if err != nil {
@@ -212,6 +182,7 @@ func (s *Syncer) ApplyConfig() error {
 
 	s.log.Info("configuration applied at runtime",
 		"mikrotik_host", s.cfg.MikroTik.Host,
+		"address_list", s.cfg.Firewall.AddressList,
 		"external_timeout", s.cfg.External.HTTPTimeout.Duration().String(),
 		"cache_ttl", s.cfg.Scheduler.CacheTTL.Duration().String())
 	return nil
@@ -222,17 +193,36 @@ func (s *Syncer) ApplyConfig() error {
 // ============================================================================
 
 func (s *Syncer) StartTime() time.Time { return s.startTime }
+
 func (s *Syncer) LastSync() time.Time {
 	s.serviceMu.Lock()
 	defer s.serviceMu.Unlock()
 	return s.lastSync
 }
+
 func (s *Syncer) Version() string           { return version.Version }
 func (s *Syncer) Config() *config.Config    { return s.cfg }
 func (s *Syncer) Cache() *storage.Cache     { return s.cache }
 func (s *Syncer) History() *history.History { return s.history }
 
-// MarkDegraded помечает сервис как degraded (частично неуспешный rollback).
+func (s *Syncer) mt() *mikrotik.Client           { return s.mtPtr.Load() }
+func (s *Syncer) resolver() *resolver.Resolver   { return s.resPtr.Load() }
+func (s *Syncer) registry() *collectors.Registry { return s.regPtr.Load() }
+
+func (s *Syncer) getNotify() notifier.Notifier {
+	s.notifyMu.RLock()
+	defer s.notifyMu.RUnlock()
+	return s.notify
+}
+
+// SetNotifier подменяет канал уведомлений.
+func (s *Syncer) SetNotifier(n notifier.Notifier) {
+	s.notifyMu.Lock()
+	s.notify = n
+	s.notifyMu.Unlock()
+}
+
+// MarkDegraded помечает сервис degraded (частично неуспешный rollback).
 func (s *Syncer) MarkDegraded(service string) {
 	s.degradedMu.Lock()
 	defer s.degradedMu.Unlock()
@@ -247,14 +237,14 @@ func (s *Syncer) IsDegraded(service string) bool {
 	return ok
 }
 
-// ClearDegraded снимает флаг degraded (успешная синхронизация).
+// ClearDegraded снимает флаг degraded.
 func (s *Syncer) ClearDegraded(service string) {
 	s.degradedMu.Lock()
 	defer s.degradedMu.Unlock()
 	delete(s.degraded, service)
 }
 
-// DegradedServices — список сервисов в состоянии degraded.
+// DegradedServices — список degraded-сервисов.
 func (s *Syncer) DegradedServices() []string {
 	s.degradedMu.Lock()
 	defer s.degradedMu.Unlock()
@@ -265,7 +255,7 @@ func (s *Syncer) DegradedServices() []string {
 	return out
 }
 
-// SetEventHook регистрирует callback для live-событий (web WebSocket).
+// SetEventHook регистрирует callback live-событий (web WebSocket).
 func (s *Syncer) SetEventHook(fn func(event string, data any)) {
 	s.onEventMu.Lock()
 	defer s.onEventMu.Unlock()
@@ -293,12 +283,12 @@ func (s *Syncer) ResolveDomain(ctx context.Context, domain string) ([]string, er
 	return s.resolver().ResolveDomain(ctx, domain)
 }
 
-// PurgeCache удаляет просроченные записи bbolt-кэша (scheduler.cache_purge).
+// PurgeCache удаляет просроченные записи bbolt-кэша.
 func (s *Syncer) PurgeCache() error {
 	return s.cache.PurgeExpired()
 }
 
-// PingMikroTik проверяет доступность RouterOS API.
+// PingMikroTik проверяет доступность RouterOS REST API (address-list).
 func (s *Syncer) PingMikroTik(ctx context.Context) error {
 	return s.mt().Ping(ctx)
 }
@@ -307,32 +297,33 @@ func (s *Syncer) PingMikroTik(ctx context.Context) error {
 // Основная логика синхронизации
 // ============================================================================
 
-// SyncService выполняет полный цикл синхронизации одного сервиса:
-// 1. Защита от наложения (второй запуск того же сервиса пропускается с WARN).
-// 2. Получает текущие маршруты из MikroTik (фильтр по comment=AUTO:<service>).
-// 3. Собирает новые префиксы через classifier + collectors.
-// 4. Валидирует и агрегирует (fail-closed при пустом результате).
-// 5. Вычисляет diff и проверяет safe-delete ratio + RequireConfirmationOver.
-// 6. Создает снапшот и применяет изменения через транзакцию (с rollback при ошибке).
+// SyncService выполняет полный цикл для одного сервиса:
 //
-// NOTE: Метод НЕ использует глобальный мьютекс, что позволяет параллельную
-// синхронизацию нескольких сервисов через SyncMany.
+//	collect → validate → aggregate → get managed address-list entries →
+//	diff → safety-check → snapshot → transactional apply → history → notify
+//
+// Fail-closed: любая ошибка сбора/валидации/API — существующие записи
+// не изменяются. Mutex на сервис: повторный запуск пропускается с WARN.
 func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) (Result, error) {
 	start := time.Now()
+	list := s.cfg.Firewall.AddressList
+	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
+
 	res := Result{
 		Service:   name,
+		List:      list,
+		Comment:   comment,
 		DryRun:    dry,
 		StartedAt: start,
 		Version:   version.Version,
 	}
 
-	// Mutex на сервис: повторный запуск пропускается (PROMPT III.2).
 	if !s.acquire(name) {
 		msg := fmt.Sprintf("Синхронизация %s пропущена: предыдущий запуск ещё выполняется", name)
 		s.log.Warn(msg, "service", name)
 		s.emit("skipped", map[string]any{"service": name, "reason": "already running"})
 		if !dry {
-			_ = s.getNotify().SyncStart(ctx, []string{name}, "manual", "пропущено: уже выполняется")
+			_ = s.getNotify().SyncStart(ctx, []string{name}, "вручную", "пропущено: уже выполняется")
 		}
 		res.Error = msg
 		res.FinishedAt = time.Now()
@@ -341,32 +332,32 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	defer s.release(name)
 
-	log := s.log.With("service", name, "dry_run", dry, "force", force)
+	log := s.log.With("service", name, "list", list, "comment", comment, "dry_run", dry, "force", force)
 	log.Info("starting sync")
-	s.emit("sync_start", map[string]any{"service": name, "dry_run": dry})
+	s.emit("sync_start", map[string]any{"service": name, "list": list, "dry_run": dry})
 
-	// 1. Получаем существующие маршруты (строго по comment=AUTO:<name>)
-	existing, err := s.mt().ListServiceRoutes(ctx, name)
+	// 1. Управляемые записи сервиса (list + comment + dynamic=false).
+	existing, err := s.mt().ListServiceEntries(ctx, list, s.cfg.Firewall.CommentPrefix, name)
 	if err != nil {
-		res.Error = fmt.Sprintf("list routes: %v", err)
-		log.Error("failed to list routes", "err", err)
+		res.Error = fmt.Sprintf("list entries: %v", err)
+		log.Error("failed to list address entries", "err", err)
 		s.notifyError(ctx, name, err)
-		return res, fmt.Errorf("list routes: %w", err)
+		return res, fmt.Errorf("list entries: %w", err)
 	}
-	log.Info("fetched existing routes", "count", len(existing))
+	log.Info("fetched existing managed entries", "count", len(existing))
 
-	// 2. Сбор префиксов
+	// 2. Сбор IPv4 CIDR.
 	ov := s.cfg.Overrides[name]
 	raw, method, err := s.collect(ctx, name, ov)
 	if err != nil {
 		res.Error = fmt.Sprintf("collect: %v", err)
-		log.Error("failed to collect routes", "err", err)
+		log.Error("failed to collect prefixes", "err", err)
 		s.notifyError(ctx, name, err)
 		return res, fmt.Errorf("collect: %w", err)
 	}
 	log.Info("collected raw prefixes", "count", len(raw), "method", method)
 
-	// 3. Валидация
+	// 3. Валидация.
 	v := validator.Validator{Safety: s.cfg.Safety}
 	prefixes, err := v.Validate(prefixesToStrings(raw), ov)
 	if err != nil {
@@ -376,76 +367,62 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		return res, fmt.Errorf("validate: %w", err)
 	}
 
-	// FAIL-CLOSED: если валидация вернула 0 префиксов, ничего не меняем
+	// FAIL-CLOSED (PROMPT II.4): пусто — прерываем, существующие не трогаем.
 	if len(prefixes) == 0 {
 		res.Error = "no valid prefixes after validation, aborting sync (fail-closed)"
 		log.Error("fail-closed: no valid prefixes collected")
 		s.notifyError(ctx, name, fmt.Errorf("%s", res.Error))
 		return res, fmt.Errorf("no valid prefixes after validation")
 	}
-	log.Info("validated prefixes", "count", len(prefixes))
 
-	// 4. Агрегация в минимальный набор CIDR
+	// 4. Агрегация.
 	agg, err := aggregator.Aggregate(prefixes)
 	if err != nil {
-		// Нарушение инварианта — безопасный откат к неагрегированному списку
 		log.Error("aggregation invariant violated, using unaggregated list", "err", err)
 		agg = prefixes
 	}
 	log.Info("aggregated prefixes", "count", len(agg))
 
-	// Формируем желаемый набор маршрутов (используем глобальные настройки MikroTik)
-	desired := make([]RouteKey, 0, len(agg))
+	desired := make([]string, 0, len(agg))
 	for _, p := range agg {
-		desired = append(desired, RouteKey{
-			CIDR:     p.String(),
-			Gateway:  s.cfg.MikroTik.Gateway,
-			Table:    s.cfg.MikroTik.RoutingTable,
-			Distance: s.cfg.MikroTik.Distance,
-		})
+		desired = append(desired, p.String())
 	}
 
-	// 5. Вычисление diff
-	diff, err := ComputeDiff(desired, existing)
+	// 5. Diff по нормализованному address (PROMPT II.7).
+	diff, err := addresslist.ComputeDiff(name, list, comment, desired, existing)
 	if err != nil {
 		res.Error = fmt.Sprintf("compute diff: %v", err)
 		log.Error("diff computation failed", "err", err)
+		s.notifyError(ctx, name, err)
 		return res, fmt.Errorf("compute diff: %w", err)
 	}
 
 	res.Added = len(diff.Add)
 	res.Removed = len(diff.Remove)
-	res.Unchanged = diff.Unchanged
+	res.Unchanged = len(diff.Unchanged)
 	log.Info("computed diff", "add", res.Added, "remove", res.Removed, "unchanged", res.Unchanged)
 
-	// SAFE-DIFF: защита от массового удаления маршрутов
+	// 6. SAFE-DIFF (PROMPT II.6).
 	if len(existing) > 0 && !force {
-		// Проверка 1: Относительный ratio
-		ratio := float64(len(diff.Remove)) / float64(len(existing))
-		if ratio > s.cfg.Safety.MaxDeleteRatio {
-			res.Error = fmt.Sprintf(
-				"delete ratio %.2f exceeds maximum %.2f (use --force to override)",
-				ratio, s.cfg.Safety.MaxDeleteRatio,
-			)
-			log.Error("delete ratio exceeded", "ratio", ratio, "max", s.cfg.Safety.MaxDeleteRatio)
-			return res, fmt.Errorf("%s", res.Error)
-		}
-
-		// Проверка 2: Абсолютный порог RequireConfirmationOver
-		if s.cfg.Safety.RequireConfirmationOver > 0 &&
-			len(diff.Remove) > s.cfg.Safety.RequireConfirmationOver {
-			res.Error = fmt.Sprintf(
-				"delete count %d exceeds require_confirmation_over %d (use --force to override)",
-				len(diff.Remove), s.cfg.Safety.RequireConfirmationOver,
-			)
-			log.Error("delete count exceeded absolute threshold",
-				"remove_count", len(diff.Remove),
-				"threshold", s.cfg.Safety.RequireConfirmationOver)
-			return res, fmt.Errorf("%s", res.Error)
+		if err := addresslist.CheckDeletion(len(existing), len(diff.Remove), addresslist.SafetyParams{
+			MaxDeleteRatio:          s.cfg.Safety.MaxDeleteRatio,
+			RequireConfirmationOver: s.cfg.Safety.RequireConfirmationOver,
+		}); err != nil {
+			res.Error = err.Error()
+			log.Error("safety-check blocked sync", "err", err)
+			s.notifyError(ctx, name, err)
+			return res, err
 		}
 	}
 
-	// 6. Снапшот перед применением (для rollback)
+	// План удаления (с дублями) и список добавления.
+	toRemove := addresslist.RemovalPlan(desired, existing)
+	toAdd := make([]addresslist.Entry, 0, len(diff.Add))
+	for _, a := range diff.Add {
+		toAdd = append(toAdd, addresslist.Entry{Address: a})
+	}
+
+	// 7. Снапшот перед применением.
 	snapshotID := s.createSnapshot(ctx, name, existing)
 	if snapshotID == "" {
 		log.Warn("snapshot creation failed, proceeding without rollback capability")
@@ -453,7 +430,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		log.Info("snapshot created", "snapshot_id", snapshotID)
 	}
 
-	// 7. Dry run — только логируем diff
+	// 8. Dry run — только diff.
 	if dry {
 		log.Info("dry run completed", "add", res.Added, "remove", res.Removed)
 		res.Success = true
@@ -462,28 +439,15 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		return res, nil
 	}
 
-	// 8. Транзакционное применение (с автоматическим rollback при ошибке)
+	// 9. Транзакционное применение (сначала add, затем remove).
 	tx := mikrotik.NewTransaction(s.mt(), s.cfg, s.cache, name, log)
 	if snapshotID != "" {
 		tx.SetSnapshotID(snapshotID)
 	}
 
-	toAdd := make([]mikrotik.Route, 0, len(diff.Add))
-	for _, k := range diff.Add {
-		toAdd = append(toAdd, mikrotik.Route{
-			DstAddress:   k.CIDR,
-			Gateway:      k.Gateway,
-			RoutingTable: k.Table,
-			Distance:     strconv.Itoa(k.Distance),
-			Comment:      fmt.Sprintf("%s:%s", s.cfg.MikroTik.CommentPrefix, name),
-		})
-	}
-
-	if err := tx.Apply(ctx, toAdd, diff.Remove); err != nil {
+	if err := tx.Apply(ctx, toAdd, toRemove); err != nil {
 		res.Error = err.Error()
 		log.Error("transaction failed", "err", err)
-		// Если транзакция завершилась в degraded (rollback частично неудачен) —
-		// помечаем сервис и шлём алерт высоким приоритетом (PROMPT I.3).
 		if tx.State() == mikrotik.StateDegraded {
 			s.MarkDegraded(name)
 			_ = s.getNotify().Error(ctx, name, fmt.Errorf(
@@ -496,14 +460,13 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		return res, fmt.Errorf("transaction: %w", err)
 	}
 
-	// 9. Финализация
+	// 10. Финализация.
 	res.Success = true
 	s.ClearDegraded(name)
 	res.FinishedAt = time.Now()
 	res.Duration = res.FinishedAt.Sub(start).String()
 	elapsed := time.Since(start)
 
-	// Логирование (приведение к logging.SyncResult)
 	logRes := logging.SyncResult{
 		Service:    res.Service,
 		Success:    res.Success,
@@ -518,21 +481,21 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	logging.LogSyncResult(log, logRes, elapsed)
 
-	// Уведомления, аудит, история
-	s.getNotify().Send(ctx, fmt.Sprintf(
-		"✅ %s: +%d добавлено, −%d удалено, %d без изменений (%s)",
-		name, res.Added, res.Removed, res.Unchanged, res.Duration,
-	))
+	_ = s.getNotify().Send(ctx, fmt.Sprintf(
+		"✅ %s (list %s): +%d добавлено, −%d удалено, %d без изменений (%s)",
+		name, list, res.Added, res.Removed, res.Unchanged, res.Duration))
 	s.audit.Log(EntryToAudit(res))
 	s.emit("sync_done", map[string]any{
-		"service": name, "added": res.Added, "removed": res.Removed, "unchanged": res.Unchanged,
+		"service": name, "list": list,
+		"added": res.Added, "removed": res.Removed, "unchanged": res.Unchanged,
 	})
 
-	// КРИТИЧЕСКАЯ СЕКЦИЯ: запись в историю и lastSync
 	s.serviceMu.Lock()
 	s.history.Add(history.Record{
 		Time:       res.StartedAt,
 		Service:    name,
+		Method:     method,
+		Status:     "success",
 		Collected:  len(raw),
 		Aggregated: len(agg),
 		Added:      res.Added,
@@ -547,11 +510,8 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	return res, nil
 }
 
-// SyncMany запускает ПАРАЛЛЕЛЬНУЮ синхронизацию группы сервисов с ограничением
-// на количество одновременных потоков (из конфига `scheduler.max_concurrent`).
-//
-// ВАЖНО: force параметр пробрасывается в SyncService.
-// Итоговый отчёт агрегируется и отправляется в Telegram (PROMPT III.2).
+// SyncMany — параллельная синхронизация набора сервисов с ограничением
+// max_concurrent; ошибки изолированы; итог — одно уведомление.
 func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, force bool) error {
 	if len(services) == 0 {
 		return nil
@@ -580,10 +540,7 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 				if r := recover(); r != nil {
 					s.log.Error("panic in sync goroutine", "service", n, "panic", fmt.Sprintf("%v", r))
 					mu.Lock()
-					results = append(results, Result{
-						Service: n, Success: false,
-						Error: fmt.Sprintf("panic: %v", r), DryRun: dry,
-					})
+					results = append(results, Result{Service: n, Success: false, Error: fmt.Sprintf("panic: %v", r), DryRun: dry})
 					if firstErr == nil {
 						firstErr = fmt.Errorf("%s: panic: %v", n, r)
 					}
@@ -596,15 +553,11 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 				defer func() { <-sem }()
 			case <-ctx.Done():
 				mu.Lock()
-				results = append(results, Result{
-					Service: n, Success: false,
-					Error: "context cancelled", DryRun: dry,
-				})
+				results = append(results, Result{Service: n, Success: false, Error: "context cancelled", DryRun: dry})
 				mu.Unlock()
 				return
 			}
 
-			// ВАЖНО: передаём force в SyncService
 			res, err := s.SyncService(ctx, n, dry, force)
 			mu.Lock()
 			results = append(results, res)
@@ -617,26 +570,20 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 
 	wg.Wait()
 
-	// Итоговое логирование группы
 	logResults := make([]logging.SyncResult, len(results))
 	for i, r := range results {
 		logResults[i] = logging.SyncResult{
-			Service:    r.Service,
-			Success:    r.Success,
-			Added:      r.Added,
-			Removed:    r.Removed,
-			Unchanged:  r.Unchanged,
-			Error:      r.Error,
-			DryRun:     r.DryRun,
-			StartedAt:  r.StartedAt,
-			FinishedAt: r.FinishedAt,
-			Duration:   r.Duration,
+			Service: r.Service, Success: r.Success, Added: r.Added, Removed: r.Removed,
+			Unchanged: r.Unchanged, Error: r.Error, DryRun: r.DryRun,
+			StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Duration: r.Duration,
 		}
 	}
 	logging.LogSyncSummary(s.log, logResults)
 
 	nr := make([]notifier.SyncResult, 0, len(results))
-	for _, r := range results {
+	names := make([]string, len(results))
+	for i, r := range results {
+		names[i] = r.Service
 		nr = append(nr, notifier.SyncResult{
 			Service:    r.Service,
 			Success:    r.Success,
@@ -647,36 +594,51 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 			DurationMs: r.FinishedAt.Sub(r.StartedAt).Milliseconds(),
 		})
 	}
-	names := make([]string, len(results))
-	for i, r := range results {
-		names[i] = r.Service
-	}
 	_ = s.getNotify().SyncDone(ctx, nr, time.Since(start), dry)
 	s.audit.LogSyncComplete(names, time.Since(start), firstErr)
 	return firstErr
 }
 
+// SyncOneResult — синхронизация одного сервиса сNotifier-результатом (scheduler).
+func (s *Syncer) SyncOneResult(ctx context.Context, name string, dry bool) notifier.SyncResult {
+	res, err := s.SyncService(ctx, name, dry, false)
+	sr := notifier.SyncResult{
+		Service:    res.Service,
+		Success:    res.Success,
+		Added:      res.Added,
+		Removed:    res.Removed,
+		Unchanged:  res.Unchanged,
+		Error:      res.Error,
+		DurationMs: res.FinishedAt.Sub(res.StartedAt).Milliseconds(),
+	}
+	if err != nil && sr.Error == "" {
+		sr.Error = err.Error()
+	}
+	return sr
+}
+
 // ============================================================================
-// Команды info / diff для CLI
+// CLI/Web-хелперы: info, diff, address-list, audit
 // ============================================================================
 
-// InfoService возвращает детальную информацию о сервисе.
+// InfoService — детальная информация о сервисе.
 func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, error) {
+	list := s.cfg.Firewall.AddressList
 	info := &ServiceInfo{
 		Name:     name,
+		List:     list,
+		Comment:  addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
 		Schedule: s.cfg.EffectiveSchedule(name),
 		Override: s.cfg.Overrides[name],
 	}
 
-	// Количество маршрутов в MikroTik
-	routes, err := s.mt().ListServiceRoutes(ctx, name)
+	entries, err := s.mt().ListServiceEntries(ctx, list, s.cfg.Firewall.CommentPrefix, name)
 	if err != nil {
-		s.log.Warn("failed to list routes for info", "service", name, "err", err)
+		s.log.Warn("failed to list entries for info", "service", name, "err", err)
 	} else {
-		info.RouteCount = len(routes)
+		info.EntryCount = len(entries)
 	}
 
-	// Количество снапшотов
 	snapshots, err := s.cache.ListSnapshots(name)
 	if err != nil {
 		s.log.Warn("failed to list snapshots for info", "service", name, "err", err)
@@ -687,12 +649,14 @@ func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, er
 	return info, nil
 }
 
-// DiffService вычисляет diff без применения (аналог --dry-run, но без применения).
-// ИСПРАВЛЕНО: не использует приватные поля из других файлов.
-func (s *Syncer) DiffService(ctx context.Context, name string) (*DiffResult, error) {
-	existing, err := s.mt().ListServiceRoutes(ctx, name)
+// DiffService — diff без применения (для `app diff`, `--dry-run`).
+func (s *Syncer) DiffService(ctx context.Context, name string) (*addresslist.Diff, error) {
+	list := s.cfg.Firewall.AddressList
+	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
+
+	existing, err := s.mt().ListServiceEntries(ctx, list, s.cfg.Firewall.CommentPrefix, name)
 	if err != nil {
-		return nil, fmt.Errorf("list routes: %w", err)
+		return nil, fmt.Errorf("list entries: %w", err)
 	}
 
 	ov := s.cfg.Overrides[name]
@@ -706,69 +670,113 @@ func (s *Syncer) DiffService(ctx context.Context, name string) (*DiffResult, err
 	if err != nil {
 		return nil, fmt.Errorf("validate: %w", err)
 	}
-
 	if len(prefixes) == 0 {
 		return nil, fmt.Errorf("no valid prefixes after validation")
 	}
 
 	agg, err := aggregator.Aggregate(prefixes)
 	if err != nil {
-		return nil, fmt.Errorf("aggregate: %w", err)
+		agg = prefixes
 	}
 
-	desired := make([]RouteKey, 0, len(agg))
+	desired := make([]string, 0, len(agg))
 	for _, p := range agg {
-		desired = append(desired, RouteKey{
-			CIDR:     p.String(),
-			Gateway:  s.cfg.MikroTik.Gateway,
-			Table:    s.cfg.MikroTik.RoutingTable,
-			Distance: s.cfg.MikroTik.Distance,
-		})
+		desired = append(desired, p.String())
 	}
+	return addresslist.ComputeDiff(name, list, comment, desired, existing)
+}
 
-	diff, err := ComputeDiff(desired, existing)
+// ListGlobalEntries — все записи глобального address-list (страница /address-list).
+func (s *Syncer) ListGlobalEntries(ctx context.Context) ([]addresslist.Entry, error) {
+	return s.mt().ListEntries(ctx, s.cfg.Firewall.AddressList)
+}
+
+// ListServiceEntries — управляемые записи одного сервиса.
+func (s *Syncer) ListServiceEntries(ctx context.Context, name string) ([]addresslist.Entry, error) {
+	return s.mt().ListServiceEntries(ctx,
+		s.cfg.Firewall.AddressList, s.cfg.Firewall.CommentPrefix, name)
+}
+
+// AuditAddressList — AUTO-записи, не принадлежащие активным сервисам (orphan).
+func (s *Syncer) AuditAddressList(ctx context.Context) ([]OrphanEntry, error) {
+	entries, err := s.ListGlobalEntries(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("compute diff: %w", err)
+		return nil, err
 	}
 
-	// Конвертируем diff.Remove ([]mikrotik.Route) в []RouteKey
-	removeKeys := make([]RouteKey, 0, len(diff.Remove))
-	for _, r := range diff.Remove {
-		cidr := r.DstAddress
-		if p, err := netip.ParsePrefix(cidr); err == nil {
-			cidr = p.Masked().String()
-		}
-
-		distance := 1
-		if r.Distance != "" {
-			if d, err := strconv.Atoi(r.Distance); err == nil {
-				distance = d
-			}
-		}
-
-		removeKeys = append(removeKeys, RouteKey{
-			CIDR:     cidr,
-			Gateway:  r.Gateway,
-			Table:    r.RoutingTable,
-			Distance: distance,
-		})
+	prefix := s.cfg.Firewall.CommentPrefix
+	active := make(map[string]bool, len(s.cfg.Services))
+	for _, sv := range s.cfg.Services {
+		active[sv] = true
 	}
 
-	return &DiffResult{
-		Service:   name,
-		Add:       diff.Add,
-		Remove:    removeKeys,
-		Unchanged: diff.Unchanged,
-	}, nil
+	var orphans []OrphanEntry
+	for _, e := range entries {
+		if e.IsDynamic() {
+			continue
+		}
+		svc, ok := addresslist.ServiceFromComment(e.Comment, prefix)
+		if !ok {
+			continue
+		}
+		if active[svc] {
+			continue
+		}
+		orphans = append(orphans, OrphanEntry{Addresslist: e, Service: svc})
+	}
+	return orphans, nil
+}
+
+// CleanupAutoEntries удаляет ТОЛЬКО orphan AUTO-записи (нужен force — PROMPT IV.6).
+func (s *Syncer) CleanupAutoEntries(ctx context.Context, force bool) (int, error) {
+	if !force {
+		return 0, fmt.Errorf("cleanup-auto-entries requires --force (orphan-записи не удаляются молча)")
+	}
+	orphans, err := s.AuditAddressList(ctx)
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, o := range orphans {
+		if err := s.mt().DeleteEntry(ctx, o.Addresslist.ID); err != nil {
+			s.log.Error("failed to delete orphan entry",
+				"id", o.Addresslist.ID, "address", o.Addresslist.Address, "err", err)
+			continue
+		}
+		deleted++
+	}
+	s.log.Info("orphan AUTO entries cleanup completed", "deleted", deleted, "total", len(orphans))
+	return deleted, nil
+}
+
+// RemoveServiceEntries — удалить управляемые записи сервиса (purge при remove-service).
+func (s *Syncer) RemoveServiceEntries(ctx context.Context, name string) (int, error) {
+	entries, err := s.ListServiceEntries(ctx, name)
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	var failed []string
+	for _, e := range entries {
+		if err := s.mt().DeleteEntry(ctx, e.ID); err != nil {
+			failed = append(failed, e.Address)
+			s.log.Error("failed to delete entry", "service", name, "id", e.ID, "address", e.Address, "err", err)
+			continue
+		}
+		deleted++
+	}
+	if len(failed) > 0 {
+		return deleted, fmt.Errorf("удалено %d из %d записей, не удалены: %s",
+			deleted, len(entries), strings.Join(failed, ", "))
+	}
+	return deleted, nil
 }
 
 // ============================================================================
 // Сбор префиксов (classifier + collectors)
 // ============================================================================
 
-// collect определяет методы сбора через classifier и опрашивает collectors.
-// Для совмещённых методов результаты объединяются; при ошибке метода
-// пробуется следующий. Возвращает сырые префиксы и имя сработавшего метода.
+// collect определяет методы сбора и объединяет их результаты.
 func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOverride) ([]netip.Prefix, string, error) {
 	class := classifier.Classify(name, ov.Method)
 
@@ -777,7 +785,6 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 		IncludeOnly: ov.IncludeOnly,
 	}
 
-	// Override-параметрики имеют приоритет над словарём классификатора.
 	domains := ov.Domains
 	if len(domains) == 0 {
 		domains = class.Domains
@@ -795,11 +802,10 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	}
 	asn := 0
 	if class.ASN != "" {
-		if n, err := strconv.Atoi(strings.TrimPrefix(strings.ToUpper(class.ASN), "AS")); err == nil {
+		if n, err := resolverParseASN(class.ASN); err == nil {
 			asn = n
 		}
 	}
-	// Для unknown-сервисов без override пробуем определить ASN через RDAP/Cymru
 	if asn == 0 && (hasMethod(class.Methods, "asn") || hasMethod(class.Methods, "cdn")) && len(domains) > 0 {
 		if resolved, err := s.resolver().ResolveASN(ctx, domains[0]); err == nil {
 			asn = resolved
@@ -852,10 +858,8 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 
 	usedMethod := strings.Join(used, "+")
 
-	// Уровень 3 валидации (PROMPT II.3): проверка принадлежности ASN через RDAP.
-	// Best-effort и ограничена по количеству запросов: явное несовпадение ASN
-	// отбрасывает префикс, недоступность RDAP — оставляет (префиксы уже
-	// подтверждены BGP-анонсами источника).
+	// Уровень 3 валидации (PROMPT III.3): RDAP-принадлежность ASN (best-effort,
+	// ограниченный выборкой).
 	if asn > 0 && (strings.Contains(usedMethod, "asn") || strings.Contains(usedMethod, "whois")) {
 		acc = s.verifyASNOwnership(ctx, acc, asn)
 	}
@@ -863,7 +867,12 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	return acc, usedMethod, nil
 }
 
-// verifyASNOwnership проверяет RDAP-принадлежность выборки префиксов ASN.
+// resolverParseASN — разбор "AS13335" в число.
+func resolverParseASN(s string) (int, error) {
+	return resolver.ParseASN(s)
+}
+
+// verifyASNOwnership — RDAP-проверка выборки префиксов.
 const rdapVerifySample = 32
 
 func (s *Syncer) verifyASNOwnership(ctx context.Context, in []netip.Prefix, asn int) []netip.Prefix {
@@ -921,98 +930,76 @@ func hasMethod(methods []string, want string) bool {
 }
 
 // ============================================================================
-// Работа со снапшотами (Rollback infrastructure)
+// Снапшоты / backup / restore (bucket address_list_snapshots)
 // ============================================================================
 
-// createSnapshot — внутренний хелпер: создает снапшот из существующих маршрутов.
-func (s *Syncer) createSnapshot(ctx context.Context, name string, routes []mikrotik.Route) string {
+// createSnapshot — снимок управляемых адресов сервиса перед применением.
+func (s *Syncer) createSnapshot(ctx context.Context, name string, entries []addresslist.Entry) string {
 	if !s.cfg.Snapshots.Enabled {
 		return ""
 	}
 
-	prefixes := make([]netip.Prefix, 0, len(routes))
+	addresses := make([]string, 0, len(entries))
 	skipped := 0
-
-	for _, r := range routes {
-		p, err := netip.ParsePrefix(r.DstAddress)
+	for _, e := range entries {
+		norm, err := addresslist.NormalizeAddress(e.Address)
 		if err != nil {
-			s.log.Error("invalid prefix in snapshot, skipping",
-				"prefix", r.DstAddress, "service", name, "err", err)
+			s.log.Error("invalid address in snapshot, skipping",
+				"address", e.Address, "service", name, "err", err)
 			skipped++
 			continue
 		}
-		prefixes = append(prefixes, p)
+		addresses = append(addresses, norm)
 	}
-
 	if skipped > 0 {
-		s.log.Warn("some routes skipped in snapshot",
-			"service", name, "skipped", skipped, "total", len(routes))
+		s.log.Warn("some entries skipped in snapshot", "service", name, "skipped", skipped, "total", len(entries))
 	}
 
-	snapshotID, err := s.CreateSnapshot(ctx, name, prefixes)
+	id, err := s.CreateSnapshot(ctx, name, addresses)
 	if err != nil {
 		s.log.Error("failed to create snapshot", "service", name, "err", err)
 		return ""
 	}
-	return snapshotID
+	return id
 }
 
-// CreateSnapshot сохраняет текущий набор префиксов сервиса в bbolt.
-func (s *Syncer) CreateSnapshot(ctx context.Context, service string, prefixes []netip.Prefix) (string, error) {
+// CreateSnapshot сохраняет снимок адресов сервиса в bbolt.
+func (s *Syncer) CreateSnapshot(ctx context.Context, service string, addresses []string) (string, error) {
 	if !s.cfg.Snapshots.Enabled {
 		return "", fmt.Errorf("snapshots are disabled")
 	}
-
-	prefixStrings := make([]string, 0, len(prefixes))
-	for _, p := range prefixes {
-		prefixStrings = append(prefixStrings, p.String())
-	}
-
-	id, err := s.cache.CreateSnapshot(service, prefixStrings)
+	id, err := s.cache.CreateSnapshot(service, addresses)
 	if err != nil {
 		return "", fmt.Errorf("save snapshot: %w", err)
 	}
-
-	s.log.Info("created snapshot", "service", service, "id", id, "prefixes", len(prefixes))
+	s.log.Info("created snapshot", "service", service, "id", id, "addresses", len(addresses))
 	return id, nil
 }
 
-// GetSnapshot загружает снапшот и конвертирует его обратно в []mikrotik.Route.
-func (s *Syncer) GetSnapshot(ctx context.Context, service, id string, routes *[]mikrotik.Route) error {
-	var prefixStrings []string
-	if err := s.cache.GetSnapshot(service, id, &prefixStrings); err != nil {
+// GetSnapshot читает адреса снапшота и собирает из них управляемые записи.
+func (s *Syncer) GetSnapshot(ctx context.Context, service, id string, entries *[]addresslist.Entry) error {
+	var addresses []string
+	if err := s.cache.GetSnapshot(service, id, &addresses); err != nil {
 		return fmt.Errorf("load snapshot: %w", err)
 	}
 
-	prefixes := make([]netip.Prefix, 0, len(prefixStrings))
-	for _, ps := range prefixStrings {
-		if p, err := netip.ParsePrefix(ps); err == nil {
-			prefixes = append(prefixes, p)
-		}
+	list := s.cfg.Firewall.AddressList
+	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, service)
+	out := make([]addresslist.Entry, 0, len(addresses))
+	for _, a := range addresses {
+		out = append(out, addresslist.Entry{Address: a, List: list, Comment: comment, Disabled: "false"})
 	}
-
-	*routes = make([]mikrotik.Route, 0, len(prefixes))
-	for _, p := range prefixes {
-		*routes = append(*routes, mikrotik.Route{
-			DstAddress:   p.String(),
-			Gateway:      s.cfg.MikroTik.Gateway,
-			RoutingTable: s.cfg.MikroTik.RoutingTable,
-			Distance:     strconv.Itoa(s.cfg.MikroTik.Distance),
-			Comment:      fmt.Sprintf("%s:%s", s.cfg.MikroTik.CommentPrefix, service),
-		})
-	}
-
+	*entries = out
 	return nil
 }
 
-// ListSnapshots возвращает список всех снапшотов сервиса с количеством префиксов.
+// ListSnapshots — список снапшотов сервиса.
 func (s *Syncer) ListSnapshots(ctx context.Context, service string) ([]SnapshotInfo, error) {
 	infos, err := s.cache.ListSnapshots(service)
 	if err != nil {
 		return nil, fmt.Errorf("list snapshots: %w", err)
 	}
-
-	var result []SnapshotInfo
+	result := make([]SnapshotInfo, 0, len(infos))
 	for _, info := range infos {
 		result = append(result, SnapshotInfo{
 			ID:        info.ID,
@@ -1021,16 +1008,15 @@ func (s *Syncer) ListSnapshots(ctx context.Context, service string) ([]SnapshotI
 			Count:     info.Count,
 		})
 	}
-
 	return result, nil
 }
 
-// DeleteSnapshot удаляет конкретный снапшот сервиса.
+// DeleteSnapshot удаляет конкретный снапшот.
 func (s *Syncer) DeleteSnapshot(ctx context.Context, service, id string) error {
 	return s.cache.DeleteSnapshot(service, id)
 }
 
-// CleanupSnapshots удаляет старые снапшоты по TTL и ограничивает их количество.
+// CleanupSnapshots удаляет старые снапшоты по TTL и сверх max_count.
 func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.Duration) (int, error) {
 	ids, err := s.cache.ListSnapshots(service)
 	if err != nil {
@@ -1039,58 +1025,49 @@ func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.
 
 	deleted := 0
 	cutoff := time.Now().Add(-ttl)
-
-	// Удаляем просроченные
 	for _, info := range ids {
 		if info.CreatedAt.Before(cutoff) {
 			if err := s.cache.DeleteSnapshot(service, info.ID); err != nil {
-				s.log.Warn("failed to delete expired snapshot",
-					"service", service, "id", info.ID, "err", err)
+				s.log.Warn("failed to delete expired snapshot", "service", service, "id", info.ID, "err", err)
 				continue
 			}
 			deleted++
 		}
 	}
 
-	// Удаляем лишние, если превышен max_count
 	remaining, err := s.cache.ListSnapshots(service)
 	if err != nil {
 		return deleted, nil
 	}
-
 	maxCount := s.cfg.Snapshots.MaxCount
-	if len(remaining) > maxCount {
+	if maxCount > 0 && len(remaining) > maxCount {
 		sort.Slice(remaining, func(i, j int) bool {
 			return remaining[i].CreatedAt.Before(remaining[j].CreatedAt)
 		})
-
 		toDelete := len(remaining) - maxCount
 		for i := 0; i < toDelete && i < len(remaining); i++ {
 			if err := s.cache.DeleteSnapshot(service, remaining[i].ID); err != nil {
-				s.log.Warn("failed to delete excess snapshot",
-					"service", service, "id", remaining[i].ID, "err", err)
+				s.log.Warn("failed to delete excess snapshot", "service", service, "id", remaining[i].ID, "err", err)
 				continue
 			}
 			deleted++
 		}
 	}
 
-	s.log.Info("snapshot cleanup completed",
-		"service", service, "deleted", deleted, "ttl", ttl, "max_count", maxCount)
+	s.log.Info("snapshot cleanup completed", "service", service, "deleted", deleted, "ttl", ttl, "max_count", maxCount)
 	return deleted, nil
 }
 
 // ============================================================================
-// Управление сервисами (CLI / Web / Telegram Bot)
+// Управление сервисами
 // ============================================================================
 
-// AddService регистрирует новый сервис в конфиге с дефолтными настройками.
+// AddService регистрирует сервис с дефолтными настройками.
 func (s *Syncer) AddService(ctx context.Context, name string) error {
 	return s.AddServiceWithConfig(ctx, name, config.ServiceOverride{})
 }
 
-// AddServiceWithConfig регистрирует сервис с кастомными override-настройками.
-// КРИТИЧЕСКАЯ СЕКЦИЯ: мутация конфига требует мьютекса.
+// AddServiceWithConfig добавляет сервис (валидация имени, атомарное сохранение).
 func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override config.ServiceOverride) error {
 	s.serviceMu.Lock()
 	defer s.serviceMu.Unlock()
@@ -1125,8 +1102,7 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	return nil
 }
 
-// RemoveService удаляет сервис из конфига и опционально очищает его маршруты.
-// КРИТИЧЕСКАЯ СЕКЦИЯ: мутация конфига требует мьютекса.
+// RemoveService удаляет сервис из конфига и (purgeRoutes) его AUTO-записи.
 func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes bool) error {
 	s.serviceMu.Lock()
 	defer s.serviceMu.Unlock()
@@ -1134,7 +1110,6 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	name = strings.ToLower(strings.TrimSpace(name))
 	found := false
 	var newServices []string
-
 	for _, p := range s.cfg.Services {
 		if p == name {
 			found = true
@@ -1142,110 +1117,106 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 		}
 		newServices = append(newServices, p)
 	}
-
 	if !found {
 		return fmt.Errorf("service %s not found", name)
 	}
 
-	// Purge routes — удаляем все маршруты с comment=AUTO:<name>
 	if purgeRoutes {
-		routes, err := s.mt().ListServiceRoutes(ctx, name)
+		// Fail-fast: пока записи сервиса не удалены с роутера, сервис
+		// НЕ снимаем с конфигурации — иначе они станут невидимыми orphan'ами.
+		n, err := s.RemoveServiceEntries(ctx, name)
 		if err != nil {
-			s.log.Warn("failed to list routes for purge", "service", name, "err", err)
-		} else {
-			for _, r := range routes {
-				if err := s.mt().DeleteRoute(ctx, r.ID); err != nil {
-					s.log.Warn("failed to delete route",
-						"service", name, "dst", r.DstAddress, "err", err)
-				}
-			}
-			s.log.Info("purged service routes", "service", name, "count", len(routes))
+			return fmt.Errorf("purge address-list entries failed, сервис НЕ удалён из конфигурации: %w", err)
 		}
+		s.log.Info("purged service address entries", "service", name, "count", n)
 	}
 
-	// Удаляем все снапшоты сервиса
 	ids, err := s.cache.ListSnapshots(name)
-	if err != nil {
-		s.log.Warn("failed to list snapshots", "service", name, "err", err)
-	} else {
+	if err == nil {
 		for _, info := range ids {
 			_ = s.cache.DeleteSnapshot(name, info.ID)
 		}
-		s.log.Info("deleted service snapshots", "service", name, "count", len(ids))
 	}
 
 	s.cfg.Services = newServices
 	delete(s.cfg.Overrides, name)
 
-	return s.cfg.Save()
+	if err := s.cfg.Save(); err != nil {
+		return err
+	}
+	s.audit.LogServiceDelete("", "core", name)
+	s.emit("service_removed", map[string]any{"service": name})
+	return nil
 }
 
-// ListServices возвращает список зарегистрированных сервисов.
+// ListServices — список зарегистрированных сервисов.
 func (s *Syncer) ListServices() []string {
 	return s.cfg.Services
 }
 
 // ============================================================================
-// Backup / Restore
+// Backup / Restore (адреса сервиса)
 // ============================================================================
 
-// Backup экспортирует текущие маршруты сервиса в формате []mikrotik.Route.
-func (s *Syncer) Backup(ctx context.Context, name string) ([]mikrotik.Route, error) {
-	routes, err := s.mt().ListServiceRoutes(ctx, name)
+// Backup собирает BackupFile по управляемым записям сервиса.
+func (s *Syncer) Backup(ctx context.Context, name string) (*BackupFile, error) {
+	entries, err := s.ListServiceEntries(ctx, name)
 	if err != nil {
-		return nil, fmt.Errorf("list routes: %w", err)
+		return nil, fmt.Errorf("list entries: %w", err)
 	}
-	return routes, nil
+	return &BackupFile{
+		Service:   name,
+		List:      s.cfg.Firewall.AddressList,
+		Comment:   addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
+		CreatedAt: time.Now().UTC(),
+		Entries:   entries,
+	}, nil
 }
 
-// Restore импортирует маршруты из backup, пропуская дубликаты.
-func (s *Syncer) Restore(ctx context.Context, name string, routes []mikrotik.Route) error {
-	existing, err := s.mt().ListServiceRoutes(ctx, name)
+// Restore добавляет управляемые address-list записи сервиса, пропуская дубли.
+func (s *Syncer) Restore(ctx context.Context, name string, entries []addresslist.Entry) error {
+	existing, err := s.ListServiceEntries(ctx, name)
 	if err != nil {
-		s.log.Warn("failed to list existing routes for duplicate check",
-			"service", name, "err", err)
+		s.log.Warn("failed to list existing entries for duplicate check", "service", name, "err", err)
+	}
+	existingSet := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		if n, err := addresslist.NormalizeAddress(e.Address); err == nil {
+			existingSet[n] = true
+		}
 	}
 
-	existingMap := make(map[string]bool)
-	for _, r := range existing {
-		existingMap[r.DstAddress] = true
-	}
+	list := s.cfg.Firewall.AddressList
+	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
 
-	restored := 0
-	skipped := 0
-	errors := 0
-
-	for _, r := range routes {
-		r.Comment = fmt.Sprintf("%s:%s", s.cfg.MikroTik.CommentPrefix, name)
-
-		if existingMap[r.DstAddress] {
+	restored, skipped, failures := 0, 0, 0
+	for _, e := range entries {
+		norm, err := addresslist.NormalizeAddress(e.Address)
+		if err != nil {
+			failures++
+			s.log.Error("invalid address in restore", "service", name, "address", e.Address, "err", err)
+			continue
+		}
+		if existingSet[norm] {
 			skipped++
 			continue
 		}
-
-		if _, err := s.mt().AddRoute(ctx, r); err != nil {
-			errors++
-			s.log.Error("failed to restore route",
-				"service", name, "dst", r.DstAddress, "err", err)
+		in := addresslist.Entry{Address: norm, List: list, Comment: comment, Disabled: "false"}
+		if _, err := s.mt().AddEntry(ctx, in); err != nil {
+			failures++
+			s.log.Error("failed to restore entry", "service", name, "address", norm, "err", err)
 			continue
 		}
 		restored++
-		existingMap[r.DstAddress] = true
+		existingSet[norm] = true
 	}
 
-	s.log.Info("restore completed",
-		"service", name,
-		"restored", restored,
-		"skipped_duplicates", skipped,
-		"errors", errors,
-		"total", len(routes),
-	)
+	s.log.Info("restore completed", "service", name,
+		"restored", restored, "skipped_duplicates", skipped, "errors", failures, "total", len(entries))
 
-	if errors > 0 {
-		return fmt.Errorf(
-			"restore completed with errors: restored %d, skipped %d, errors %d out of %d",
-			restored, skipped, errors, len(routes),
-		)
+	if failures > 0 {
+		return fmt.Errorf("restore completed with errors: restored %d, skipped %d, errors %d out of %d",
+			restored, skipped, failures, len(entries))
 	}
 	return nil
 }
@@ -1254,8 +1225,6 @@ func (s *Syncer) Restore(ctx context.Context, name string, routes []mikrotik.Rou
 // Утилиты
 // ============================================================================
 
-// acquire помечает сервис как «занятый». Возвращает false, если синхронизация
-// этого сервиса уже выполняется (защита от наложения, PROMPT III.2).
 func (s *Syncer) acquire(service string) bool {
 	s.busyMu.Lock()
 	defer s.busyMu.Unlock()
@@ -1266,38 +1235,17 @@ func (s *Syncer) acquire(service string) bool {
 	return true
 }
 
-// release снимает метку занятости сервиса.
 func (s *Syncer) release(service string) {
 	s.busyMu.Lock()
 	defer s.busyMu.Unlock()
 	delete(s.busy, service)
 }
 
-// notifyError отправляет уведомление об ошибке с redaction секретов.
 func (s *Syncer) notifyError(ctx context.Context, service string, err error) {
 	if err == nil {
 		return
 	}
 	_ = s.getNotify().Error(ctx, service, logging.RedactError(err))
-}
-
-// SyncOneResult — синхронизация одного сервиса с возвратом notifier.SyncResult
-// (используется планировщиком для уведомлений).
-func (s *Syncer) SyncOneResult(ctx context.Context, name string, dry bool) notifier.SyncResult {
-	res, err := s.SyncService(ctx, name, dry, false)
-	sr := notifier.SyncResult{
-		Service:    res.Service,
-		Success:    res.Success,
-		Added:      res.Added,
-		Removed:    res.Removed,
-		Unchanged:  res.Unchanged,
-		Error:      res.Error,
-		DurationMs: res.FinishedAt.Sub(res.StartedAt).Milliseconds(),
-	}
-	if err != nil && sr.Error == "" {
-		sr.Error = err.Error()
-	}
-	return sr
 }
 
 // ReloadScheduler сигналит планировщику перечитать конфиг.
@@ -1317,26 +1265,19 @@ func (s *Syncer) GetLogs(ctx context.Context, limit int) ([]map[string]any, erro
 	if limit <= 0 {
 		limit = 100
 	}
-
 	logFile := s.cfg.Logging.File
 	if logFile == "" {
 		return []map[string]any{}, nil
 	}
-
 	entries, err := logging.TailLogFile(logFile, limit)
 	if err != nil {
 		s.log.Warn("failed to read log file", "err", err, "limit", limit)
 		return []map[string]any{}, nil
 	}
-
 	return entries, nil
 }
 
-// ============================================================================
-// Вспомогательные функции
-// ============================================================================
-
-// EntryToAudit конвертирует Result в формат для audit-лога.
+// EntryToAudit конвертирует Result в запись аудита.
 func EntryToAudit(res Result) audit.Entry {
 	status := "success"
 	if !res.Success {
@@ -1346,6 +1287,8 @@ func EntryToAudit(res Result) audit.Entry {
 		Action: audit.ActionSyncComplete,
 		Metadata: map[string]any{
 			"service":   res.Service,
+			"list":      res.List,
+			"comment":   res.Comment,
 			"added":     res.Added,
 			"removed":   res.Removed,
 			"unchanged": res.Unchanged,
@@ -1356,7 +1299,6 @@ func EntryToAudit(res Result) audit.Entry {
 	}
 }
 
-// prefixesToStrings конвертирует []netip.Prefix в []string для валидатора.
 func prefixesToStrings(ps []netip.Prefix) []string {
 	out := make([]string, len(ps))
 	for i, p := range ps {

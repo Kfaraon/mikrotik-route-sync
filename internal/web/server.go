@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
@@ -395,6 +396,8 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Put("/schedules/{service}", s.apiUpdateSchedule)
 		r.Get("/logs", s.apiLogs)
 		r.Get("/history", s.apiHistory)
+		r.Get("/address-list", s.apiAddressList)
+		r.Get("/address-list/{service}", s.apiServiceAddressList)
 		r.Get("/ws", s.hub.handleWS)
 	})
 
@@ -402,6 +405,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	pages := router.With(s.authMiddleware)
 	pages.Get("/", s.pageDashboard)
 	pages.Get("/services", s.pageServices)
+	pages.Get("/address-list", s.pageAddressList)
 	pages.Get("/schedules", s.pageSchedules)
 	pages.Get("/settings", s.pageSettings)
 	pages.Get("/logs", s.pageLogs)
@@ -664,9 +668,22 @@ func (s *Server) currentUser(r *http.Request) string {
 func (s *Server) statusData(r *http.Request) map[string]any {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
+
+	managed := 0
+	if entries, err := s.syncer.ListGlobalEntries(ctx); err == nil {
+		prefix := s.cfg.Firewall.CommentPrefix
+		for _, e := range entries {
+			if _, ok := addresslist.ServiceFromComment(e.Comment, prefix); ok && !e.IsDynamic() {
+				managed++
+			}
+		}
+	}
+
 	return map[string]any{
 		"MikroTikStatus": map[bool]string{true: "ok", false: "error"}[s.syncer.PingMikroTik(ctx) == nil],
+		"AddressList":    s.cfg.Firewall.AddressList,
 		"ServiceCount":   len(s.cfg.Services),
+		"ManagedEntries": managed,
 		"Version":        version.Version,
 		"Uptime":         time.Since(s.syncer.StartTime()).Truncate(time.Second).String(),
 		"LastSync":       s.syncer.LastSync().Format(time.RFC3339),
@@ -684,15 +701,24 @@ func (s *Server) partialStatus(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "status.html", s.statusData(r))
 }
 
+// serviceRow — строка API/страницы сервисов. Поле Routes исторически
+// названо так и используется фронтендом как число управляемых записей
+// address-list (services.js читает row.Routes).
 type serviceRow struct {
 	Name      string
+	List      string
+	Comment   string
 	Schedule  string
 	Routes    int
+	LastSync  string
 	Overrides bool
 }
 
 func (s *Server) pageServices(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "services.html", map[string]any{"Services": s.serviceRows(r)})
+	s.render(w, r, "services.html", map[string]any{
+		"Services":   s.serviceRows(r),
+		"GlobalList": s.cfg.Firewall.AddressList,
+	})
 }
 
 func (s *Server) serviceRows(r *http.Request) []serviceRow {
@@ -702,11 +728,20 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 	for _, name := range s.cfg.Services {
 		row := serviceRow{
 			Name:      name,
+			List:      s.cfg.Firewall.AddressList,
+			Comment:   addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
 			Schedule:  s.cfg.EffectiveSchedule(name),
 			Overrides: s.hasOverride(name),
 		}
-		if routes, err := s.syncer.Backup(ctx, name); err == nil {
-			row.Routes = len(routes)
+		if entries, err := s.syncer.ListServiceEntries(ctx, name); err == nil {
+			row.Routes = len(entries)
+		}
+		if rec, ok := s.syncer.History().Last(name); ok {
+			status := "успех"
+			if rec.Status == "failed" || rec.Error != "" {
+				status = "ошибка"
+			}
+			row.LastSync = rec.Time.Format("2006-01-02 15:04:05") + " (" + status + ")"
 		}
 		rows = append(rows, row)
 	}
@@ -798,17 +833,17 @@ var settingsSpec = []settingSpec{
 		"true — безопасно по умолчанию. false допустим только для самоподписанных сертификатов в доверенной домашней сети (в лог попадёт предупреждение)."},
 	{"MikroTik", "mikrotik.timeout", "Таймаут запросов", "duration",
 		"Go-формат длительности: 30s, 1m. Применяется сразу."},
-	{"MikroTik", "mikrotik.gateway", "Шлюз маршрутов", "text",
-		"Имя интерфейса-шлюза в RouterOS (например wg-cz-vpn), записывается в создаваемые маршруты."},
-	{"MikroTik", "mikrotik.routing_table", "Таблица маршрутизации", "text",
-		"Routing table RouterOS (main или отдельная)."},
-	{"MikroTik", "mikrotik.distance", "Distance", "number",
-		"Приоритет маршрута (меньше = предпочтительнее), обычно 2."},
-	{"MikroTik", "mikrotik.comment_prefix", "Префикс комментария", "text",
-		"Пометка управляемых маршрутов: AUTO:<service>. Изоляция сервисов опирается на точное совпадение комментария."},
 	{"MikroTik", "mikrotik.rate_limit", "Лимит запросов/сек", "number",
 		"Ограничение частоты запросов к RouterOS REST API (по умолчанию 20)."},
 
+	{"Firewall Address List", "firewall.address_list", "Глобальный address-list", "text",
+		"Единственный Firewall Address List для всех сервисов (например TO-VPN). Обязателен. Все сервисы пишут в него; изоляция — по комментарию. Имя: буквы/цифры/_.- (до 63). Применяется сразу."},
+	{"Firewall Address List", "firewall.comment_prefix", "Префикс комментария", "text",
+		"AUTO-пометка управляемых записей: AUTO:<service>. Формируется автоматически, изоляция сервисов по точному совпадению. Применяется сразу."},
+	{"Firewall Address List", "firewall.ignore_dynamic", "Игнорировать dynamic-записи", "bool",
+		"Всегда безопасно true: динамические (address dynamic) записи never трогаются программой."},
+	{"Firewall Address List", "firewall.manage_disabled", "Создавать записи disabled", "bool",
+		"false (рекомендуется) — новые записи всегда disabled=false. true — поле disabled не задаётся явно."},
 	{"Telegram", "telegram.enabled", "Включить Telegram", "bool",
 		"Уведомления и команды бота. Нотификатор пересоздаётся сразу; отдельно запущенному 'app bot' может понадобиться рестарт."},
 	{"Telegram", "telegram.bot_token", "Токен бота", "secret",
@@ -1173,6 +1208,119 @@ func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeOK(w, s.syncer.History().Records(service, limit))
+}
+
+// ============================================================================
+// Firewall Address List (страница + API)
+// ============================================================================
+
+// addressRow — строка таблицы глобального address-list.
+type addressRow struct {
+	Address  string
+	List     string
+	Comment  string
+	Service  string
+	Managed  bool
+	Dynamic  bool
+	Disabled bool
+}
+
+func (s *Server) toAddressRows(entries []addresslist.Entry) []addressRow {
+	prefix := s.cfg.Firewall.CommentPrefix
+	active := make(map[string]bool, len(s.cfg.Services))
+	for _, sv := range s.cfg.Services {
+		active[sv] = true
+	}
+
+	rows := make([]addressRow, 0, len(entries))
+	for _, e := range entries {
+		row := addressRow{
+			Address:  e.Address,
+			List:     e.List,
+			Comment:  e.Comment,
+			Dynamic:  e.IsDynamic(),
+			Disabled: e.IsDisabled(),
+		}
+		if svc, ok := addresslist.ServiceFromComment(e.Comment, prefix); ok {
+			row.Service = svc
+			row.Managed = active[svc] && !e.IsDynamic()
+		}
+		rows = append(rows, row)
+	}
+	sortRows(rows)
+	return rows
+}
+
+func sortRows(rows []addressRow) {
+	for i := 1; i < len(rows); i++ {
+		for j := i; j > 0 && rowsLess(rows[j], rows[j-1]); j-- {
+			rows[j], rows[j-1] = rows[j-1], rows[j]
+		}
+	}
+}
+
+func rowsLess(a, b addressRow) bool {
+	if a.Service != b.Service {
+		return a.Service < b.Service
+	}
+	return a.Address < b.Address
+}
+
+func (s *Server) pageAddressList(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	data := map[string]any{
+		"GlobalList": s.cfg.Firewall.AddressList,
+		"Prefix":     s.cfg.Firewall.CommentPrefix,
+	}
+	entries, err := s.syncer.ListGlobalEntries(ctx)
+	if err != nil {
+		data["Error"] = "адресный список недоступен: " + logging.RedactString(err.Error())
+	} else {
+		data["Rows"] = s.toAddressRows(entries)
+	}
+	s.render(w, r, "addresslist.html", data)
+}
+
+// apiAddressList — записи глобального address-list (PROMPT VIII).
+func (s *Server) apiAddressList(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	entries, err := s.syncer.ListGlobalEntries(ctx)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, logging.RedactString(err.Error()))
+		return
+	}
+	writeOK(w, map[string]any{
+		"list":    s.cfg.Firewall.AddressList,
+		"entries": s.toAddressRows(entries),
+	})
+}
+
+// apiServiceAddressList — управляемые записи конкретного сервиса.
+func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "service")
+	if !config.ValidateServiceName(name) {
+		writeErr(w, http.StatusBadRequest, "invalid service name")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	entries, err := s.syncer.ListServiceEntries(ctx, name)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, logging.RedactString(err.Error()))
+		return
+	}
+	writeOK(w, map[string]any{
+		"service": name,
+		"list":    s.cfg.Firewall.AddressList,
+		"comment": addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
+		"entries": entries,
+		"count":   len(entries),
+	})
 }
 
 // ============================================================================

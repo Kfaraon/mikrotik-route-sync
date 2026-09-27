@@ -25,6 +25,8 @@ mikrotik:
   password: secret
   use_ssl: true
   verify_ssl: true
+firewall:
+  address_list: TO-VPN
 web:
   enabled: true
   auth:
@@ -48,8 +50,32 @@ func TestLoadDefaultsAndValidate(t *testing.T) {
 	if cfg.MikroTik.Port != 443 {
 		t.Fatalf("ssl port default wrong: %d", cfg.MikroTik.Port)
 	}
+	if cfg.Firewall.AddressList != "TO-VPN" || cfg.Firewall.CommentPrefix != "AUTO" {
+		t.Fatalf("firewall defaults wrong: %+v", cfg.Firewall)
+	}
 	if cfg.Scheduler.MaxConcurrent != 3 || cfg.Retry.MaxAttempts != 3 {
 		t.Fatalf("defaults wrong: %+v %+v", cfg.Scheduler, cfg.Retry)
+	}
+}
+
+func TestValidateRequiresAddressList(t *testing.T) {
+	body := `
+timezone: UTC
+mikrotik: {host: h, username: u, password: p}
+schedules: {global: "every 6h"}
+`
+	if _, err := Load(writeTempConfig(t, body)); err == nil {
+		t.Fatal("expected error for missing firewall.address_list")
+	}
+
+	bad := `
+timezone: UTC
+mikrotik: {host: h, username: u, password: p}
+firewall: {address_list: "bad list!"}
+schedules: {global: "every 6h"}
+`
+	if _, err := Load(writeTempConfig(t, bad)); err == nil {
+		t.Fatal("expected error for invalid address_list name")
 	}
 }
 
@@ -105,6 +131,7 @@ func TestSetAndGetPathAndSave(t *testing.T) {
 func TestValidateSSLPortMismatch(t *testing.T) {
 	cfg := &Config{
 		MikroTik:  MikroTikConfig{Host: "h", Username: "u", Port: 443, UseSSL: false},
+		Firewall:  FirewallConfig{AddressList: "TO-VPN"},
 		Schedules: SchedulesConfig{Global: "every 6h"},
 	}
 	if err := cfg.Validate(); err == nil {
@@ -145,7 +172,7 @@ func TestSetGetSnakeCaseKeys(t *testing.T) {
 	cases := []struct{ key, value string }{
 		{"mikrotik.use_ssl", "false"},
 		{"mikrotik.verify_ssl", "false"},
-		{"mikrotik.routing_table", "main2"},
+		{"firewall.address_list", "TO-VPN2"},
 		{"telegram.bot_token", "123:abc"},
 		{"telegram.chat_id", "42"},
 		{"safety.max_delete_ratio", "0.7"},
@@ -163,8 +190,8 @@ func TestSetGetSnakeCaseKeys(t *testing.T) {
 	if cfg.MikroTik.UseSSL {
 		t.Fatal("mikrotik.use_ssl not applied")
 	}
-	if cfg.MikroTik.RoutingTable != "main2" {
-		t.Fatalf("routing_table: %q", cfg.MikroTik.RoutingTable)
+	if cfg.Firewall.AddressList == "" {
+		t.Fatal("firewall.address_list lost")
 	}
 	if cfg.Telegram.BotToken != "123:abc" {
 		t.Fatal("bot_token not applied")
@@ -200,7 +227,7 @@ func TestSaveFallsBackWhenRenameUnavailable(t *testing.T) {
 	}
 	t.Cleanup(func() { renameFunc = orig })
 
-	if err := cfg.Set("mikrotik.distance", 5); err != nil {
+	if err := cfg.Set("mikrotik.rate_limit", "5"); err != nil {
 		t.Fatal(err)
 	}
 	if err := cfg.Save(); err != nil {
@@ -211,8 +238,8 @@ func TestSaveFallsBackWhenRenameUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got := reloaded.MikroTik.Distance; got != 5 {
-		t.Fatalf("persisted distance = %d, want 5", got)
+	if got := reloaded.MikroTik.RateLimit; got != 5 {
+		t.Fatalf("persisted rate_limit = %d, want 5", got)
 	}
 }
 

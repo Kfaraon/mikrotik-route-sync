@@ -13,12 +13,12 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// Имена бакетов в bbolt (только IPv4 данные).
+// Имена бакетов в bbolt (данные только IPv4).
 var (
 	bucketASN          = []byte("asn_by_ip")
 	bucketPrefixes     = []byte("prefixes_by_asn")
 	bucketCache        = []byte("cache")
-	bucketSnapshots    = []byte("snapshots")
+	bucketSnapshots    = []byte("address_list_snapshots")
 	bucketHistory      = []byte("history")
 	bucketTransactions = []byte("transactions")
 )

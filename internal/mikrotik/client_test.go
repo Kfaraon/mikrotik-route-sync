@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 )
 
@@ -28,49 +29,58 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 	}
 	port, _ := strconv.Atoi(portStr)
 	cfg := config.MikroTikConfig{
-		Host:          host,
-		Port:          port,
-		Username:      "api",
-		Password:      "pass",
-		Timeout:       config.Duration(5e9),
-		CommentPrefix: "AUTO",
-		RateLimit:     100,
+		Host:      host,
+		Port:      port,
+		Username:  "api",
+		Password:  "pass",
+		Timeout:   config.Duration(5e9),
+		RateLimit: 100,
 	}
 	c := New(cfg, config.RetryConfig{MaxAttempts: 1}, testLogger())
 	return c, srv
 }
 
-func TestListServiceRoutesFiltersByComment(t *testing.T) {
-	routes := []Route{
-		{ID: "*1", DstAddress: "8.8.8.0/24", Comment: "AUTO:instagram"},
-		{ID: "*2", DstAddress: "1.1.1.0/24", Comment: "AUTO:youtube"},
-		{ID: "*3", DstAddress: "9.9.9.0/24", Comment: "manual route"},
+func sampleEntries() []addresslist.Entry {
+	return []addresslist.Entry{
+		{ID: "*1", Address: "8.8.8.0/24", List: "TO-VPN", Comment: "AUTO:youtube"},
+		{ID: "*2", Address: "1.1.1.0/24", List: "TO-VPN", Comment: "AUTO:youtube"},
+		{ID: "*3", Address: "9.9.9.9/32", List: "TO-VPN", Comment: "AUTO:instagram"},
+		{ID: "*4", Address: "5.5.5.0/24", List: "TO-VPN"},
+		{ID: "*5", Address: "7.7.7.0/24", List: "OTHER-LIST", Comment: "AUTO:youtube"},
+		{ID: "*6", Address: "6.6.6.6", List: "TO-VPN", Comment: "AUTO:youtube", Dynamic: "true"},
 	}
+}
+
+func TestListServiceEntriesIsolation(t *testing.T) {
 	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(routes)
+		_ = json.NewEncoder(w).Encode(sampleEntries())
 	})
 	defer srv.Close()
 
-	got, err := c.ListServiceRoutes(context.Background(), "instagram")
+	got, err := c.ListServiceEntries(context.Background(), "TO-VPN", "AUTO", "youtube")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != "*1" {
+	// Только TO-VPN + AUTO:youtube + не-dynamic: *1, *2
+	if len(got) != 2 || got[0].ID != "*1" || got[1].ID != "*2" {
 		t.Fatalf("isolation violation, got %+v", got)
 	}
 }
 
-func TestAddRouteReturnsID(t *testing.T) {
+func TestAddEntryObjectReply(t *testing.T) {
 	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			t.Errorf("add must use PUT, got %s", r.Method)
+		}
+		if !strings.HasPrefix(r.URL.Path, "/rest/ip/firewall/address-list") {
+			t.Errorf("wrong endpoint: %s", r.URL.Path)
 		}
 		// Формат реального RouterOS v7: объект {"id":"*1A"}
 		_, _ = w.Write([]byte(`{"id":"*1A"}`))
 	})
 	defer srv.Close()
 
-	id, err := c.AddRoute(context.Background(), Route{DstAddress: "8.8.8.0/24", Comment: "AUTO:x"})
+	id, err := c.AddEntry(context.Background(), addresslist.Entry{Address: "8.8.8.0/24", List: "TO-VPN", Comment: "AUTO:x"})
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
@@ -79,49 +89,74 @@ func TestAddRouteReturnsID(t *testing.T) {
 	}
 }
 
-func TestAddRouteArrayAndDotID(t *testing.T) {
+func TestAddEntryArrayAndDotID(t *testing.T) {
 	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`[{".id":"*2B"}]`))
 	})
 	defer srv.Close()
 
-	id, err := c.AddRoute(context.Background(), Route{DstAddress: "8.8.8.0/24"})
+	id, err := c.AddEntry(context.Background(), addresslist.Entry{Address: "8.8.8.0/24"})
 	if err != nil || id != "*2B" {
 		t.Fatalf("expected *2B/nil, got %q/%v", id, err)
 	}
 }
 
-func TestListServiceRoutesNoServerCommentFilter(t *testing.T) {
-	var gotPath string
+func TestListEntriesServerFilterVerifiedClientSide(t *testing.T) {
 	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.String()
-		_ = json.NewEncoder(w).Encode([]Route{
-			{ID: "*1", DstAddress: "8.8.8.0/24", Comment: "AUTO:youtube"},
-			{ID: "*2", DstAddress: "1.1.1.0/24", Comment: "AUTO:youtube"},
-			{ID: "*3", DstAddress: "9.9.9.9/32", Comment: "AUTO:instagram"},
-			{ID: "*4", DstAddress: "5.5.5.0/24"},
+		// Сервер "фильтрует" по list=, но возвращает мусор другой списки —
+		// клиентская проверка обязательна.
+		_ = json.NewEncoder(w).Encode([]addresslist.Entry{
+			{ID: "*1", Address: "8.8.8.0/24", List: "TO-VPN"},
+			{ID: "*9", Address: "4.4.4.0/24", List: "WRONG"},
 		})
 	})
 	defer srv.Close()
 
-	got, err := c.ListServiceRoutes(context.Background(), "youtube")
+	got, err := c.ListEntries(context.Background(), "TO-VPN")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(gotPath, "comment=") {
-		t.Fatalf("must not rely on server-side comment filter: %s", gotPath)
-	}
-	if len(got) != 2 || got[0].ID != "*1" || got[1].ID != "*2" {
-		t.Fatalf("bad filter result: %+v", got)
+	if len(got) != 1 || got[0].ID != "*1" {
+		t.Fatalf("client-side list filter failed: %+v", got)
 	}
 }
 
-func TestDeleteRouteRejectsBadID(t *testing.T) {
+func TestListEntriesNoBrokenPaginationParams(t *testing.T) {
+	var seenQueries []string
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		seenQueries = append(seenQueries, r.URL.RawQuery)
+		_ = json.NewEncoder(w).Encode([]addresslist.Entry{})
+	})
+	defer srv.Close()
+
+	if _, err := c.ListEntries(context.Background(), "TO-VPN"); err != nil {
+		t.Fatal(err)
+	}
+	if len(seenQueries) == 0 {
+		t.Fatal("no requests")
+	}
+	for _, q := range seenQueries {
+		// RouterOS v7 возвращает [] на address-list при наличии limit/skip
+		lq := strings.ToLower(q)
+		if strings.Contains(lq, "limit=") || strings.Contains(lq, "skip=") {
+			t.Fatalf("pagination params break address-list reads: %s", q)
+		}
+		if !strings.Contains(q, ".proplist=") {
+			t.Fatalf("must request only needed fields: %s", q)
+		}
+	}
+	// first request must filter by list server-side
+	if !strings.Contains(seenQueries[0], "list=TO-VPN") {
+		t.Fatalf("first query must use ?list= filter: %s", seenQueries[0])
+	}
+}
+
+func TestDeleteEntryRejectsBadID(t *testing.T) {
 	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer srv.Close()
 
 	for _, bad := range []string{"", "*1/../2", "*1?x", "*1#y"} {
-		if err := c.DeleteRoute(context.Background(), bad); err == nil {
+		if err := c.DeleteEntry(context.Background(), bad); err == nil {
 			t.Fatalf("expected rejection of id %q", bad)
 		}
 	}
@@ -139,12 +174,10 @@ func TestRedactHidesSecrets(t *testing.T) {
 
 func TestTransactionRollbackOnFailure(t *testing.T) {
 	var deleted []string
-	var added []string
 	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPut:
-			added = append(added, r.URL.Path)
-			_, _ = w.Write([]byte(`[{".id":"*new1"}]`))
+			_, _ = w.Write([]byte(`{"id":"*new1"}`))
 		case http.MethodDelete:
 			id := r.URL.Query().Get(".id")
 			if id == "*old1" {
@@ -160,12 +193,13 @@ func TestTransactionRollbackOnFailure(t *testing.T) {
 	defer srv.Close()
 
 	cfg := &config.Config{}
-	cfg.MikroTik.CommentPrefix = "AUTO"
+	cfg.Firewall.AddressList = "TO-VPN"
+	cfg.Firewall.CommentPrefix = "AUTO"
 	tx := NewTransaction(c, cfg, nil, "instagram", testLogger())
 
 	err := tx.Apply(context.Background(),
-		[]Route{{DstAddress: "8.8.8.0/24"}},
-		[]Route{{ID: "*old1", DstAddress: "1.1.1.0/24"}},
+		[]addresslist.Entry{{Address: "8.8.8.0/24"}},
+		[]addresslist.Entry{{ID: "*old1", Address: "1.1.1.0/24"}},
 	)
 	if err == nil {
 		t.Fatal("expected apply error")
@@ -173,8 +207,8 @@ func TestTransactionRollbackOnFailure(t *testing.T) {
 	if tx.State() != StateRolledBack {
 		t.Fatalf("expected rolled_back, got %s", tx.State())
 	}
-	// rollback должен удалить добавленный маршрут
+	// rollback должен удалить добавленную запись
 	if len(deleted) != 1 || deleted[0] != "*new1" {
-		t.Fatalf("rollback did not delete added route: %v", deleted)
+		t.Fatalf("rollback did not delete added entry: %v", deleted)
 	}
 }

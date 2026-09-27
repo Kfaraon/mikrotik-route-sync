@@ -16,11 +16,13 @@ mikrotik:
   use_ssl: true
   verify_ssl: true
   timeout: 30s
-  gateway: wg-cz-vpn
-  routing_table: main
-  distance: 2
-  comment_prefix: AUTO
   rate_limit: 20
+firewall:
+  # Единый глобальный Firewall Address List для всех сервисов (изоляция по comment)
+  address_list: TO-VPN
+  comment_prefix: AUTO
+  ignore_dynamic: true
+  manage_disabled: false
 telegram:
   enabled: false
   bot_token: ""
@@ -51,7 +53,8 @@ safety:
   max_delete_ratio: 0.5
   require_confirmation_over: 100
   min_prefix_v4: 8
-  allow_host_routes: false
+  # address-list свободно хранит одиночные IP (/32) — разрешаем по умолчанию
+  allow_host_routes: true
   max_asn_prefixes: 100
 retry:
   max_attempts: 3

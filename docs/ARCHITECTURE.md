@@ -2,40 +2,41 @@
 
 ## Обзор
 
-MikroTik Route Sync — это приложение на Go для автоматического управления маршрутами на MikroTik RouterOS v7. Система собирает IPv4-диапазоны сервисов из различных источников, валидирует их, агрегирует и синхронизирует с маршрутизатором через REST API. Проект работает только с IPv4 и намеренно не использует IPv6.
+MikroTik Route Sync — это приложение на Go для автоматического управления **Firewall Address List** (`/ip/firewall/address-list`) на MikroTik RouterOS v7. Система собирает IPv4-диапазоны сервисов из различных источников, валидирует их, агрегирует и синхронизирует с роутером через REST API в один глобальный address-list (`firewall.address_list`, например `TO-VPN`). Проект работает только с IPv4 и намеренно не использует IPv6.
 
 ## Архитектурные принципы
 
 ### 1. Изоляция по сервисам (Service Isolation)
 
-Каждый сервис обрабатывается независимо:
+Каждый сервис обрабатывается независимо — внутри одного глобального address-list:
 
-- Маршруты помечаются комментарием `AUTO:<ServiceName>`
-- Операции ограничены только маршрутами конкретного сервиса
+- Управляемые записи помечаются комментарием `AUTO:<ServiceName>`
+- Все сервисы пишут в один `list = firewall.address_list`; отдельных списков на сервис нет
+- Операции ограничены записями `list + comment + dynamic=false` конкретного сервиса
 - Ошибка в одном сервисе не влияет на другие
-- REST-запросы фильтруются: `GET /rest/ip/route?comment=AUTO:instagram`
+- Поиск управляемых записей: получение записей `list` и точная клиентская фильтрация по `comment` (server-side фильтр `?comment=` в RouterOS REST ненадёжен)
 
 ### 2. Fail-closed
 
 При любой неопределённости или ошибке:
 
-- Существующие маршруты не удаляются
+- Существующие записи address-list не удаляются и не изменяются
 - Синхронизация прерывается с ошибкой
 - Отправляется уведомление в Telegram
 - Пропуск логируется с уровнем `WARN`
 
 ### 3. Best-effort rollback
 
-Перед применением изменений создаётся снимок:
+Перед применением изменений создаётся снимок управляемых записей сервиса (bbolt, bucket `address_list_snapshots`):
 
-- При сбое выполняется откат к исходному состоянию
-- Rollback через REST API (DELETE добавленного, POST удалённого)
+- При сбое выполняется откат к исходному состоянию (восстановление удалённого, удаление добавленного)
+- Rollback через REST API `/ip/firewall/address-list`
 - Частичный rollback помечает сервис как `degraded`
 - Отправляется алерт с высоким приоритетом
 
 ### 4. Safe-diff
 
-Защита от массового удаления:
+Защита от массового удаления записей:
 
 - Проверка соотношения `deleted / existing`
 - Прерывание при превышении `max_delete_ratio` (по умолчанию 50%)
@@ -46,13 +47,13 @@ MikroTik Route Sync — это приложение на Go для автома�
 
 Повторный запуск с теми же данными:
 
-- Не приводит к изменениям в RouterOS
-- Сравнение по нормализованному CIDR (network + prefix length)
-- Без учёта хостовых бит
+- Не приводит к изменениям в RouterOS (address-list)
+- Сравнение по нормализованному CIDR (network + prefix length) + list + comment + disabled
+- Без учёта хостовых бит; дубли существующих записей удаляются автоматически
 
 ### 6. Кэширование
 
-Результаты ASN-resolution, WHOIS, RDAP кэшируются:
+Результаты ASN-resolution, WHOIS, RDAP, bgp.tools, RIPEstat кэшируются:
 
 - Хранилище: bbolt
 - TTL задаётся в конфиге (по умолчанию 24 часа)
@@ -72,20 +73,21 @@ MikroTik Route Sync — это приложение на Go для автома�
     cmd/
       app/              — CLI entrypoint (cobra)
     internal/
+      addresslist/      — модель Firewall Address List (Entry, diff, safe-diff)
       aggregator/       — агрегация CIDR (Radix Tree, инварианты)
       audit/            — аудит изменений конфигурации
       bot/              — Telegram-бот (состояние, callback, auth)
       classifier/       — выбор метода сбора (CDN, ASN, dynamic)
       collectors/       — источники сетей (asn, cdn, dynamic, whois, static)
       config/           — конфигурация (yaml + ENV overrides, hot-reload)
-      core/             — оркестратор синхронизации (syncer, diff)
+      core/             — оркестратор синхронизации (syncer)
       history/          — история синхронизаций (bbolt)
       logging/          — slog + rotation + redaction
-      mikrotik/         — RouterOS REST API (client, transaction, rollback)
+      mikrotik/         — RouterOS REST API: /ip/firewall/address-list (client, addresslist, transaction/rollback)
       notifier/         — уведомления (Telegram)
       resolver/         — DNS / ASN resolution (rdap, bgp.tools, ripestat)
       scheduler/        — расписания (cron + human-readable)
-      storage/          — bbolt cache
+      storage/          — bbolt cache (кэш, история, bucket address_list_snapshots)
       validator/        — фильтрация сетей (RFC, ASN-проверка)
       version/          — версия приложения
       web/              — Web UI / REST API / WebSocket
@@ -100,18 +102,18 @@ MikroTik Route Sync — это приложение на Go для автома�
 
 1. Пользователь или Планировщик инициирует синхронизацию
 2. Classifier определяет метод сбора для сервиса
-3. Collector собирает сырые CIDR из источника
+3. Collector собирает сырые IPv4-CIDR из источника
 4. Validator выполняет многоуровневую фильтрацию
 5. Aggregator агрегирует через Radix Tree
-6. Syncer вычисляет diff и выполняет safety-check
-7. MikroTik Client применяет изменения через REST API
+6. Syncer читает управляемые записи (`list + comment=AUTO:<svc> + dynamic=false`), вычисляет diff и выполняет safety-check
+7. MikroTik Client применяет изменения к `/ip/firewall/address-list` (сначала add, затем remove; при сбое — rollback)
 8. Notifier отправляет уведомление в Telegram
 
 ## Компоненты
 
 ### Collector
 
-Собирает IP-диапазоны из источников:
+Собирает IPv4-диапазоны из источников:
 
 - **ASN** — bgp.tools (дамп таблицы BGP), RIPEstat (fallback), RDAP (основной метод для крупных сервисов)
 - **CDN** — Cloudflare, AWS, Google (официальные статические списки)
@@ -144,17 +146,19 @@ MikroTik Route Sync — это приложение на Go для автома�
 
 Оркестрация синхронизации:
 
-- Вычисление diff (add / remove / unchanged)
+- Вычисление diff по нормализованному address (add / remove / unchanged) + самоочистка дублей
 - Safety-check (max_delete_ratio)
-- Транзакционное применение (сначала POST, затем DELETE)
+- Транзакционное применение (сначала add/PUT, затем delete записей address-list)
 - Rollback при сбое
 - Mutex на сервис (защита от наложения)
 - Параллельность ограничена max_concurrent
 
 ### MikroTik Client
 
-REST API клиент:
+REST API клиент `/rest/ip/firewall/address-list`:
 
+- GET записей address-list (серверный фильтр по `list` + точная клиентская верификация `comment`)
+- PUT — добавление записи, DELETE по `.id`; терпимый разбор ответа создания (`{"id":...}` / массив)
 - HTTP/HTTPS (TLS 1.2+)
 - Circuit Breaker (5 ошибок → Open на 60 сек)
 - Retry с exponential backoff + jitter (3 попытки)
@@ -187,7 +191,7 @@ REST API клиент:
 
 Встроенный дашборд:
 
-- Страницы: Dashboard, Services, Schedules, Settings, Logs (+ фрагмент /partials/status, история — через API `/api/v1/history`)
+- Страницы: Dashboard, Services, Address List, Schedules, Settings, Logs (+ фрагмент /partials/status, история — через API `/api/v1/history`)
 - Фреймворк: net/http + chi
 - Шаблоны: html/template + go:embed
 - CSS: Pico CSS (встроенный)
@@ -310,8 +314,8 @@ REST API клиент:
 
 ### Бэкапы
 
-- Перед каждой синхронизацией — снимок текущих маршрутов сервиса в bbolt (bucket snapshots, TTL 7 дней)
-- Экспорт маршрутов сервиса в JSON: `app backup <service>`
+- Перед каждой синхронизацией — снимок текущих управляемых address-list записей сервиса в bbolt (bucket `address_list_snapshots`, TTL 7 дней)
+- Экспорт записей сервиса в JSON: `app backup <service>`
 - Восстановление из снимка: `app restore <service> <snapshot_id>`
 
 ## Наблюдаемость
@@ -346,10 +350,10 @@ REST API клиент:
 
 ### Кэширование
 
-- bbolt для ASN/WHOIS/RDAP результатов
+- bbolt для ASN/WHOIS/RDAP/bgptools-результатов и снапшотов address_list_snapshots
 - TTL 24 часа (настраивается)
 - Периодическая очистка (каждый час)
-- Кэш — оптимизация, не источник истины для удаления маршрутов
+- Кэш — оптимизация, не источник истины для удаления записей address-list
 
 ### Параллелизм
 

@@ -2,7 +2,8 @@ openapi: 3.1.0
 info:
   title: MikroTik Route Sync API
   description: >-
-    REST API для автоматического управления маршрутами MikroTik RouterOS v7.
+    REST API для автоматического управления Firewall Address List в MikroTik RouterOS v7
+    (один глобальный список firewall.address_list, изоляция сервисов по comment AUTO:<service>).
     Все изменяющие запросы требуют аутентификацию и CSRF-токен
     (заголовок X-CSRF-Token или поле csrf_token формы).
     Все ответы в единой схеме { ok, data, error }.
@@ -31,6 +32,8 @@ tags:
     description: Трёхуровневые расписания
   - name: Observability
     description: Логи и история
+  - name: Address List
+    description: Записи Firewall Address List
 
 paths:
   /healthz:
@@ -48,7 +51,7 @@ paths:
 
   /readyz:
     get:
-      summary: Readiness — доступность RouterOS API и кэша (без авторизации)
+      summary: Readiness — доступность RouterOS address-list API и кэша (без авторизации)
       tags: [System]
       security: []
       responses:
@@ -93,7 +96,7 @@ paths:
 
   /api/v1/services:
     get:
-      summary: Список сервисов с расписаниями и количеством маршрутов
+      summary: Список сервисов с расписаниями и числом управляемых записей
       tags: [Services]
       responses:
         '200':
@@ -115,7 +118,7 @@ paths:
                           properties:
                             Name: { type: string }
                             Schedule: { type: string }
-                            Routes: { type: integer }
+                            Routes: { type: integer, description: Число управляемых address-list записей }
                             Overrides: { type: boolean }
     post:
       summary: Добавить сервис
@@ -314,6 +317,34 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/OK' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/address-list:
+    get:
+      summary: Записи глобального Firewall Address List
+      description: >-
+        Возвращает все записи `firewall.address_list`. Поле `Managed`
+        отмечает управляемые программой записи (comment=AUTO:<активный сервис>).
+      tags: [Address List]
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503':
+          description: RouterOS недоступен
+
+  /api/v1/address-list/{service}:
+    get:
+      summary: Управляемые записи конкретного сервиса
+      tags: [Address List]
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503':
+          description: RouterOS недоступен
 
   /api/v1/ws:
     get:

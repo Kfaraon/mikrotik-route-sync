@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -20,24 +19,14 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// Route — маршрут в RouterOS (формат REST API).
-type Route struct {
-	ID           string `json:".id,omitempty"`
-	DstAddress   string `json:"dst-address"`
-	Gateway      string `json:"gateway"`
-	RoutingTable string `json:"routing-table,omitempty"`
-	Distance     string `json:"distance,omitempty"`
-	Comment      string `json:"comment,omitempty"`
-	Disabled     string `json:"disabled,omitempty"`
-}
-
-// Client — REST-клиент RouterOS v7: retry + circuit breaker + rate limit.
-// Бизнес-логики не содержит (PROMPT X.10.1).
+// Client — REST-клиент RouterOS v7 для /ip/firewall/address-list:
+// retry + circuit breaker + rate limit. Бизнес-логики не содержит.
 type Client struct {
-	base, user, pass, prefix string
-	client                   *retryablehttp.Client
-	breaker                  *gobreaker.CircuitBreaker
-	limiter                  *rate.Limiter
+	base, user, pass string
+	client           *retryablehttp.Client
+	breaker          *gobreaker.CircuitBreaker
+	limiter          *rate.Limiter
+	requestTimeout   time.Duration
 }
 
 // New создаёт клиент из конфигурации.
@@ -61,10 +50,7 @@ func New(c config.MikroTikConfig, rc config.RetryConfig, log *slog.Logger) *Clie
 	}
 
 	retryClient := retryablehttp.NewClient()
-	retryClient.HTTPClient = &http.Client{
-		Transport: tr,
-		Timeout:   c.Timeout.Duration(),
-	}
+	retryClient.HTTPClient = &http.Client{Transport: tr}
 	retryClient.RetryMax = rc.MaxAttempts
 	if retryClient.RetryMax < 1 {
 		retryClient.RetryMax = 3
@@ -101,13 +87,13 @@ func New(c config.MikroTikConfig, rc config.RetryConfig, log *slog.Logger) *Clie
 	}
 
 	return &Client{
-		base:    fmt.Sprintf("%s://%s:%d/rest", scheme, c.Host, c.Port),
-		user:    c.Username,
-		pass:    c.Password,
-		prefix:  c.CommentPrefix,
-		client:  retryClient,
-		breaker: cb,
-		limiter: rate.NewLimiter(lim, int(lim)),
+		base:           fmt.Sprintf("%s://%s:%d/rest", scheme, c.Host, c.Port),
+		user:           c.Username,
+		pass:           c.Password,
+		client:         retryClient,
+		breaker:        cb,
+		limiter:        rate.NewLimiter(lim, int(lim)),
+		requestTimeout: c.Timeout.Duration(),
 	}
 }
 
@@ -116,12 +102,26 @@ func NewClient(cfg *config.Config, log *slog.Logger) (*Client, error) {
 	if cfg.MikroTik.Host == "" {
 		return nil, fmt.Errorf("mikrotik.host is required")
 	}
+	if cfg.Firewall.AddressList == "" {
+		return nil, fmt.Errorf("firewall.address_list is required")
+	}
 	return New(cfg.MikroTik, cfg.Retry, log), nil
 }
 
-// doRaw выполняет запрос и возвращает сырое тело успешного (2xx, без
-// встроенной ошибки API) ответа.
+// timeoutContext ограничивает запрос таймаутом mikrotik.timeout.
+func (c *Client) timeoutContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	d := c.requestTimeout
+	if d <= 0 {
+		d = 30 * time.Second
+	}
+	return context.WithTimeout(ctx, d)
+}
+
+// doRaw выполняет запрос и возвращает сырое тело успешного ответа.
 func (c *Client) doRaw(ctx context.Context, method, path string, body any) ([]byte, error) {
+	ctx, cancel := c.timeoutContext(ctx)
+	defer cancel()
+
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limit wait: %w", err)
 	}
@@ -192,32 +192,6 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	return nil
 }
 
-func (c *Client) doWithPagination(ctx context.Context, path string, limit int) ([]Route, error) {
-	var all []Route
-	skip := 0
-	for {
-		paginatedPath := path
-		if strings.Contains(path, "?") {
-			paginatedPath += fmt.Sprintf("&.skip=%d&.limit=%d", skip, limit)
-		} else {
-			paginatedPath += fmt.Sprintf("?.skip=%d&.limit=%d", skip, limit)
-		}
-		var page []Route
-		if err := c.do(ctx, http.MethodGet, paginatedPath, nil, &page); err != nil {
-			return nil, err
-		}
-		all = append(all, page...)
-		if len(page) < limit {
-			break
-		}
-		skip += limit
-		if skip > 100000 {
-			break
-		}
-	}
-	return all, nil
-}
-
 // sensitiveKeysRegex маскирует секреты в сообщениях об ошибках.
 var sensitiveKeysRegex = regexp.MustCompile(`(?i)(password|token|secret|api[_-]?key|authorization|cookie)(["\s:=]+)(["']?)([^"'\s,}]+)`)
 
@@ -228,33 +202,48 @@ func redact(s string) string {
 	return sensitiveKeysRegex.ReplaceAllString(s, "${1}${2}${3}[REDACTED]")
 }
 
-// ListServiceRoutes возвращает ТОЛЬКО маршруты сервиса (comment == AUTO:<service>).
-//
-// Фильтрация выполняется ИСКЛЮЧИТЕЛЬНО на клиенте: server-side фильтр
-// "?comment=..." в RouterOS REST ненадёжен (может молча вернуть пустой список
-// при URL-кодированном значении — реальный случай 2026-09-20, из-за чего diff
-// не видел существующие маршруты и создавал дубли). Точное сравнение комментария
-// — гарантия изоляции сервисов (PROMPT I.1, III.6).
-func (c *Client) ListServiceRoutes(ctx context.Context, service string) ([]Route, error) {
-	comment := c.prefix + ":" + service
-
-	routes, err := c.doWithPagination(ctx, "/ip/route", 1000)
-	if err != nil {
-		return nil, err
-	}
-
-	out := make([]Route, 0, len(routes))
-	for _, r := range routes {
-		if r.Comment == comment {
-			out = append(out, r)
-		}
-	}
-	return out, nil
+// Ping проверяет доступность REST API и право чтения address-list
+// (PROMPT IX: /readyz читает /ip/firewall/address-list).
+// .limit на address-list ломает ответ (проверено на RouterOS v7) — не используется.
+func (c *Client) Ping(ctx context.Context) error {
+	var out []map[string]any
+	return c.do(ctx, http.MethodGet, addressListPath+"?.proplist=.id", nil, &out)
 }
 
-// addReply — форма ответа RouterOS на PUT (создание): объект {"id":"*2F"}
-// (иногда {".id":...} или {"done":...} в разных версиях), исторически
-// встречался и массив [{...}].
+// putID отправляет PUT (создание) и терпеливо разбирает ответ RouterOS:
+// объект {"id":"*2F"}, {"id":...} в массиве или пустой ответ.
+func (c *Client) putID(ctx context.Context, path string, body any) (string, error) {
+	b, err := c.doRaw(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return "", err
+	}
+
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "[]" {
+		return "", nil
+	}
+
+	if b[0] == '[' {
+		var list []addReply
+		if err := json.Unmarshal(b, &list); err != nil {
+			return "", fmt.Errorf("routeros %s: decode array reply: %w", path, err)
+		}
+		for _, a := range list {
+			if id := a.pick(); id != "" {
+				return id, nil
+			}
+		}
+		return "", nil
+	}
+
+	var one addReply
+	if err := json.Unmarshal(b, &one); err != nil {
+		return "", fmt.Errorf("routeros %s: decode object reply: %w", path, err)
+	}
+	return one.pick(), nil
+}
+
+// addReply — форма ответа RouterOS на PUT (создание записи).
 type addReply struct {
 	ID    string `json:"id"`
 	DotID string `json:".id"`
@@ -270,50 +259,11 @@ func (a addReply) pick() string {
 	return ""
 }
 
-// AddRoute создаёт маршрут (PUT /rest/ip/route) и возвращает новый .id
-// (может быть пустым, если RouterOS не вернул идентификатор — не ошибка).
-func (c *Client) AddRoute(ctx context.Context, r Route) (string, error) {
-	b, err := c.doRaw(ctx, http.MethodPut, "/ip/route", r)
-	if err != nil {
-		return "", err
-	}
-
-	b = bytes.TrimSpace(b)
-	if len(b) == 0 || string(b) == "[]" {
-		return "", nil
-	}
-
-	if b[0] == '[' {
-		var list []addReply
-		if err := json.Unmarshal(b, &list); err != nil {
-			return "", fmt.Errorf("routeros add route: decode array reply: %w", err)
-		}
-		for _, a := range list {
-			if id := a.pick(); id != "" {
-				return id, nil
-			}
-		}
-		return "", nil
-	}
-
-	var one addReply
-	if err := json.Unmarshal(b, &one); err != nil {
-		return "", fmt.Errorf("routeros add route: decode object reply: %w", err)
-	}
-	return one.pick(), nil
-}
-
-// DeleteRoute удаляет маршрут по .id (например "*1A").
-func (c *Client) DeleteRoute(ctx context.Context, id string) error {
+// deleteByID удаляет запись по .id (формат *XX защищён от инъекций).
+func (c *Client) deleteByID(ctx context.Context, path, id string) error {
 	if id == "" || strings.ContainsAny(id, "/?#") {
-		return fmt.Errorf("invalid route id %q", id)
+		return fmt.Errorf("invalid entry id %q", id)
 	}
-	path := fmt.Sprintf("/ip/route?.id=%s", url.QueryEscape(id))
-	return c.do(ctx, http.MethodDelete, path, nil, nil)
-}
-
-// Ping проверяет доступность REST API.
-func (c *Client) Ping(ctx context.Context) error {
-	var out []Route
-	return c.do(ctx, http.MethodGet, "/ip/route?.proplist=.id&.limit=1", nil, &out)
+	p := fmt.Sprintf("%s?.id=%s", path, id)
+	return c.do(ctx, http.MethodDelete, p, nil, nil)
 }

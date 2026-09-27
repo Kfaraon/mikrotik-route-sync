@@ -100,7 +100,8 @@ func (b *Bot) menu(id int64) {
 
 func (b *Bot) statusText(ctx context.Context) string {
 	var sb strings.Builder
-	sb.WriteString("Статус:\n")
+	sb.WriteString("Статус (Firewall Address List):\n")
+	sb.WriteString(fmt.Sprintf("  список: %s\n", b.syncer.Config().Firewall.AddressList))
 	sb.WriteString(fmt.Sprintf("  аптайм: %s\n", time.Since(b.syncer.StartTime()).Truncate(time.Second)))
 	last := b.syncer.LastSync()
 	if last.IsZero() {
@@ -119,8 +120,8 @@ func (b *Bot) statusText(ctx context.Context) string {
 			sb.WriteString(fmt.Sprintf("  - %s: ошибка (%v)\n", svc, err))
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("  - %s: маршрутов=%d, расписание=%s\n",
-			svc, info.RouteCount, info.Schedule))
+		sb.WriteString(fmt.Sprintf("  - %s: записей=%d (comment=%s), расписание=%s\n",
+			svc, info.EntryCount, info.Comment, info.Schedule))
 	}
 	return sb.String()
 }

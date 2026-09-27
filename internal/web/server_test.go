@@ -32,7 +32,8 @@ mikrotik:
   username: api
   password: x
   timeout: 1s
-  gateway: gw
+firewall:
+  address_list: TO-VPN
 retry:
   max_attempts: 1
   base_delay: 1ms
@@ -140,8 +141,13 @@ func TestAuthRequiredAndDashboardRenders(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("dashboard: %d body=%s", resp.StatusCode, page)
 	}
-	if !strings.Contains(page, "MikroTik Route Sync") || !strings.Contains(page, "testsvc") {
+	if !strings.Contains(page, "MikroTik Route Sync") {
 		t.Fatalf("dashboard content wrong: %s", page)
+	}
+	// Сервисы рендерит JS через /api/v1/services — проверяем API.
+	_, svcs := doAuth(client, ts.URL, "GET", "/api/v1/services", "", nil)
+	if !strings.Contains(svcs, "testsvc") {
+		t.Fatalf("api services missing testsvc: %s", svcs)
 	}
 	if !strings.Contains(page, "csrf-token") {
 		t.Fatal("csrf meta missing")
@@ -212,7 +218,8 @@ func TestSettingsPageComplete(t *testing.T) {
 		`name="telegram.authorized_chat_ids"`,
 		`name="snapshots.max_count"`,
 		`name="external.akamai_api_key"`,
-		`name="mikrotik.comment_prefix"`,
+		`name="firewall.address_list"`,
+		`name="firewall.comment_prefix"`,
 		`name="safety.require_confirmation_over"`,
 		`name="retry.jitter"`,
 		`data-help=`,

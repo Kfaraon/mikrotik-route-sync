@@ -48,6 +48,7 @@ type Config struct {
 
 	Logging   LoggingConfig   `yaml:"logging"`
 	MikroTik  MikroTikConfig  `yaml:"mikrotik"`
+	Firewall  FirewallConfig  `yaml:"firewall"`
 	Telegram  TelegramConfig  `yaml:"telegram"`
 	Web       WebConfig       `yaml:"web"`
 	Scheduler SchedulerConfig `yaml:"scheduler"`
@@ -74,18 +75,23 @@ type LoggingConfig struct {
 
 // MikroTikConfig — параметры подключения к RouterOS REST API.
 type MikroTikConfig struct {
-	Host          string   `yaml:"host"`
-	Port          int      `yaml:"port"`
-	Username      string   `yaml:"username"`
-	Password      string   `yaml:"password"`
-	UseSSL        bool     `yaml:"use_ssl"`
-	VerifySSL     bool     `yaml:"verify_ssl"`
-	Timeout       Duration `yaml:"timeout"`
-	Gateway       string   `yaml:"gateway"`
-	RoutingTable  string   `yaml:"routing_table"`
-	Distance      int      `yaml:"distance"`
-	CommentPrefix string   `yaml:"comment_prefix"`
-	RateLimit     int      `yaml:"rate_limit"`
+	Host      string   `yaml:"host"`
+	Port      int      `yaml:"port"`
+	Username  string   `yaml:"username"`
+	Password  string   `yaml:"password"`
+	UseSSL    bool     `yaml:"use_ssl"`
+	VerifySSL bool     `yaml:"verify_ssl"`
+	Timeout   Duration `yaml:"timeout"`
+	RateLimit int      `yaml:"rate_limit"`
+}
+
+// FirewallConfig — целевая модель управления: Firewall Address List.
+// Один глобальный address-list для всех сервисов; изоляция по comment.
+type FirewallConfig struct {
+	AddressList    string `yaml:"address_list"`    // например TO-VPN
+	CommentPrefix  string `yaml:"comment_prefix"`  // например AUTO
+	IgnoreDynamic  bool   `yaml:"ignore_dynamic"`  // не трогать dynamic-записи
+	ManageDisabled bool   `yaml:"manage_disabled"` // создавать записи disabled=false
 }
 
 // TelegramConfig — настройки Telegram-бота.
@@ -299,11 +305,8 @@ func setDefaults(c *Config) {
 	if c.Safety.MaxASNPrefixes == 0 {
 		c.Safety.MaxASNPrefixes = 100
 	}
-	if c.MikroTik.Distance == 0 {
-		c.MikroTik.Distance = 1
-	}
-	if c.MikroTik.CommentPrefix == "" {
-		c.MikroTik.CommentPrefix = "AUTO"
+	if c.Firewall.CommentPrefix == "" {
+		c.Firewall.CommentPrefix = "AUTO"
 	}
 	if c.MikroTik.Port == 0 {
 		if c.MikroTik.UseSSL {
@@ -360,6 +363,13 @@ func (c *Config) Validate() error {
 	}
 	if c.MikroTik.Username == "" {
 		return fmt.Errorf("mikrotik.username required")
+	}
+	// Firewall Address List — единственный целевой объект управления.
+	if c.Firewall.AddressList == "" {
+		return fmt.Errorf("firewall.address_list required (например TO-VPN)")
+	}
+	if !ValidateAddressListName(c.Firewall.AddressList) {
+		return fmt.Errorf("firewall.address_list %q: allowed ^[A-Za-z0-9_.-]{1,63}$", c.Firewall.AddressList)
 	}
 	if c.Schedules.Global == "" {
 		return fmt.Errorf("schedules.global required")
@@ -457,6 +467,22 @@ func ValidateServiceName(name string) bool {
 		return false
 	}
 	return serviceNameRE.MatchString(name)
+}
+
+// addressListNameRE — безопасное имя Firewall Address List (PROMPT XII.12.9).
+var addressListNameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,63}$`)
+
+// ValidateAddressListName проверяет имя глобального address-list.
+func ValidateAddressListName(name string) bool {
+	return addressListNameRE.MatchString(name)
+}
+
+// commentPrefixRE — префикс AUTO-комментария: без пробелов/кавычек/слэшей.
+var commentPrefixRE = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,16}$`)
+
+// ValidateCommentPrefix проверяет firewall.comment_prefix.
+func ValidateCommentPrefix(prefix string) bool {
+	return commentPrefixRE.MatchString(prefix)
 }
 
 // IsSensitiveKey проверяет, является ли ключ чувствительным (для redaction).
