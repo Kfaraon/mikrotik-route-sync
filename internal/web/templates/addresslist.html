@@ -3,7 +3,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>MikroTik Route Sync — Address List</title>
+  <title>MikroTik Route Sync — Список адресов Firewall</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
@@ -15,7 +15,7 @@
     <span class="brand">MikroTik Route Sync</span>
     <a href="/">Дашборд</a>
     <a href="/services">Сервисы</a>
-    <a href="/address-list" class="active">Address List</a>
+    <a href="/address-list" class="active">Списки адресов</a>
     <a href="/schedules">Расписания</a>
     <a href="/settings">Настройки</a>
     <a href="/logs">Логи</a>
@@ -23,7 +23,7 @@
   </nav>
 
   <main class="wrap">
-    <h1>Firewall Address List</h1>
+    <h1>Список адресов Firewall</h1>
     <p class="muted">
       Глобальный список: <b>{{ .GlobalList }}</b> · префикс комментариев: <b>{{ .Prefix }}:&lt;сервис&gt;</b>.
       Управляемые записи — созданные программой (комментарий <code>{{ .Prefix }}:имя-сервиса</code>,
@@ -37,11 +37,11 @@
       <table>
         <thead>
           <tr>
-            <th>Address</th>
-            <th>Comment</th>
+            <th>Адрес</th>
+            <th>Комментарий</th>
             <th>Сервис</th>
             <th>Управляемая</th>
-            <th>Disabled</th>
+            <th>Отключено</th>
           </tr>
         </thead>
         <tbody>
