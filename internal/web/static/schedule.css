@@ -50,7 +50,7 @@
   .sched-summary {
     grid-template-columns: repeat(2, 1fr);
   }
-  
+
   .summary-card strong {
     font-size: 1.25rem;
   }
@@ -70,6 +70,7 @@
   padding: 1rem;
   margin-bottom: 1.5rem;
   box-shadow: 0 1px 3px var(--shadow);
+  transition: background var(--transition), border-color var(--transition);
 }
 
 .toolbar-main,
@@ -95,7 +96,7 @@
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .toolbar-main > * {
     width: 100%;
   }
@@ -108,6 +109,7 @@
   border-radius: var(--radius);
   margin-bottom: 1.5rem;
   overflow: hidden;
+  transition: background var(--transition), border-color var(--transition);
 }
 
 .sched-help summary {
@@ -116,6 +118,7 @@
   font-weight: 600;
   background: var(--bg-alt);
   user-select: none;
+  color: var(--text);
 }
 
 .sched-help summary:hover {
@@ -145,6 +148,7 @@
   overflow: hidden;
   box-shadow: 0 1px 3px var(--shadow);
   margin-bottom: 1.5rem;
+  transition: background var(--transition), border-color var(--transition);
 }
 
 .sched-table {
@@ -184,14 +188,14 @@
 }
 
 .sched-table tr.saved {
-  background: #d1fae5;
+  background: var(--badge-ok-bg);
 }
 
 @media (max-width: 1024px) {
   .sched-table {
     font-size: 0.875rem;
   }
-  
+
   .sched-table th,
   .sched-table td {
     padding: 0.75rem 0.5rem;
@@ -202,7 +206,7 @@
   .sched-table thead {
     display: none;
   }
-  
+
   .sched-table,
   .sched-table tbody,
   .sched-table tr,
@@ -210,20 +214,20 @@
     display: block;
     width: 100%;
   }
-  
+
   .sched-table tr {
     margin-bottom: 1rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 0.5rem;
   }
-  
+
   .sched-table td {
     border: none;
     padding: 0.5rem;
     text-align: left;
   }
-  
+
   .sched-table td:before {
     content: attr(data-label);
     font-weight: 600;
@@ -335,33 +339,33 @@
 }
 
 .badge-auto {
-  background: #dbeafe;
-  color: #1e40af;
+  background: var(--badge-auto-bg);
+  color: var(--badge-auto-text);
 }
 
 .badge-manual {
-  background: #f3f4f6;
-  color: #374151;
+  background: var(--badge-manual-bg);
+  color: var(--badge-manual-text);
 }
 
 .badge-disabled {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--badge-err-bg);
+  color: var(--badge-err-text);
 }
 
 .badge-muted {
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--badge-muted-bg);
+  color: var(--badge-muted-text);
 }
 
 .badge-override {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--badge-override-bg);
+  color: var(--badge-override-text);
 }
 
 .badge-group {
-  background: #e0e7ff;
-  color: #3730a3;
+  background: var(--badge-group-bg);
+  color: var(--badge-group-text);
 }
 
 .type-badge {
@@ -379,18 +383,18 @@
 }
 
 .source-service {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--badge-override-bg);
+  color: var(--badge-override-text);
 }
 
 .source-group {
-  background: #e0e7ff;
-  color: #3730a3;
+  background: var(--badge-group-bg);
+  color: var(--badge-group-text);
 }
 
 .source-global {
-  background: #d1fae5;
-  color: #065f46;
+  background: var(--badge-ok-bg);
+  color: var(--badge-ok-text);
 }
 
 /* Кнопки */
