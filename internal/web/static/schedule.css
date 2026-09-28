@@ -1,394 +1,208 @@
-/* ==========================================================================
-   Страница расписаний
-   ========================================================================== */
-
-.schedule-page .page-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.75rem;
+/* Страница расписаний */
+.schedule-page {
+  max-width: 1600px;
 }
 
+.page-header {
+  margin-bottom: 2rem;
+}
+
+/* Сводка */
 .sched-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 0.75rem;
-  margin: 1rem 0;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
 }
 
 .summary-card {
-  background: var(--panel);
+  background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.7rem 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
+  border-radius: var(--radius);
+  padding: 1rem;
+  text-align: center;
+  box-shadow: 0 1px 3px var(--shadow);
+  transition: all var(--transition);
+}
+
+.summary-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px var(--shadow);
 }
 
 .summary-card span {
-  font-size: 0.78rem;
+  display: block;
+  font-size: 0.875rem;
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .summary-card strong {
-  font-size: 1.25rem;
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  display: block;
+  font-size: 1.5rem;
   font-weight: 700;
   color: var(--text);
 }
 
+@media (max-width: 768px) {
+  .sched-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .summary-card strong {
+    font-size: 1.25rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .sched-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Панель инструментов */
 .sched-toolbar {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+.toolbar-main,
+.toolbar-actions {
   display: flex;
-  gap: 0.75rem;
+  gap: 1rem;
   flex-wrap: wrap;
   align-items: center;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.8rem;
-  margin-bottom: 1rem;
 }
 
 .toolbar-main {
-  display: flex;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  flex: 1 1 420px;
-  min-width: 0;
+  margin-bottom: 1rem;
 }
 
-.toolbar-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+.toolbar-main > * {
+  flex: 1;
+  min-width: 150px;
 }
 
-#sched-search {
-  flex: 1 1 220px;
-  min-width: 180px;
+@media (max-width: 768px) {
+  .toolbar-main,
+  .toolbar-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .toolbar-main > * {
+    width: 100%;
+  }
 }
 
+/* Справка */
 .sched-help {
-  margin: 0 0 1rem;
+  background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-  padding: 0.55rem 0.8rem;
+  border-radius: var(--radius);
+  margin-bottom: 1.5rem;
+  overflow: hidden;
 }
 
 .sched-help summary {
+  padding: 1rem;
   cursor: pointer;
   font-weight: 600;
+  background: var(--bg-alt);
+  user-select: none;
+}
+
+.sched-help summary:hover {
+  background: var(--border);
 }
 
 .sched-help ul {
-  margin: 0.55rem 0 0.2rem 1.2rem;
-  color: var(--muted);
-  font-size: 0.88rem;
+  padding: 1rem 1.5rem;
+  margin: 0;
 }
 
-.sched-help code {
-  color: var(--text);
+.sched-help li {
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
 }
 
-.small {
-  font-size: 0.78rem;
+.sched-help .small {
+  padding: 0 1.5rem 1rem;
+  margin: 0;
 }
 
+/* Таблица расписаний */
 .sched-table-wrap {
-  background: var(--panel);
+  background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: auto;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 1px 3px var(--shadow);
+  margin-bottom: 1.5rem;
 }
 
 .sched-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 980px;
-  font-size: 0.9rem;
+}
+
+.sched-table thead {
+  background: var(--bg-alt);
 }
 
 .sched-table th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  padding: 0.65rem 0.7rem;
+  padding: 1rem;
   text-align: left;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--muted);
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 2px solid var(--border);
   white-space: nowrap;
 }
 
 .sched-table td {
-  padding: 0.65rem 0.7rem;
+  padding: 1rem;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
 
-.sched-row:last-child td {
+.sched-table tr:last-child td {
   border-bottom: none;
 }
 
-.sched-row.saving {
-  opacity: 0.65;
+.sched-table tr:hover {
+  background: var(--bg-alt);
 }
 
-.sched-row.saved {
-  animation: schedSaved 1.4s ease;
+.sched-table tr.saving {
+  opacity: 0.6;
 }
 
-@keyframes schedSaved {
-  0% {
-    background: rgba(26, 127, 55, 0.18);
-  }
-  100% {
-    background: transparent;
-  }
+.sched-table tr.saved {
+  background: #d1fae5;
 }
 
-.cell-service {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.service-name {
-  font-weight: 700;
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  word-break: break-word;
-}
-
-.cell-schedule {
-  min-width: 220px;
-}
-
-.cell-schedule code.effective {
-  display: inline-block;
-  max-width: 100%;
-  word-break: break-word;
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.15rem 0.35rem;
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  font-size: 0.82rem;
-}
-
-.schedule-meta {
-  display: flex;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-  margin-top: 0.35rem;
-}
-
-.next-badge {
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-}
-
-.cell-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  min-width: 120px;
-}
-
-.group-sched {
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  word-break: break-word;
-}
-
-.edit-block {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  min-width: 280px;
-}
-
-.edit-block select,
-.edit-block input {
-  width: 100%;
-}
-
-.schedule-input {
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-}
-
-.edit-buttons {
-  display: flex;
-  gap: 0.45rem;
-}
-
-.edit-buttons button {
-  flex: 1;
-  min-width: 90px;
-}
-
-.row-status {
-  min-height: 1.1rem;
-  font-size: 0.78rem;
-  color: var(--muted);
-  word-break: break-word;
-}
-
-.row-status.ok {
-  color: var(--ok);
-}
-
-.row-status.err {
-  color: var(--err);
-}
-
-.empty-state {
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--muted);
-  font-style: italic;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-/* Badges */
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.12rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 650;
-  line-height: 1.2;
-  border: 1px solid transparent;
-  white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.badge-auto {
-  background: rgba(26, 127, 55, 0.13);
-  color: var(--ok);
-  border-color: rgba(26, 127, 55, 0.22);
-}
-
-.badge-manual {
-  background: rgba(5, 80, 174, 0.12);
-  color: var(--primary);
-  border-color: rgba(5, 80, 174, 0.22);
-}
-
-.badge-disabled {
-  background: rgba(110, 119, 129, 0.16);
-  color: var(--muted);
-  border-color: rgba(110, 119, 129, 0.24);
-}
-
-.badge-muted {
-  background: rgba(110, 119, 129, 0.12);
-  color: var(--muted);
-  border-color: rgba(110, 119, 129, 0.2);
-}
-
-.badge-override {
-  background: rgba(210, 153, 34, 0.16);
-  color: #d29922;
-  border-color: rgba(210, 153, 34, 0.28);
-}
-
-.badge-group {
-  background: var(--bg);
-  color: var(--text);
-  border-color: var(--border);
-}
-
-.source-service {
-  background: rgba(210, 153, 34, 0.16);
-  color: #d29922;
-  border-color: rgba(210, 153, 34, 0.28);
-}
-
-.source-group {
-  background: var(--bg);
-  color: var(--text);
-  border-color: var(--border);
-}
-
-.source-global {
-  background: rgba(26, 127, 55, 0.13);
-  color: var(--ok);
-  border-color: rgba(26, 127, 55, 0.22);
-}
-
-@media (prefers-color-scheme: dark) {
-  .badge-auto {
-    background: rgba(63, 185, 80, 0.14);
-    border-color: rgba(63, 185, 80, 0.24);
-  }
-
-  .badge-manual {
-    background: rgba(68, 147, 248, 0.14);
-    border-color: rgba(68, 147, 248, 0.24);
-  }
-
-  .badge-override,
-  .source-service {
-    background: rgba(210, 153, 34, 0.18);
-    border-color: rgba(210, 153, 34, 0.3);
-  }
-
-  .sched-row.saved {
-    animation: schedSavedDark 1.4s ease;
-  }
-
-  @keyframes schedSavedDark {
-    0% {
-      background: rgba(63, 185, 80, 0.18);
-    }
-    100% {
-      background: transparent;
-    }
-  }
-}
-
-.toast.success {
-  background: var(--ok);
-}
-
-/* Mobile cards */
-
-@media (max-width: 980px) {
+@media (max-width: 1024px) {
   .sched-table {
-    min-width: 0;
+    font-size: 0.875rem;
   }
+  
+  .sched-table th,
+  .sched-table td {
+    padding: 0.75rem 0.5rem;
+  }
+}
 
+@media (max-width: 768px) {
   .sched-table thead {
     display: none;
   }
-
+  
   .sched-table,
   .sched-table tbody,
   .sched-table tr,
@@ -396,58 +210,212 @@
     display: block;
     width: 100%;
   }
-
-  .sched-table-wrap {
-    overflow: visible;
-    background: transparent;
-    border: none;
-  }
-
-  .sched-row {
-    background: var(--panel);
+  
+  .sched-table tr {
+    margin-bottom: 1rem;
     border: 1px solid var(--border);
-    border-radius: 8px;
-    margin: 0.75rem 0;
-    padding: 0.35rem 0.55rem;
+    border-radius: var(--radius);
+    padding: 0.5rem;
   }
-
+  
   .sched-table td {
     border: none;
-    border-bottom: 1px dashed var(--border);
-    padding: 0.5rem 0.15rem;
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.75rem;
+    padding: 0.5rem;
+    text-align: left;
   }
-
-  .sched-table td:last-child {
-    border-bottom: none;
-  }
-
-  .sched-table td::before {
+  
+  .sched-table td:before {
     content: attr(data-label);
-    flex: 0 0 110px;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.25rem;
     color: var(--muted);
-    font-weight: 650;
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+    font-size: 0.875rem;
   }
+}
 
-  .cell-service,
-  .cell-schedule,
-  .cell-group,
+/* Ячейки */
+.cell-service {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.service-name {
+  font-weight: 600;
+}
+
+.cell-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cell-schedule code {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.schedule-meta {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.cell-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.group-sched {
+  font-size: 0.875rem;
+}
+
+/* Блок редактирования */
+.edit-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 250px;
+}
+
+.edit-block select,
+.edit-block input {
+  width: 100%;
+}
+
+.edit-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.edit-buttons button {
+  flex: 1;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+}
+
+.row-status {
+  font-size: 0.875rem;
+  min-height: 1.25rem;
+  margin-top: 0.25rem;
+}
+
+.row-status.ok {
+  color: var(--success);
+}
+
+.row-status.err {
+  color: var(--danger);
+}
+
+.row-status.muted {
+  color: var(--muted);
+}
+
+@media (max-width: 768px) {
   .edit-block {
-    min-width: 0;
-    flex: 1 1 auto;
+    min-width: auto;
   }
+}
 
-  .edit-block {
-    gap: 0.5rem;
-  }
+/* Бейджи */
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-right: 0.25rem;
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+}
 
-  .edit-buttons button {
-    min-width: 0;
-  }
+.badge-auto {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.badge-manual {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.badge-disabled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge-muted {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.badge-override {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge-group {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.type-badge {
+  min-width: 60px;
+  text-align: center;
+}
+
+.next-badge {
+  font-size: 0.875rem;
+}
+
+.source-badge {
+  min-width: 80px;
+  text-align: center;
+}
+
+.source-service {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.source-group {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.source-global {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+/* Кнопки */
+.save-btn {
+  background: var(--primary);
+  color: white;
+}
+
+.save-btn:hover {
+  background: var(--primary-hover);
+}
+
+.reset-btn {
+  background: var(--bg-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.reset-btn:hover {
+  background: var(--border);
+}
+
+/* Пустое состояние */
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--muted);
 }
