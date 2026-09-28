@@ -87,7 +87,7 @@
   .svc-kpi-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-  
+
   .svc-kpi-value {
     font-size: 1.5rem;
   }
@@ -107,6 +107,7 @@
   padding: 1rem;
   margin-bottom: 1.5rem;
   box-shadow: 0 1px 3px var(--shadow);
+  transition: background var(--transition), border-color var(--transition);
 }
 
 .svc-toolbar-main,
@@ -132,7 +133,7 @@
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .svc-toolbar-main > * {
     width: 100%;
   }
@@ -146,6 +147,7 @@
   padding: 1.5rem;
   margin-bottom: 1.5rem;
   box-shadow: 0 1px 3px var(--shadow);
+  transition: background var(--transition), border-color var(--transition);
 }
 
 .svc-add-form {
@@ -163,7 +165,7 @@
   .svc-add-form {
     flex-direction: column;
   }
-  
+
   .svc-add-form input {
     width: 100%;
   }
@@ -177,6 +179,7 @@
   overflow: hidden;
   box-shadow: 0 1px 3px var(--shadow);
   margin-bottom: 1.5rem;
+  transition: background var(--transition), border-color var(--transition);
 }
 
 .svc-table {
@@ -212,7 +215,7 @@
 }
 
 .svc-table tr.svc-selected {
-  background: #eff6ff;
+  background: var(--badge-auto-bg);
 }
 
 .svc-col-check {
@@ -224,7 +227,7 @@
   .svc-table {
     font-size: 0.875rem;
   }
-  
+
   .svc-table th,
   .svc-table td {
     padding: 0.75rem 0.5rem;
@@ -235,7 +238,7 @@
   .svc-table thead {
     display: none;
   }
-  
+
   .svc-table,
   .svc-table tbody,
   .svc-table tr,
@@ -243,20 +246,20 @@
     display: block;
     width: 100%;
   }
-  
+
   .svc-table tr {
     margin-bottom: 1rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 0.5rem;
   }
-  
+
   .svc-table td {
     border: none;
     padding: 0.5rem;
     text-align: left;
   }
-  
+
   .svc-table td:before {
     content: attr(data-label);
     font-weight: 600;
@@ -265,7 +268,7 @@
     color: var(--muted);
     font-size: 0.875rem;
   }
-  
+
   .svc-col-check {
     display: none;
   }
@@ -300,48 +303,48 @@
 }
 
 .svc-badge-ok {
-  background: #d1fae5;
-  color: #065f46;
+  background: var(--badge-ok-bg);
+  color: var(--badge-ok-text);
 }
 
 .svc-badge-warn {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--badge-warn-bg);
+  color: var(--badge-warn-text);
 }
 
 .svc-badge-err {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--badge-err-bg);
+  color: var(--badge-err-text);
 }
 
 .svc-badge-muted {
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--badge-muted-bg);
+  color: var(--badge-muted-text);
 }
 
 .svc-badge-auto {
-  background: #dbeafe;
-  color: #1e40af;
+  background: var(--badge-auto-bg);
+  color: var(--badge-auto-text);
 }
 
 .svc-badge-manual {
-  background: #f3f4f6;
-  color: #374151;
+  background: var(--badge-manual-bg);
+  color: var(--badge-manual-text);
 }
 
 .svc-badge-disabled {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--badge-err-bg);
+  color: var(--badge-err-text);
 }
 
 .svc-badge-override {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--badge-override-bg);
+  color: var(--badge-override-text);
 }
 
 .svc-badge-group {
-  background: #e0e7ff;
-  color: #3730a3;
+  background: var(--badge-group-bg);
+  color: var(--badge-group-text);
 }
 
 /* Действия */
@@ -360,7 +363,7 @@
   .svc-actions {
     justify-content: flex-start;
   }
-  
+
   .svc-actions button {
     flex: 1;
     min-width: 80px;
@@ -459,6 +462,7 @@
   color: var(--muted);
   border-bottom: 3px solid transparent;
   transition: all var(--transition);
+  border-radius: 0;
 }
 
 .svc-tab:hover {
@@ -496,7 +500,7 @@
   .svc-drawer-footer {
     flex-direction: column;
   }
-  
+
   .svc-drawer-footer button {
     width: 100%;
   }
@@ -595,11 +599,11 @@
     grid-template-columns: 1fr;
     gap: 0.5rem;
   }
-  
+
   .svc-time {
     min-width: auto;
   }
-  
+
   .svc-right {
     text-align: left;
   }
@@ -704,6 +708,10 @@
   background: #dc2626;
 }
 
+.dark .svc-danger:hover {
+  background: #ef4444;
+}
+
 /* Alert */
 .svc-alert {
   padding: 1rem;
@@ -717,22 +725,22 @@
 }
 
 .svc-alert.ok {
-  background: #d1fae5;
+  background: var(--badge-ok-bg);
   border-color: var(--success);
-  color: #065f46;
+  color: var(--badge-ok-text);
 }
 
 .svc-alert.warn {
-  background: #fef3c7;
+  background: var(--badge-warn-bg);
   border-color: var(--warning);
-  color: #92400e;
+  color: var(--badge-warn-text);
 }
 
 .svc-alert.err,
 .svc-alert.error {
-  background: #fee2e2;
+  background: var(--badge-err-bg);
   border-color: var(--danger);
-  color: #991b1b;
+  color: var(--badge-err-text);
 }
 
 /* Скролл */
