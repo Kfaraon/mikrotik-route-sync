@@ -8,6 +8,7 @@
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/services.css">
+  <script src="/static/theme.js"></script>
   <script src="/static/services.js" defer></script>
 </head>
 <body>
@@ -19,7 +20,10 @@
     <a href="/schedules">Расписания</a>
     <a href="/settings">Настройки</a>
     <a href="/logs">Логи</a>
-    <span class="ver">v{{ .Version }}</span>
+    <span class="bar-right">
+      <span class="ver">v{{ .Version }}</span>
+      <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
+    </span>
   </nav>
 
   <main class="wrap services-page" id="services-page">
@@ -218,10 +222,4 @@
         </button>
         <button type="button" id="svc-delete-cancel" class="svc-outline">
           Отмена
-        </button>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-{{end}}
+       
