@@ -15,7 +15,7 @@
     <span class="brand">MikroTik Route Sync</span>
     <a href="/">Дашборд</a>
     <a href="/services">Сервисы</a>
-    <a href="/address-list">Address List</a>
+    <a href="/address-list">Списки адресов</a>
     <a href="/schedules" class="active">Расписания</a>
     <a href="/settings">Настройки</a>
     <a href="/logs">Логи</a>
@@ -55,7 +55,7 @@
         <strong id="sum-disabled">0</strong>
       </div>
       <div class="summary-card">
-        <span>Override</span>
+        <span>Переопределение</span>
         <strong id="sum-override">0</strong>
       </div>
       <div class="summary-card">
@@ -78,7 +78,7 @@
           <option value="auto">Автоматические</option>
           <option value="manual">Вручную</option>
           <option value="disabled">Отключённые</option>
-          <option value="override">С override</option>
+          <option value="override">С переопределением</option>
           <option value="inherited">Наследуемые</option>
           <option value="grouped">В группах</option>
         </select>
@@ -137,7 +137,7 @@
             <td data-label="Сервис">
               <div class="cell-service">
                 <span class="service-name">{{ .Name }}</span>
-                {{if .ServiceOv}}<span class="badge badge-override">override</span>{{end}}
+                {{if .ServiceOv}}<span class="badge badge-override">переопределение</span>{{end}}
               </div>
             </td>
 
@@ -173,14 +173,14 @@
                 <select class="preset" aria-label="Быстрый пресет для {{ .Name }}">
                   <option value="">— пресет —</option>
                   <option value="inherit">наследовать</option>
-                  <option value="manual">manual</option>
-                  <option value="disabled">disabled</option>
-                  <option value="every 1h">every 1h</option>
-                  <option value="every 6h">every 6h</option>
-                  <option value="every 12h">every 12h</option>
-                  <option value="daily at 03:00">daily at 03:00</option>
-                  <option value="weekly on sunday at 04:00">weekly on sunday at 04:00</option>
-                  <option value="custom">custom…</option>
+                  <option value="manual">Вручную</option>
+                  <option value="disabled">Отключено</option>
+                  <option value="every 1h">Каждый час</option>
+                  <option value="every 6h">Каждые 6 часов</option>
+                  <option value="every 12h">Каждые 12 часов</option>
+                  <option value="daily at 03:00">Ежедневно в 03:00</option>
+                  <option value="weekly on sunday at 04:00">Еженедельно в воскресенье в 04:00</option>
+                  <option value="custom">Своё…</option>
                 </select>
 
                 <input
