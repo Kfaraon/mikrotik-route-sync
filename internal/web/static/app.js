@@ -59,7 +59,7 @@
       try {
         var msg = JSON.parse(ev.data);
         var line = document.createElement("div");
-        var t = new Date(msg.time).toLocaleTimeString();
+        var t = formatLogTime(msg.time);
         line.textContent = t + " " + msg.event + " " + JSON.stringify(msg.data);
         box.prepend(line);
         while (box.childElementCount > 20) box.lastChild.remove();
@@ -84,8 +84,6 @@
       debug: q("#stat-debug")
     };
 
-    var autoScroll = q("#log-autoscroll");
-    var compactMode = q("#log-compact");
     var refreshBtn = q("#log-refresh");
     var clearBtn = q("#log-clear");
 
@@ -100,14 +98,15 @@
       return s;
     }
 
+    // Единый удобочитаемый формат: ДД.ММ.ГГГГ ЧЧ:ММ:СС
     function formatLogTime(ts) {
       if (!ts) return "";
       var d = new Date(ts);
       if (isNaN(d.getTime())) return String(ts);
-      return pad(d.getHours(), 2) + ":" +
+      return pad(d.getDate(), 2) + "." + pad(d.getMonth() + 1, 2) + "." + d.getFullYear() + " " +
+        pad(d.getHours(), 2) + ":" +
         pad(d.getMinutes(), 2) + ":" +
-        pad(d.getSeconds(), 2) + "." +
-        pad(d.getMilliseconds(), 3);
+        pad(d.getSeconds(), 2);
     }
 
     function safeString(v) {
@@ -370,9 +369,8 @@
           logOutput.innerHTML = html;
           updateStats();
 
-          if (autoScroll && autoScroll.checked) {
-            logOutput.scrollTop = logOutput.scrollHeight;
-          }
+          // Автопрокрутка вниз всегда (чекбокс удалён)
+          logOutput.scrollTop = logOutput.scrollHeight;
 
           setRefreshing(false);
         })
@@ -429,20 +427,6 @@
     var limitFilter = q("#log-limit");
     if (limitFilter) {
       limitFilter.addEventListener("change", loadLogs);
-    }
-
-    if (compactMode) {
-      compactMode.addEventListener("change", function () {
-        if (compactMode.checked) {
-          logOutput.classList.add("compact");
-        } else {
-          logOutput.classList.remove("compact");
-        }
-      });
-
-      if (compactMode.checked) {
-        logOutput.classList.add("compact");
-      }
     }
 
     logOutput.addEventListener("click", function (e) {

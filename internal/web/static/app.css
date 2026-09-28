@@ -34,6 +34,21 @@
   --badge-group-text: #3730a3;
   --badge-muted-bg: #f3f4f6;
   --badge-muted-text: #6b7280;
+
+  /* Консоль логов — светлая */
+  --log-bg: #f9fafb;
+  --log-text: #111827;
+  --log-entry-bg: #ffffff;
+  --log-entry-hover: #f3f4f6;
+  --log-entry-err-bg: #fee2e2;
+  --log-entry-warn-bg: #fef3c7;
+  --log-time: #6b7280;
+  --log-border: #e5e7eb;
+  --log-key: #6b7280;
+  --log-val: #374151;
+  --log-err-val: #b91c1c;
+  --log-service: #1d4ed8;
+  --log-msg: #111827;
 }
 
 /* Тёмная тема */
@@ -70,6 +85,21 @@
   --badge-group-text: #a5b4fc;
   --badge-muted-bg: #374151;
   --badge-muted-text: #9ca3af;
+
+  /* Консоль логов — тёмная */
+  --log-bg: #1f2937;
+  --log-text: #e5e7eb;
+  --log-entry-bg: #374151;
+  --log-entry-hover: #4b5563;
+  --log-entry-err-bg: #7f1d1d;
+  --log-entry-warn-bg: #78350f;
+  --log-time: #9ca3af;
+  --log-border: #4b5563;
+  --log-key: #9ca3af;
+  --log-val: #d1d5db;
+  --log-err-val: #fca5a5;
+  --log-service: #60a5fa;
+  --log-msg: #f3f4f6;
 }
 
 /* Сброс и базовые стили */
@@ -136,7 +166,6 @@ body {
 }
 
 .ver {
-  margin-left: auto;
   color: var(--muted);
   font-size: 0.875rem;
 }
@@ -158,11 +187,6 @@ body {
   transition: all var(--transition);
   flex-shrink: 0;
   line-height: 1;
-}
-
-.theme-toggle:hover {
-  background: var(--border);
-  transform: rotate(15deg) scale(1.05);
 }
 
 .theme-toggle:hover:not(:disabled) {
@@ -599,7 +623,9 @@ code {
   }
 }
 
-/* Стили для страницы логов */
+/* ============================================================
+   Страница логов — консоль теперь следует за темой
+   ============================================================ */
 .log-toolbar {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -709,6 +735,7 @@ code {
   transition: background var(--transition), border-color var(--transition);
 }
 
+/* Консоль: фон и текст из переменных темы */
 .log-output {
   max-height: 600px;
   overflow-y: auto;
@@ -716,8 +743,9 @@ code {
   font-family: "Courier New", monospace;
   font-size: 0.875rem;
   line-height: 1.6;
-  background: #1f2937;
-  color: #e5e7eb;
+  background: var(--log-bg);
+  color: var(--log-text);
+  transition: background var(--transition), color var(--transition);
 }
 
 .log-output.compact {
@@ -729,31 +757,32 @@ code {
   padding: 0.5rem;
   margin-bottom: 0.5rem;
   border-radius: 4px;
-  background: #374151;
+  background: var(--log-entry-bg);
   position: relative;
-  transition: background 0.2s ease;
+  transition: background var(--transition);
 }
 
 .log-entry:hover {
-  background: #4b5563;
+  background: var(--log-entry-hover);
 }
 
 .log-entry.log-error {
-  background: #7f1d1d;
+  background: var(--log-entry-err-bg);
   border-left: 4px solid var(--danger);
 }
 
 .log-entry.log-warn {
-  background: #78350f;
+  background: var(--log-entry-warn-bg);
   border-left: 4px solid var(--warning);
 }
 
 .log-time {
-  color: #9ca3af;
+  color: var(--log-time);
   margin-right: 0.5rem;
   font-size: 0.8125rem;
 }
 
+/* Цветные пилюли уровней — читаемы в обеих темах */
 .log-level {
   display: inline-block;
   padding: 0.125rem 0.5rem;
@@ -785,19 +814,19 @@ code {
 }
 
 .log-service {
-  color: #60a5fa;
+  color: var(--log-service);
   font-weight: 600;
   margin-right: 0.5rem;
 }
 
 .log-msg {
-  color: #f3f4f6;
+  color: var(--log-msg);
 }
 
 .log-extras {
   margin-top: 0.5rem;
   padding-top: 0.5rem;
-  border-top: 1px solid #4b5563;
+  border-top: 1px solid var(--log-border);
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
@@ -808,15 +837,15 @@ code {
 }
 
 .log-extra-key {
-  color: #9ca3af;
+  color: var(--log-key);
 }
 
 .log-extra-val {
-  color: #d1d5db;
+  color: var(--log-val);
 }
 
 .error-val {
-  color: #fca5a5;
+  color: var(--log-err-val);
   font-weight: 600;
 }
 
@@ -825,8 +854,8 @@ code {
   top: 0.5rem;
   right: 0.5rem;
   background: transparent;
-  border: 1px solid #6b7280;
-  color: #9ca3af;
+  border: 1px solid var(--log-border);
+  color: var(--log-time);
   padding: 0.25rem 0.5rem;
   font-size: 0.75rem;
   border-radius: 4px;
@@ -840,27 +869,22 @@ code {
 }
 
 .log-copy:hover {
-  background: #4b5563;
-  color: white;
+  background: var(--log-entry-hover);
+  color: var(--log-text);
 }
 
 .log-placeholder {
   text-align: center;
   padding: 2rem;
-  color: #9ca3af;
+  color: var(--log-time);
 }
 
 .log-error-msg {
   padding: 1rem;
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--badge-err-bg);
+  color: var(--badge-err-text);
   border-radius: var(--radius);
   text-align: center;
-}
-
-.dark .log-error-msg {
-  background: #7f1d1d;
-  color: #fca5a5;
 }
 
 .log-refresh.loading {
@@ -887,7 +911,9 @@ code {
   }
 }
 
-/* Стили для страницы настроек */
+/* ============================================================
+   Страница настроек
+   ============================================================ */
 .settings-group {
   margin-bottom: 2rem;
 }
