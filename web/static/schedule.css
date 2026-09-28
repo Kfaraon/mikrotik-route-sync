@@ -1,0 +1,425 @@
+/* Страница расписаний */
+.schedule-page {
+  max-width: 1600px;
+}
+
+.page-header {
+  margin-bottom: 2rem;
+}
+
+/* Сводка */
+.sched-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.summary-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  text-align: center;
+  box-shadow: 0 1px 3px var(--shadow);
+  transition: all var(--transition);
+}
+
+.summary-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px var(--shadow);
+}
+
+.summary-card span {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.summary-card strong {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .sched-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .summary-card strong {
+    font-size: 1.25rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .sched-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Панель инструментов */
+.sched-toolbar {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 3px var(--shadow);
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.toolbar-main,
+.toolbar-actions {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toolbar-main {
+  margin-bottom: 1rem;
+}
+
+.toolbar-main > * {
+  flex: 1;
+  min-width: 150px;
+}
+
+@media (max-width: 768px) {
+  .toolbar-main,
+  .toolbar-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toolbar-main > * {
+    width: 100%;
+  }
+}
+
+/* Справка */
+.sched-help {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.sched-help summary {
+  padding: 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  background: var(--bg-alt);
+  user-select: none;
+  color: var(--text);
+}
+
+.sched-help summary:hover {
+  background: var(--border);
+}
+
+.sched-help ul {
+  padding: 1rem 1.5rem;
+  margin: 0;
+}
+
+.sched-help li {
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
+}
+
+.sched-help .small {
+  padding: 0 1.5rem 1rem;
+  margin: 0;
+}
+
+/* Таблица расписаний */
+.sched-table-wrap {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 1px 3px var(--shadow);
+  margin-bottom: 1.5rem;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.sched-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.sched-table thead {
+  background: var(--bg-alt);
+}
+
+.sched-table th {
+  padding: 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+}
+
+.sched-table td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.sched-table tr:last-child td {
+  border-bottom: none;
+}
+
+.sched-table tr:hover {
+  background: var(--bg-alt);
+}
+
+.sched-table tr.saving {
+  opacity: 0.6;
+}
+
+.sched-table tr.saved {
+  background: var(--badge-ok-bg);
+}
+
+@media (max-width: 1024px) {
+  .sched-table {
+    font-size: 0.875rem;
+  }
+
+  .sched-table th,
+  .sched-table td {
+    padding: 0.75rem 0.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .sched-table thead {
+    display: none;
+  }
+
+  .sched-table,
+  .sched-table tbody,
+  .sched-table tr,
+  .sched-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .sched-table tr {
+    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem;
+  }
+
+  .sched-table td {
+    border: none;
+    padding: 0.5rem;
+    text-align: left;
+  }
+
+  .sched-table td:before {
+    content: attr(data-label);
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--muted);
+    font-size: 0.875rem;
+  }
+}
+
+/* Ячейки */
+.cell-service {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.service-name {
+  font-weight: 600;
+}
+
+.cell-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cell-schedule code {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.schedule-meta {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.cell-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.group-sched {
+  font-size: 0.875rem;
+}
+
+/* Блок редактирования */
+.edit-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 250px;
+}
+
+.edit-block select,
+.edit-block input {
+  width: 100%;
+}
+
+.edit-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.edit-buttons button {
+  flex: 1;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+}
+
+.row-status {
+  font-size: 0.875rem;
+  min-height: 1.25rem;
+  margin-top: 0.25rem;
+}
+
+.row-status.ok {
+  color: var(--success);
+}
+
+.row-status.err {
+  color: var(--danger);
+}
+
+.row-status.muted {
+  color: var(--muted);
+}
+
+@media (max-width: 768px) {
+  .edit-block {
+    min-width: auto;
+  }
+}
+
+/* Бейджи */
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-right: 0.25rem;
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+}
+
+.badge-auto {
+  background: var(--badge-auto-bg);
+  color: var(--badge-auto-text);
+}
+
+.badge-manual {
+  background: var(--badge-manual-bg);
+  color: var(--badge-manual-text);
+}
+
+.badge-disabled {
+  background: var(--badge-err-bg);
+  color: var(--badge-err-text);
+}
+
+.badge-muted {
+  background: var(--badge-muted-bg);
+  color: var(--badge-muted-text);
+}
+
+.badge-override {
+  background: var(--badge-override-bg);
+  color: var(--badge-override-text);
+}
+
+.badge-group {
+  background: var(--badge-group-bg);
+  color: var(--badge-group-text);
+}
+
+.type-badge {
+  min-width: 60px;
+  text-align: center;
+}
+
+.next-badge {
+  font-size: 0.875rem;
+}
+
+.source-badge {
+  min-width: 80px;
+  text-align: center;
+}
+
+.source-service {
+  background: var(--badge-override-bg);
+  color: var(--badge-override-text);
+}
+
+.source-group {
+  background: var(--badge-group-bg);
+  color: var(--badge-group-text);
+}
+
+.source-global {
+  background: var(--badge-ok-bg);
+  color: var(--badge-ok-text);
+}
+
+/* Кнопки */
+.save-btn {
+  background: var(--primary);
+  color: white;
+}
+
+.save-btn:hover {
+  background: var(--primary-hover);
+}
+
+.reset-btn {
+  background: var(--bg-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.reset-btn:hover {
+  background: var(--border);
+}
+
+/* Пустое состояние */
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--muted);
+}

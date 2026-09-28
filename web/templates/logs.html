@@ -1,0 +1,90 @@
+{{define "logs.html"}}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>MikroTik Route Sync — Логи</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="csrf-token" content="{{ .CSRF }}">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/theme.js"></script>
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <nav class="bar">
+    <span class="brand">MikroTik Route Sync</span>
+    <a href="/">Дашборд</a>
+    <a href="/services">Сервисы</a>
+    <a href="/address-list">Списки адресов</a>
+    <a href="/schedules">Расписания</a>
+    <a href="/settings">Настройки</a>
+    <a href="/logs" class="active">Логи</a>
+    <span class="bar-right">
+      <span class="ver">v{{ .Version }}</span>
+      <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
+    </span>
+  </nav>
+
+  <main class="wrap">
+    <h1>Логи</h1>
+    <p class="muted">Файл: <code>{{ .LogFile }}</code></p>
+
+    <div class="log-toolbar">
+      <div class="log-filters">
+        <div class="filter-group">
+          <label for="log-level">Уровень:</label>
+          <select id="log-level">
+            <option value="">Все уровни</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="log-service">Сервис:</label>
+          <input type="text" id="log-service" placeholder="например: youtube">
+        </div>
+
+        <div class="filter-group">
+          <label for="log-limit">Лимит:</label>
+          <select id="log-limit">
+            <option value="50">50 строк</option>
+            <option value="100" selected>100 строк</option>
+            <option value="500">500 строк</option>
+            <option value="1000">1000 строк</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="log-actions">
+        <button type="button" id="log-refresh" class="primary log-refresh">⟳ Обновить</button>
+        <button type="button" id="log-download">⬇ Скачать</button>
+        <button type="button" class="secondary" id="log-clear"
+                hx-post="/actions/logs-clear"
+                hx-swap="none"
+                hx-confirm="Очистить лог-файл?">
+          🗑 Очистить
+        </button>
+      </div>
+    </div>
+
+    <div class="log-stats" id="log-stats">
+      <span class="stat-item">Всего: <strong id="stat-total">0</strong></span>
+      <span class="stat-item debug">DEBUG: <strong id="stat-debug">0</strong></span>
+      <span class="stat-item ok">INFO: <strong id="stat-info">0</strong></span>
+      <span class="stat-item warn">WARN: <strong id="stat-warn">0</strong></span>
+      <span class="stat-item err">ERROR: <strong id="stat-err">0</strong></span>
+    </div>
+
+    <article class="log-container">
+      <div id="log-output" class="log-output compact">
+        <div class="log-placeholder">Загрузка логов…</div>
+      </div>
+    </article>
+  </main>
+</body>
+</html>
+{{end}}
