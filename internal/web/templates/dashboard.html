@@ -8,6 +8,7 @@
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/dashboard.css">
+  <script src="/static/theme.js"></script>
   <script src="/static/dashboard.js" defer></script>
 </head>
 <body>
@@ -19,7 +20,10 @@
     <a href="/schedules">Расписания</a>
     <a href="/settings">Настройки</a>
     <a href="/logs">Логи</a>
-    <span class="ver">v{{ .Version }}</span>
+    <span class="bar-right">
+      <span class="ver">v{{ .Version }}</span>
+      <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
+    </span>
   </nav>
 
   <main class="wrap dashboard-page" id="dashboard-page">
