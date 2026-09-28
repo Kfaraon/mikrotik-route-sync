@@ -7,6 +7,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/theme.js"></script>
   <script src="/static/htmx.min.js"></script>
   <script src="/static/app.js" defer></script>
 </head>
@@ -19,7 +20,10 @@
     <a href="/schedules">Расписания</a>
     <a href="/settings">Настройки</a>
     <a href="/logs">Логи</a>
-    <span class="ver">v{{ .Version }}</span>
+    <span class="bar-right">
+      <span class="ver">v{{ .Version }}</span>
+      <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
+    </span>
   </nav>
 
   <main class="wrap">
