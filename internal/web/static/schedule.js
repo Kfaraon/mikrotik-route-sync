@@ -38,13 +38,13 @@
   };
 
   var weekdayRussian = {
-    sunday: "воскресенье",
-    monday: "понедельник",
-    tuesday: "вторник",
-    wednesday: "среда",
-    thursday: "четверг",
-    friday: "пятница",
-    saturday: "суббота"
+    sunday: "воскресеньям",
+    monday: "понедельникам",
+    tuesday: "вторникам",
+    wednesday: "средам",
+    thursday: "четвергам",
+    friday: "пятницам",
+    saturday: "субботам"
   };
 
   function setText(el, value) {
@@ -152,7 +152,7 @@
       return { key: "cron", label: "cron", className: "badge-auto" };
     }
 
-    return { key: "custom", label: "custom", className: "badge-auto" };
+    return { key: "custom", label: "своё", className: "badge-auto" };
   }
 
   function humanSchedule(spec) {
@@ -179,7 +179,7 @@
       if (w) {
         var day = w[1].toLowerCase();
         var ru = weekdayRussian[day] || day;
-        return "каждую " + ru + " в " + w[2] + ":" + w[3];
+        return "по " + ru + " в " + w[2] + ":" + w[3];
       }
     }
 
@@ -254,6 +254,8 @@
       pad(d.getDate()) +
       "." +
       pad(d.getMonth() + 1) +
+      "." +
+      d.getFullYear() +
       " " +
       pad(d.getHours()) +
       ":" +
@@ -311,15 +313,8 @@
 
     var effEl = row.querySelector(".effective");
     if (effEl) {
-      effEl.textContent = eff || "—";
-      effEl.title = humanSchedule(eff);
-    }
-
-    var typeEl = row.querySelector(".type-badge");
-    if (typeEl) {
-      var cls = classify(eff);
-      typeEl.textContent = cls.label;
-      typeEl.className = "badge type-badge " + cls.className;
+      effEl.textContent = humanSchedule(eff);
+      effEl.title = eff || "";
     }
 
     var nextEl = row.querySelector(".next-badge");
@@ -328,7 +323,6 @@
       if (next) {
         nextEl.textContent = "≈ " + formatDateTime(next) + " · " + relativeNext(next);
         nextEl.className = "badge next-badge badge-auto";
-        nextEl.setAttribute("title", next.toISOString());
       } else {
         nextEl.textContent = "";
         nextEl.className = "badge next-badge";
@@ -360,7 +354,7 @@
       if (override && !badge) {
         badge = document.createElement("span");
         badge.className = "badge badge-override";
-        badge.textContent = "override";
+        badge.textContent = "переопределение";
         serviceCell.appendChild(badge);
       } else if (!override && badge && badge.parentNode) {
         badge.parentNode.removeChild(badge);
@@ -372,7 +366,7 @@
       if (document.activeElement !== input) {
         input.value = override;
       }
-      input.placeholder = eff || "укажите расписание";
+      input.placeholder = eff ? humanSchedule(eff) : "укажите расписание";
     }
 
     var preset = row.querySelector(".preset");
@@ -594,7 +588,7 @@
 
         setStatus(
           row,
-          spec ? "Сохранено: " + spec : "Наследуется из группы/глобально",
+          spec ? "Сохранено: " + humanSchedule(spec) : "Наследуется из группы/глобально",
           "ok"
         );
 
@@ -709,7 +703,7 @@
           return;
         }
 
-        if (!window.confirm("Сбросить override для " + service + "?")) {
+        if (!window.confirm("Сбросить переопределение для " + service + "?")) {
           return;
         }
 
