@@ -249,14 +249,15 @@
   function formatClock(value) {
     var d = parseTime(value);
     if (!d) return "—";
-    return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+    return pad(d.getDate()) + "." + pad(d.getMonth() + 1) + "." + d.getFullYear() + " " +
+           pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
   }
 
   function formatDateTime(value) {
     var d = parseTime(value);
     if (!d) return "—";
-    return pad(d.getDate()) + "." + pad(d.getMonth() + 1) + " " +
-      pad(d.getHours()) + ":" + pad(d.getMinutes());
+    return pad(d.getDate()) + "." + pad(d.getMonth() + 1) + "." + d.getFullYear() + " " +
+           pad(d.getHours()) + ":" + pad(d.getMinutes());
   }
 
   function relativeTime(value) {
@@ -380,7 +381,7 @@
       return { key: "cron", label: "cron", className: "svc-badge-auto" };
     }
 
-    return { key: "custom", label: "custom", className: "svc-badge-auto" };
+    return { key: "custom", label: "своё", className: "svc-badge-auto" };
   }
 
   function humanSchedule(spec) {
@@ -405,15 +406,15 @@
       var w = s.match(/^weekly on ([a-z]+) at (\d{1,2}):(\d{2})$/i);
       if (w) {
         var days = {
-          sunday: "воскресенье",
-          monday: "понедельник",
-          tuesday: "вторник",
-          wednesday: "среда",
-          thursday: "четверг",
-          friday: "пятница",
-          saturday: "суббота"
+          sunday: "воскресеньям",
+          monday: "понедельникам",
+          tuesday: "вторникам",
+          wednesday: "средам",
+          thursday: "четвергам",
+          friday: "пятницам",
+          saturday: "субботам"
         };
-        return "каждую " + (days[w[1].toLowerCase()] || w[1]) + " в " + w[2] + ":" + w[3];
+        return "по " + (days[w[1].toLowerCase()] || w[1]) + " в " + w[2] + ":" + w[3];
       }
     }
 
@@ -596,8 +597,8 @@
   }
 
   function sourceFor(name) {
-    var overrideSpec = getScheduleOverrideSpec(name);
-    if (overrideSpec) return "service";
+    var override = normalizeSpec(getScheduleOverrideSpec(name));
+    if (override) return "service";
 
     var group = findGroup(name);
     if (group) return "group";
@@ -651,6 +652,17 @@
     return "unknown";
   }
 
+  function statusNote(status) {
+    var map = {
+      success: "успех",
+      error: "ошибка",
+      warning: "предупреждение",
+      running: "выполняется",
+      unknown: "нет данных"
+    };
+    return map[status] || map.unknown;
+  }
+
   function isDryRun(rec) {
     return Boolean(rec && (rec.dry_run || rec.dryrun || rec.dry || rec.DryRun));
   }
@@ -678,7 +690,7 @@
     if (!rec) return "нет данных";
 
     var parts = [];
-    if (isDryRun(rec)) parts.push("dry-run");
+    if (isDryRun(rec)) parts.push("тестовый запуск");
 
     var c = historyCounts(rec);
     if (c.added) parts.push("+" + c.added);
@@ -695,7 +707,7 @@
     var map = {
       success: ["OK", "svc-badge-ok"],
       error: ["Ошибка", "svc-badge-err"],
-      warning: ["Warn", "svc-badge-warn"],
+      warning: ["Предупр.", "svc-badge-warn"],
       running: ["Выполняется", "svc-badge-auto"],
       unknown: ["—", "svc-badge-muted"]
     };
@@ -789,7 +801,7 @@
     var key = lower(name);
 
     if (state.degraded[key]) {
-      return { label: "degraded", cls: "svc-badge-warn", priority: 1 };
+      return { label: "сбой", cls: "svc-badge-warn", priority: 1 };
     }
 
     var lastStatus = last ? historyStatus(last) : "unknown";
@@ -921,7 +933,7 @@
       "svc-auto-value",
       "svc-auto-note",
       String(auto),
-      (total - auto) + " manual/disabled/нет",
+      (total - auto) + " ручных/отключенных/нет",
       auto ? "ok" : "muted"
     );
 
@@ -929,7 +941,7 @@
       "svc-problems-value",
       "svc-problems-note",
       String(problems),
-      problems ? "ошибки, warnings, degraded" : "проблем не обнаружено",
+      problems ? "ошибки, предупреждения, сбои" : "проблем не обнаружено",
       problems ? "err" : "ok"
     );
 
@@ -939,7 +951,7 @@
         "svc-last-value",
         "svc-last-note",
         historyService(latest) || "—",
-        st + " · " + relativeTime(historyTime(latest)),
+        statusNote(st) + " · " + relativeTime(historyTime(latest)),
         st === "success" ? "ok" : st === "error" ? "err" : st === "warning" ? "warn" : "muted"
       );
     } else {
@@ -968,7 +980,7 @@
       : '<span class="svc-muted">—</span>';
 
     var badges = "";
-    if (item.configOverride) badges += '<span class="svc-badge svc-badge-override">override</span>';
+    if (item.configOverride) badges += '<span class="svc-badge svc-badge-override">переопределение</span>';
     if (item.group) badges += '<span class="svc-badge svc-badge-group">' + esc(item.group) + "</span>";
     if (item.errorCount) badges += '<span class="svc-badge svc-badge-err">' + esc(item.errorCount) + " err</span>";
     if (item.warnCount) badges += '<span class="svc-badge svc-badge-warn">' + esc(item.warnCount) + " warn</span>";
@@ -980,9 +992,7 @@
       "</td>" +
       '<td data-label="Состояние"><span class="svc-badge ' + esc(item.health.cls) + '">' + esc(item.health.label) + "</span></td>" +
       '<td data-label="Расписание">' +
-        "<code>" + esc(item.effective || "—") + "</code>" +
-        '<div class="svc-muted svc-small">' + esc(humanSchedule(item.effective)) + "</div>" +
-        '<div style="margin-top:.25rem"><span class="svc-badge ' + esc(item.cls.className) + '">' + esc(item.cls.label) + "</span></div>" +
+        "<div>" + esc(humanSchedule(item.effective)) + "</div>" +
       "</td>" +
       '<td data-label="Ближайший запуск">' + nextHtml + "</td>" +
       '<td data-label="Маршрутов">' + esc(String(item.routes)) + "</td>" +
@@ -990,7 +1000,7 @@
       '<td data-label="Действия">' +
         '<div class="svc-actions">' +
           '<button type="button" class="svc-outline" data-action="details" data-service="' + esc(item.name) + '">Детали</button>' +
-          '<button type="button" data-action="dry" data-service="' + esc(item.name) + '">Dry</button>' +
+          '<button type="button" data-action="dry" title="Тестовый запуск" data-service="' + esc(item.name) + '">Тест</button>' +
           '<button type="button" data-action="sync" data-service="' + esc(item.name) + '">Синхр.</button>' +
           '<button type="button" class="svc-danger" data-action="delete" data-service="' + esc(item.name) + '">Удалить</button>' +
         "</div>" +
@@ -1305,7 +1315,7 @@
         if (c.deleted) parts.push("-" + c.deleted);
         if (c.unchanged) parts.push("=" + c.unchanged);
 
-        var msg = (dry ? "Dry-run " : "Синхронизация ") + name;
+        var msg = (dry ? "Тестовый запуск " : "Синхронизация ") + name;
         if (parts.length) msg += ": " + parts.join(" ");
 
         showToast(msg);
@@ -1329,7 +1339,7 @@
           force: false
         })
       }).then(function () {
-        showToast((dry ? "Dry-run запущен: " : "Синхронизация запущена: ") + names.length + " сервисов");
+        showToast((dry ? "Тестовый запуск запущен: " : "Синхронизация запущена: ") + names.length + " сервисов");
         setTimeout(function () {
           loadAll(true);
         }, 1500);
@@ -1452,8 +1462,8 @@
 
     html += detailItem(
       "Расписание",
-      "<code>" + esc(item.effective || "—") + "</code>",
-      humanSchedule(item.effective),
+      esc(humanSchedule(item.effective)),
+      "",
       "muted"
     );
 
@@ -1479,9 +1489,9 @@
     );
 
     html += detailItem(
-      "Override",
+      "Переопределение",
       item.configOverride ? '<span class="svc-badge svc-badge-override">есть</span>' : '<span class="svc-badge svc-badge-muted">нет</span>',
-      item.scheduleOverride ? "есть override расписания" : "наследуется из группы/глобально",
+      item.scheduleOverride ? "есть переопределение расписания" : "наследуется из группы/глобально",
       item.configOverride ? "warn" : "muted"
     );
 
@@ -1489,7 +1499,7 @@
       "Группа",
       item.group ? '<span class="svc-badge svc-badge-group">' + esc(item.group) + "</span>" : "—",
       item.group ? "сервис входит в группу расписаний" : "не входит в группу",
-      item.group ? "muted" : "muted"
+      "muted"
     );
 
     html += "</div>";
