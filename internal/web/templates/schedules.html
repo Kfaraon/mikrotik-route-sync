@@ -29,7 +29,6 @@
   <main class="wrap schedule-page" id="schedule-page" data-global="{{ .Global }}">
     <header class="page-header">
       <div>
-        <h1>Расписания</h1>
         <p class="muted">
           Глобальное расписание:
           <code>{{ .Global }}</code>
@@ -105,7 +104,7 @@
       <summary>Поддерживаемые форматы и подсказки</summary>
       <ul>
         <li><code>every 30m</code>, <code>every 6h</code>, <code>every 1d</code>, <code>every 1w</code> — интервал.</li>
-        <li><code>daily at 03:00</code> — ежедневно во указанное время.</li>
+        <li><code>daily at 03:00</code> — ежедневно в указанное время.</li>
         <li><code>weekly on sunday at 04:00</code> — еженедельно в указанный день.</li>
         <li><code>0 */6 * * *</code> — cron из 5 полей.</li>
         <li><code>manual</code> — только вручную.</li>
@@ -149,7 +148,6 @@
               <div class="cell-schedule">
                 <code class="effective">{{ .Effective }}</code>
                 <div class="schedule-meta">
-                  <span class="badge type-badge"></span>
                   <span class="badge next-badge"></span>
                 </div>
               </div>
