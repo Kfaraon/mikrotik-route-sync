@@ -27,8 +27,15 @@
   </nav>
 
   <main class="wrap">
-    <h1>Логи</h1>
     <p class="muted">Файл: <code>{{ .LogFile }}</code></p>
+
+    <div class="log-stats" id="log-stats">
+      <span class="stat-item">Всего: <strong id="stat-total">0</strong></span>
+      <span class="stat-item debug">DEBUG: <strong id="stat-debug">0</strong></span>
+      <span class="stat-item ok">INFO: <strong id="stat-info">0</strong></span>
+      <span class="stat-item warn">WARN: <strong id="stat-warn">0</strong></span>
+      <span class="stat-item err">ERROR: <strong id="stat-err">0</strong></span>
+    </div>
 
     <div class="log-toolbar">
       <div class="log-filters">
@@ -69,14 +76,6 @@
           🗑 Очистить
         </button>
       </div>
-    </div>
-
-    <div class="log-stats" id="log-stats">
-      <span class="stat-item">Всего: <strong id="stat-total">0</strong></span>
-      <span class="stat-item debug">DEBUG: <strong id="stat-debug">0</strong></span>
-      <span class="stat-item ok">INFO: <strong id="stat-info">0</strong></span>
-      <span class="stat-item warn">WARN: <strong id="stat-warn">0</strong></span>
-      <span class="stat-item err">ERROR: <strong id="stat-err">0</strong></span>
     </div>
 
     <article class="log-container">
