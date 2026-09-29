@@ -29,7 +29,6 @@
   <main class="wrap services-page" id="services-page">
     <header class="svc-header">
       <div>
-        <h1>Сервисы</h1>
         <p class="muted">
           Управление сервисами, синхронизация маршрутов, статусы, расписания и история в одном месте.
         </p>
@@ -68,7 +67,7 @@
       <article class="svc-kpi-card">
         <span class="svc-kpi-label">Проблемы</span>
         <strong class="svc-kpi-value" id="svc-problems-value">…</strong>
-        <small class="svc-kpi-note" id="svc-problems-note">ошибки / degraded</small>
+        <small class="svc-kpi-note" id="svc-problems-note">ошибки / сбой</small>
       </article>
 
       <article class="svc-kpi-card">
@@ -157,7 +156,7 @@
             <td></td>
             <td><strong>{{ .Name }}</strong></td>
             <td><span class="svc-badge svc-badge-muted">—</span></td>
-            <td><code>{{ .Schedule }}</code></td>
+            <td><span class="svc-muted">{{ .Schedule }}</span></td>
             <td><span class="svc-muted">—</span></td>
             <td>{{ .Routes }}</td>
             <td><span class="svc-muted">—</span></td>
