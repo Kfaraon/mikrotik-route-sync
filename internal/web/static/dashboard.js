@@ -166,7 +166,7 @@
       return pad(d.getHours()) + ":" + pad(d.getMinutes());
     }
 
-    return pad(d.getDate()) + "." + pad(d.getMonth() + 1) + " " +
+    return pad(d.getDate()) + "." + pad(d.getMonth() + 1) + "." + d.getFullYear() + " " +
       pad(d.getHours()) + ":" + pad(d.getMinutes());
   }
 
@@ -217,6 +217,34 @@
     return "через " + day + " " + plural(day, ["день", "дня", "дней"]);
   }
 
+  // Go-длительность ("72h15m3s") -> "3 дн. 0 ч. 15 мин."
+  function formatUptimeRu(value) {
+    var s = String(value || "").trim();
+    if (!s) return "—";
+
+    var hours = 0, mins = 0, secs = 0, m;
+    var re = /(\d+)h|(\d+)m|(\d+)s/g;
+
+    while ((m = re.exec(s)) !== null) {
+      if (m[1] !== undefined) hours = parseInt(m[1], 10);
+      else if (m[2] !== undefined) mins = parseInt(m[2], 10);
+      else if (m[3] !== undefined) secs = parseInt(m[3], 10);
+    }
+
+    if (!hours && !mins && !secs) return s;
+
+    var days = Math.floor(hours / 24);
+    hours = hours % 24;
+
+    var parts = [];
+    if (days) parts.push(days + " дн.");
+    if (hours) parts.push(hours + " ч.");
+    if (mins) parts.push(mins + " мин.");
+    if (!days && !hours && !mins) parts.push(secs + " сек.");
+
+    return parts.join(" ");
+  }
+
   function normalizeSpec(value) {
     return trim(value);
   }
@@ -229,7 +257,6 @@
     if (!n || n < 0) return 0;
 
     var unit = m[2].toLowerCase();
-
     if (unit === "m") return n * 60 * 1000;
     if (unit === "h") return n * 60 * 60 * 1000;
     if (unit === "d") return n * 24 * 60 * 60 * 1000;
@@ -613,7 +640,7 @@
       mikrotikCls = "err";
     } else {
       mikrotikValue = "Доступен";
-      mikrotikNote = "Uptime: " + text(state.status.uptime || "—");
+      mikrotikNote = "Время работы: " + formatUptimeRu(state.status.uptime);
       mikrotikCls = "ok";
     }
 
