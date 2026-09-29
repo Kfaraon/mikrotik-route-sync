@@ -21,6 +21,7 @@
     <a href="/settings">Настройки</a>
     <a href="/logs">Логи</a>
     <span class="bar-right">
+      <span id="live-dot" class="live-dot" title="Live: нет подключения"></span>
       <span class="ver">v{{ .Version }}</span>
       <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
     </span>
@@ -67,7 +68,7 @@
       <article class="svc-kpi-card">
         <span class="svc-kpi-label">Проблемы</span>
         <strong class="svc-kpi-value" id="svc-problems-value">…</strong>
-        <small class="svc-kpi-note" id="svc-problems-note">ошибки / сбой</small>
+        <small class="svc-kpi-note" id="svc-problems-note">ошибки / предупреждения / сбои</small>
       </article>
 
       <article class="svc-kpi-card">
@@ -188,6 +189,7 @@
         <button type="button" class="svc-tab active" data-svc-tab="overview">Обзор</button>
         <button type="button" class="svc-tab" data-svc-tab="history">История</button>
         <button type="button" class="svc-tab" data-svc-tab="logs">Логи</button>
+        <button type="button" class="svc-tab" data-svc-tab="routes">Маршруты</button>
       </nav>
 
       <div class="svc-drawer-body" id="svc-drawer-body">
@@ -197,6 +199,7 @@
       <footer class="svc-drawer-footer">
         <button type="button" id="svc-drawer-sync" class="svc-primary">Синхронизировать</button>
         <button type="button" id="svc-drawer-dry" class="svc-outline">Тестовый запуск</button>
+        <button type="button" id="svc-drawer-diff" class="svc-secondary">Diff</button>
         <button type="button" id="svc-drawer-delete" class="svc-danger">Удалить…</button>
       </footer>
     </aside>
@@ -217,11 +220,33 @@
           Удалить сервис, сохранить маршруты
         </button>
         <button type="button" id="svc-delete-purge" class="svc-danger">
-          Удалить сервис и маршруты
-        </button>
+          Удалить сервис и маршруты</button>
         <button type="button" id="svc-delete-cancel" class="svc-outline">
           Отмена
         </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="svc-diff-modal" class="svc-modal" hidden>
+    <div class="svc-modal-backdrop" data-diff-close></div>
+
+    <div class="svc-modal-panel" role="dialog" aria-modal="true" aria-labelledby="svc-diff-title" style="max-width:700px">
+      <h3 id="svc-diff-title">Изменения маршрутов</h3>
+      <p class="svc-muted" id="svc-diff-subtitle"></p>
+
+      <div class="row" style="margin-top:0">
+        <input type="search" id="svc-diff-search" placeholder="Поиск по префиксу" autocomplete="off">
+        <label class="checkbox-label">
+          <input type="checkbox" id="svc-diff-only" checked>
+          только изменения
+        </label>
+      </div>
+
+      <div class="svc-diff-list" id="svc-diff-list"></div>
+
+      <div class="svc-modal-actions">
+        <button type="button" id="svc-diff-close" class="svc-outline">Закрыть</button>
       </div>
     </div>
   </div>

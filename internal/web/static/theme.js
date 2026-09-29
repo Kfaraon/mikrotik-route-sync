@@ -1,6 +1,7 @@
 (function () {
   "use strict";
 
+  // ---------- Тема (светлая / тёмная) ----------
   function applyTheme(theme) {
     var isDark = theme === "dark";
 
@@ -38,24 +39,18 @@
     return "light";
   }
 
-  // Применяем тему сразу при загрузке скрипта
   applyTheme(getPreferredTheme());
 
-  function init() {
+  function initThemeButtons() {
     var buttons = document.querySelectorAll(".theme-toggle");
-
     for (var i = 0; i < buttons.length; i++) {
       (function (btn) {
         btn.addEventListener("click", function () {
           var current = document.documentElement.classList.contains("dark") ? "dark" : "light";
           var next = current === "dark" ? "light" : "dark";
-
           try {
             localStorage.setItem("mrs-theme", next);
-          } catch (e) {
-            // localStorage недоступен
-          }
-
+          } catch (e) {}
           applyTheme(next);
         });
       })(buttons[i]);
@@ -63,8 +58,65 @@
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", initThemeButtons);
   } else {
-    init();
+    initThemeButtons();
   }
+
+  // ---------- Live-индикатор (WebSocket) ----------
+  var dot = document.getElementById("live-dot");
+
+  function setLive(on) {
+    if (!dot) return;
+    dot.className = "live-dot " + (on ? "live-on" : "live-off");
+    dot.title = on ? "Live: подключение активно" : "Live: нет подключения";
+  }
+
+  function connectLive() {
+    if (!dot) return;
+    var proto = location.protocol === "https:" ? "wss:" : "ws:";
+    var ws;
+    try {
+      ws = new WebSocket(proto + "//" + location.host + "/api/v1/ws");
+    } catch (e) {
+      setLive(false);
+      setTimeout(connectLive, 5000);
+      return;
+    }
+    ws.onopen = function () { setLive(true); };
+    ws.onclose = function () { setLive(false); setTimeout(connectLive, 5000); };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+  }
+
+  if (dot) {
+    setLive(false);
+    connectLive();
+  }
+
+  // ---------- Бейдж проблем в заголовке вкладки ----------
+  var baseTitle = document.title;
+
+  function refreshTitleBadge() {
+    fetch("/api/v1/status", {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" }
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || j.ok !== true) return;
+        var d = j.data || {};
+        var problems = (d.degraded && d.degraded.length) || 0;
+        var prefix = "";
+        if (d.mikrotik_ok === false) {
+          prefix = "(!) ";
+        } else if (problems > 0) {
+          prefix = "(" + problems + ") ";
+        }
+        document.title = prefix + baseTitle;
+      })
+      .catch(function () {});
+  }
+
+  refreshTitleBadge();
+  setInterval(refreshTitleBadge, 60000);
 })();

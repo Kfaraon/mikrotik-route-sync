@@ -92,6 +92,36 @@
     }, 5000);
   }
 
+  function fallbackCopy(textValue) {
+    var textarea = document.createElement("textarea");
+    textarea.value = textValue;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-1000px";
+    textarea.style.left = "-1000px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } catch (e) {}
+    document.body.removeChild(textarea);
+  }
+
+  function copyText(textValue) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textValue).then(function () {
+        showToast("Скопировано: " + textValue);
+      }, function () {
+        fallbackCopy(textValue);
+        showToast("Скопировано: " + textValue);
+      });
+    } else {
+      fallbackCopy(textValue);
+      showToast("Скопировано: " + textValue);
+    }
+  }
+
   var els = {
     alert: byId("svc-alert"),
     refresh: byId("svc-refresh"),
@@ -115,12 +145,19 @@
     drawerBody: byId("svc-drawer-body"),
     drawerSync: byId("svc-drawer-sync"),
     drawerDry: byId("svc-drawer-dry"),
+    drawerDiff: byId("svc-drawer-diff"),
     drawerDelete: byId("svc-drawer-delete"),
     deleteModal: byId("svc-delete-modal"),
     deleteName: byId("svc-delete-name"),
     deleteKeep: byId("svc-delete-keep"),
     deletePurge: byId("svc-delete-purge"),
-    deleteCancel: byId("svc-delete-cancel")
+    deleteCancel: byId("svc-delete-cancel"),
+    diffModal: byId("svc-diff-modal"),
+    diffSubtitle: byId("svc-diff-subtitle"),
+    diffSearch: byId("svc-diff-search"),
+    diffOnly: byId("svc-diff-only"),
+    diffList: byId("svc-diff-list"),
+    diffClose: byId("svc-diff-close")
   };
 
   var state = {
@@ -144,13 +181,17 @@
     selection: {},
     loading: false,
     autoTimer: null,
+    lastDiff: {},
+    diff: null,
     details: {
       open: false,
       name: null,
       tab: "overview",
       loading: false,
       history: [],
-      logs: []
+      logs: [],
+      routes: [],
+      routesQuery: ""
     },
     delete: {
       open: false,
@@ -1296,6 +1337,21 @@
     });
   }
 
+  // Снимок адресов сервиса для diff
+  function fetchAddrs(name) {
+    return api("/api/v1/address-list/" + encodeURIComponent(name)).then(function (d) {
+      var list = (d && (d.entries || d.Entries)) || [];
+      var set = {};
+      each(list, function (e) {
+        var a = text(e.Address || e.address);
+        if (a) set[a] = true;
+      });
+      return set;
+    }).catch(function () {
+      return null;
+    });
+  }
+
   function syncOne(name, dry, btn) {
     var path = dry
       ? "/api/v1/services/" + encodeURIComponent(name) + "/dry-run"
@@ -1304,25 +1360,48 @@
     var body = dry ? "{}" : JSON.stringify({ dry_run: false, force: false });
 
     return withButton(btn, function () {
-      return api(path, {
-        method: "POST",
-        body: body
-      }).then(function (data) {
-        var c = historyCounts(data);
-        var parts = [];
+      var beforeP = dry ? Promise.resolve(null) : fetchAddrs(name);
 
-        if (c.added) parts.push("+" + c.added);
-        if (c.deleted) parts.push("-" + c.deleted);
-        if (c.unchanged) parts.push("=" + c.unchanged);
+      return beforeP.then(function (before) {
+        return api(path, {
+          method: "POST",
+          body: body
+        }).then(function (data) {
+          var c = historyCounts(data);
+          var parts = [];
 
-        var msg = (dry ? "Тестовый запуск " : "Синхронизация ") + name;
-        if (parts.length) msg += ": " + parts.join(" ");
+          if (c.added) parts.push("+" + c.added);
+          if (c.deleted) parts.push("-" + c.deleted);
+          if (c.unchanged) parts.push("=" + c.unchanged);
 
-        showToast(msg);
+          var msg = (dry ? "Тестовый запуск " : "Синхронизация ") + name;
+          if (parts.length) msg += ": " + parts.join(" ");
 
-        setTimeout(function () {
-          loadAll(true);
-        }, 1000);
+          showToast(msg);
+
+          // Diff «до/после» для реальной синхронизации
+          if (!dry && before) {
+            fetchAddrs(name).then(function (after) {
+              if (!after) return;
+
+              var added = [], removed = [], same = [];
+              Object.keys(after).forEach(function (a) {
+                if (before[a]) same.push(a); else added.push(a);
+              });
+              Object.keys(before).forEach(function (a) {
+                if (!after[a]) removed.push(a);
+              });
+
+              var diff = { service: name, added: added, removed: removed, same: same };
+              state.lastDiff[name] = diff;
+              openDiff(diff);
+            });
+          }
+
+          setTimeout(function () {
+            loadAll(true);
+          }, 1000);
+        });
       });
     });
   }
@@ -1359,12 +1438,72 @@
     });
   }
 
+  // ---------- Diff ----------
+  function openDiff(diff) {
+    state.diff = diff;
+    if (!els.diffModal) return;
+
+    if (els.diffSubtitle) {
+      els.diffSubtitle.textContent =
+        diff.service + " · +" + diff.added.length + " / −" + diff.removed.length +
+        " / =" + diff.same.length + " · " + formatClock(new Date().toISOString());
+    }
+
+    els.diffModal.hidden = false;
+    document.body.classList.add("svc-no-scroll");
+    renderDiff();
+  }
+
+  function closeDiff() {
+    if (els.diffModal) els.diffModal.hidden = true;
+    if (!isDrawerOpen() && !state.delete.open) {
+      document.body.classList.remove("svc-no-scroll");
+    }
+  }
+
+  function renderDiff() {
+    if (!els.diffList || !state.diff) return;
+
+    var q = lower(els.diffSearch ? els.diffSearch.value : "");
+    var only = els.diffOnly ? els.diffOnly.checked : true;
+
+    var rows = [];
+    each(state.diff.added, function (a) { rows.push({ t: "+", a: a }); });
+    each(state.diff.removed, function (a) { rows.push({ t: "-", a: a }); });
+    if (!only) {
+      each(state.diff.same, function (a) { rows.push({ t: "=", a: a }); });
+    }
+
+    rows.sort(function (x, y) { return x.a.localeCompare(y.a); });
+
+    if (q) {
+      rows = rows.filter(function (r) {
+        return r.a.toLowerCase().indexOf(q) !== -1;
+      });
+    }
+
+    if (!rows.length) {
+      els.diffList.innerHTML = '<div class="svc-empty">Нет префиксов по заданным условиям.</div>';
+      return;
+    }
+
+    var html = "";
+    each(rows, function (r) {
+      var cls = r.t === "+" ? "svc-diff-add" : r.t === "-" ? "svc-diff-del" : "svc-diff-same";
+      html += '<div class="svc-diff-row ' + cls + '">' + r.t + " " + esc(r.a) + "</div>";
+    });
+    els.diffList.innerHTML = html;
+  }
+
+  // ---------- Drawer ----------
   function openDrawer(name) {
     state.details.name = name;
     state.details.tab = "overview";
     state.details.loading = true;
     state.details.history = [];
     state.details.logs = [];
+    state.details.routes = [];
+    state.details.routesQuery = "";
 
     if (els.drawer) {
       els.drawer.hidden = false;
@@ -1385,7 +1524,7 @@
       els.drawer.setAttribute("aria-hidden", "true");
     }
 
-    if (!state.delete.open) {
+    if (!state.delete.open && !(els.diffModal && !els.diffModal.hidden)) {
       document.body.classList.remove("svc-no-scroll");
     }
   }
@@ -1417,7 +1556,7 @@
       els.deleteModal.hidden = true;
     }
 
-    if (!isDrawerOpen()) {
+    if (!isDrawerOpen() && !(els.diffModal && !els.diffModal.hidden)) {
       document.body.classList.remove("svc-no-scroll");
     }
   }
@@ -1559,6 +1698,46 @@
     return html;
   }
 
+  function routeAddr(e) {
+    return text(e.Address || e.address);
+  }
+
+  function renderRoutesList(list) {
+    var q = lower(state.details.routesQuery || "");
+
+    var entries = (list || []).filter(function (e) { return routeAddr(e); });
+    if (q) {
+      entries = entries.filter(function (e) {
+        return routeAddr(e).toLowerCase().indexOf(q) !== -1;
+      });
+    }
+
+    var head =
+      '<div class="svc-routes-search">' +
+      '<input type="search" id="svc-routes-search" placeholder="Поиск префикса" value="' +
+      esc(state.details.routesQuery || "") + '">' +
+      "</div>";
+
+    if (!entries.length) {
+      return head + '<div class="svc-empty">Управляемых записей нет.</div>';
+    }
+
+    var rows = "";
+    each(entries, function (e) {
+      var a = routeAddr(e);
+      var badges = "";
+      if (e.Dynamic || e.dynamic) badges += '<span class="svc-badge svc-badge-muted">динамическая</span>';
+      if (e.Disabled || e.disabled) badges += '<span class="svc-badge svc-badge-disabled">отключено</span>';
+
+      rows += '<div class="svc-route-row">' +
+        "<span>" + esc(a) + " " + badges + "</span>" +
+        '<button type="button" class="svc-route-copy svc-secondary" data-addr="' + esc(a) + '" title="Копировать">⧉</button>' +
+        "</div>";
+    });
+
+    return head + "<div>" + rows + "</div>";
+  }
+
   function renderDetails() {
     if (!state.details.name || !els.drawerBody) return;
 
@@ -1589,6 +1768,8 @@
       els.drawerBody.innerHTML = renderHistoryList(state.details.history);
     } else if (state.details.tab === "logs") {
       els.drawerBody.innerHTML = renderLogsList(state.details.logs);
+    } else if (state.details.tab === "routes") {
+      els.drawerBody.innerHTML = renderRoutesList(state.details.routes);
     } else {
       els.drawerBody.innerHTML = renderOverview();
     }
@@ -1603,7 +1784,8 @@
 
     Promise.allSettled([
       api("/api/v1/history?service=" + encodeURIComponent(name) + "&limit=30"),
-      api("/api/v1/logs?service=" + encodeURIComponent(name) + "&limit=80")
+      api("/api/v1/logs?service=" + encodeURIComponent(name) + "&limit=80"),
+      api("/api/v1/address-list/" + encodeURIComponent(name))
     ]).then(function (results) {
       if (state.details.name !== name) return;
 
@@ -1614,6 +1796,9 @@
       state.details.logs = results[1].status === "fulfilled" && Array.isArray(results[1].value)
         ? results[1].value
         : [];
+
+      var rd = results[2].status === "fulfilled" ? results[2].value : null;
+      state.details.routes = (rd && (rd.entries || rd.Entries)) || [];
 
       state.details.loading = false;
       renderDetails();
@@ -1770,6 +1955,28 @@
       });
     });
 
+    // Поиск и копирование во вкладке «Маршруты» (делегирование)
+    if (els.drawerBody) {
+      els.drawerBody.addEventListener("input", function (e) {
+        if (!e.target || e.target.id !== "svc-routes-search") return;
+
+        state.details.routesQuery = e.target.value;
+        els.drawerBody.innerHTML = renderRoutesList(state.details.routes);
+
+        var inp = byId("svc-routes-search");
+        if (inp) {
+          inp.focus();
+          inp.setSelectionRange(inp.value.length, inp.value.length);
+        }
+      });
+
+      els.drawerBody.addEventListener("click", function (e) {
+        var b = closest(e.target, ".svc-route-copy");
+        if (!b) return;
+        copyText(b.getAttribute("data-addr") || "");
+      });
+    }
+
     if (els.drawerSync) {
       els.drawerSync.addEventListener("click", function () {
         if (!state.details.name) return;
@@ -1781,6 +1988,18 @@
       els.drawerDry.addEventListener("click", function () {
         if (!state.details.name) return;
         handlePromise(syncOne(state.details.name, true, els.drawerDry));
+      });
+    }
+
+    if (els.drawerDiff) {
+      els.drawerDiff.addEventListener("click", function () {
+        var name = state.details.name;
+        var d = name && state.lastDiff[name];
+        if (d) {
+          openDiff(d);
+        } else {
+          showToast("Diff появится после синхронизации, запущенной из интерфейса");
+        }
       });
     }
 
@@ -1820,6 +2039,14 @@
       });
     }
 
+    // Diff-модалка
+    if (els.diffClose) els.diffClose.addEventListener("click", closeDiff);
+    each(qsa("[data-diff-close]"), function (el) {
+      el.addEventListener("click", closeDiff);
+    });
+    if (els.diffSearch) els.diffSearch.addEventListener("input", renderDiff);
+    if (els.diffOnly) els.diffOnly.addEventListener("change", renderDiff);
+
     document.addEventListener("keydown", function (e) {
       var tag = document.activeElement && document.activeElement.tagName;
       var typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
@@ -1837,6 +2064,8 @@
       if (e.key === "Escape") {
         if (state.delete.open) {
           closeDelete();
+        } else if (els.diffModal && !els.diffModal.hidden) {
+          closeDiff();
         } else if (isDrawerOpen()) {
           closeDrawer();
         }

@@ -45,30 +45,6 @@
     });
   }
 
-  function connectWS() {
-    var proto = location.protocol === "https:" ? "wss:" : "ws:";
-    var ws;
-    try {
-      ws = new WebSocket(proto + "//" + location.host + "/api/v1/ws");
-    } catch (e) {
-      return;
-    }
-    ws.onmessage = function (ev) {
-      var box = q("#events");
-      if (!box) return;
-      try {
-        var msg = JSON.parse(ev.data);
-        var line = document.createElement("div");
-        var t = formatLogTime(msg.time);
-        line.textContent = t + " " + msg.event + " " + JSON.stringify(msg.data);
-        box.prepend(line);
-        while (box.childElementCount > 20) box.lastChild.remove();
-      } catch (e) {}
-    };
-    ws.onclose = function () { setTimeout(connectWS, 5000); };
-  }
-  connectWS();
-
   // ==========================================================================
   // Логи
   // ==========================================================================
@@ -86,9 +62,16 @@
 
     var refreshBtn = q("#log-refresh");
     var clearBtn = q("#log-clear");
+    var pauseBtn = q("#log-pause");
+    var searchInput = q("#log-search");
 
     var levelCounts = { INFO: 0, WARN: 0, ERROR: 0, DEBUG: 0 };
     var totalCount = 0;
+
+    var logQuery = "";
+    var logQueryEsc = "";
+    var logPaused = false;
+    var logLiveTimer = null;
 
     function pad(value, length) {
       var s = String(value);
@@ -134,6 +117,27 @@
       });
     }
 
+    // Подсветка совпадений поиска (по уже экранированному тексту)
+    function hl(escaped) {
+      if (!logQueryEsc) return escaped;
+      var lower = escaped.toLowerCase();
+      var out = "";
+      var idx = 0;
+      var pos;
+      while ((pos = lower.indexOf(logQueryEsc, idx)) !== -1) {
+        out += escaped.slice(idx, pos) +
+          "<mark>" + escaped.slice(pos, pos + logQueryEsc.length) + "</mark>";
+        idx = pos + logQueryEsc.length;
+      }
+      out += escaped.slice(idx);
+      return out;
+    }
+
+    function setLogQuery(value) {
+      logQuery = String(value || "").trim();
+      logQueryEsc = escapeHtml(logQuery).toLowerCase();
+    }
+
     function renderLogEntry(entry) {
       var level = String(entry.level || "INFO").toUpperCase();
       var levelClass = "level-" + level.toLowerCase();
@@ -169,13 +173,13 @@
 
       if (entry.service) {
         html += '<span class="log-service">' +
-          escapeHtml(safeString(entry.service)) +
+          hl(escapeHtml(safeString(entry.service))) +
           "</span>";
       }
 
       if (entry.msg) {
         html += '<span class="log-msg">' +
-          escapeHtml(safeString(entry.msg)) +
+          hl(escapeHtml(safeString(entry.msg))) +
           "</span>";
       }
 
@@ -224,7 +228,7 @@
           html += '<span class="log-extra-item">' +
             '<span class="log-extra-key">err=</span>' +
             '<span class="log-extra-val error-val">' +
-            escapeHtml(errorText) +
+            hl(escapeHtml(errorText)) +
             "</span>" +
             "</span>";
         }
@@ -235,7 +239,7 @@
             escapeHtml(extras[i].key) +
             "=</span>" +
             '<span class="log-extra-val">' +
-            escapeHtml(extras[i].val) +
+            hl(escapeHtml(extras[i].val)) +
             "</span>" +
             "</span>";
         }
@@ -349,8 +353,22 @@
 
           var entries = Array.isArray(j.data) ? j.data : [];
 
+          // Клиентский полнотекстовый поиск
+          if (logQuery) {
+            var qq = logQuery.toLowerCase();
+            entries = entries.filter(function (e) {
+              var hay = "";
+              try { hay = JSON.stringify(e).toLowerCase(); } catch (err) { hay = ""; }
+              return hay.indexOf(qq) !== -1;
+            });
+          }
+
           if (entries.length === 0) {
-            logOutput.innerHTML = '<div class="log-placeholder">Лог пуст или нет записей, соответствующих фильтру.</div>';
+            logOutput.innerHTML = '<div class="log-placeholder">' +
+              (logQuery
+                ? "Ничего не найдено по запросу «" + escapeHtml(logQuery) + "»."
+                : "Лог пуст или нет записей, соответствующих фильтру.") +
+              "</div>";
             resetStats();
             setRefreshing(false);
             return;
@@ -369,8 +387,10 @@
           logOutput.innerHTML = html;
           updateStats();
 
-          // Автопрокрутка вниз всегда (чекбокс удалён)
-          logOutput.scrollTop = logOutput.scrollHeight;
+          // Автопрокрутка вниз, если не на паузе
+          if (!logPaused) {
+            logOutput.scrollTop = logOutput.scrollHeight;
+          }
 
           setRefreshing(false);
         })
@@ -381,6 +401,41 @@
           resetStats();
           setRefreshing(false);
         });
+    }
+
+    // Live-обновление логов каждые 15 с, если не на паузе
+    function scheduleLive() {
+      if (logLiveTimer) {
+        clearInterval(logLiveTimer);
+        logLiveTimer = null;
+      }
+      if (!logPaused) {
+        logLiveTimer = setInterval(function () {
+          if (document.visibilityState === "visible") {
+            loadLogs();
+          }
+        }, 15000);
+      }
+    }
+
+    if (pauseBtn) {
+      pauseBtn.addEventListener("click", function () {
+        logPaused = !logPaused;
+        pauseBtn.classList.toggle("paused", logPaused);
+        pauseBtn.textContent = logPaused ? "▶ Продолжить" : "⏸ Пауза";
+        scheduleLive();
+      });
+    }
+
+    if (searchInput) {
+      var searchTimer = null;
+      searchInput.addEventListener("input", function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () {
+          setLogQuery(searchInput.value);
+          loadLogs();
+        }, 200);
+      });
     }
 
     if (refreshBtn) {
@@ -454,6 +509,7 @@
     });
 
     loadLogs();
+    scheduleLive();
   }
 
   document.querySelectorAll(".secret-field").forEach(function (el) {

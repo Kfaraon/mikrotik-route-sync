@@ -21,6 +21,7 @@
     <a href="/settings">Настройки</a>
     <a href="/logs" class="active">Логи</a>
     <span class="bar-right">
+      <span id="live-dot" class="live-dot" title="Live: нет подключения"></span>
       <span class="ver">v{{ .Version }}</span>
       <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
     </span>
@@ -56,6 +57,11 @@
         </div>
 
         <div class="filter-group">
+          <label for="log-search">Поиск:</label>
+          <input type="search" id="log-search" placeholder="текст, ключ, значение…">
+        </div>
+
+        <div class="filter-group">
           <label for="log-limit">Лимит:</label>
           <select id="log-limit">
             <option value="50">50 строк</option>
@@ -68,6 +74,7 @@
 
       <div class="log-actions">
         <button type="button" id="log-refresh" class="primary log-refresh">⟳ Обновить</button>
+        <button type="button" id="log-pause" class="secondary log-pause">⏸ Пауза</button>
         <button type="button" id="log-download">⬇ Скачать</button>
         <button type="button" class="secondary" id="log-clear"
                 hx-post="/actions/logs-clear"
