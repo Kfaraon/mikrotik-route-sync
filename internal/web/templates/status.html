@@ -20,6 +20,6 @@
   </article>
 </div>
 {{ if .Degraded }}
-<p class="status-error">⚠ Сервисы в состоянии DEGRADED (необходима ручная проверка): {{ range .Degraded }}{{ . }} {{ end }}</p>
+<p class="status-error">⚠ Проблемные сервисы (необходима ручная проверка): {{ range .Degraded }}{{ . }} {{ end }}</p>
 {{ end }}
 {{end}}
