@@ -27,11 +27,10 @@
   </nav>
 
   <main class="wrap">
-    <h1>Список адресов Firewall</h1>
     <p class="muted">
       Глобальный список: <b>{{ .GlobalList }}</b> · префикс комментариев: <b>{{ .Prefix }}:&lt;сервис&gt;</b>.
       Управляемые записи — созданные программой (комментарий <code>{{ .Prefix }}:имя-сервиса</code>,
-      не dynamic). Чужие и ручные записи отображаются справочно и не изменяются.
+      не динамические). Чужие и ручные записи отображаются справочно и не изменяются.
     </p>
 
     {{ if .Error }}
@@ -56,7 +55,7 @@
             <td>{{ if .Service }}{{ .Service }}{{ else }}—{{ end }}</td>
             <td>
               {{ if .Managed }}<span class="status-ok">да</span>
-              {{ else if .Dynamic }}<span class="muted">dynamic</span>
+              {{ else if .Dynamic }}<span class="muted">динамическая</span>
               {{ else }}<span class="muted">нет</span>{{ end }}
             </td>
             <td>{{ if .Disabled }}<span class="status-error">да</span>{{ else }}нет{{ end }}</td>
