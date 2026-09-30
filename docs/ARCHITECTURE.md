@@ -194,7 +194,7 @@ REST API клиент `/rest/ip/firewall/address-list`:
 - Страницы: Dashboard, Services, Address List, Schedules, Settings, Logs (+ фрагмент /partials/status, история — через API `/api/v1/history`)
 - Фреймворк: net/http + chi
 - Шаблоны: html/template + go:embed
-- CSS: Pico CSS (встроенный)
+- CSS: app.css, services.css, schedule.css, dashboard.css
 - JS: HTMX + vanilla JS
 - WebSocket для live-обновлений
 - Basic Auth + session cookie + CSRF
