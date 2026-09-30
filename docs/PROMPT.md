@@ -774,7 +774,7 @@ telegram:
 Технически:
 - `net/http` + `github.com/go-chi/chi/v5`;
 - `html/template` + `//go:embed`;
-- Pico CSS встроенно;
+- CSS;
 - HTMX + vanilla JS;
 - WebSocket через `github.com/gorilla/websocket`;
 - Basic Auth + session cookie + CSRF;
