@@ -94,7 +94,7 @@
        safe CIDR aggregation
                 │
                 ▼
-  GET managed address-list entries by list + comment
+    GET managed address-list entries by list + comment
                 │
                 ▼
            calculate diff
