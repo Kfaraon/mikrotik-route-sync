@@ -12,6 +12,15 @@ import (
 // Типы данных
 // ============================================================================
 
+// RouteKey — уникальный ключ маршрута для сравнения и синхронизации.
+// Объявлен здесь же, чтобы пакет core был самодостаточным.
+type RouteKey struct {
+	CIDR     string `json:"cidr"`     // Нормализованный CIDR (например, "8.8.8.0/24")
+	Gateway  string `json:"gateway"`  // IP-адрес шлюза (может быть пустым)
+	Table    string `json:"table"`    // Таблица маршрутизации (пустая строка = main)
+	Distance int    `json:"distance"` // Метрика маршрута (1-255, default 1)
+}
+
 // Diff описывает результат сравнения двух наборов маршрутов.
 // Используется для инкрементальной синхронизации (добавить/удалить только то, что изменилось).
 type Diff struct {
@@ -88,6 +97,11 @@ func ComputeDiff(desired []RouteKey, existing []mikrotik.Route) (*Diff, error) {
 			return nil, fmt.Errorf("invalid desired route: %w", err)
 		}
 
+		// Защита от дубликатов внутри desired: повторяющийся ключ игнорируем,
+		// чтобы неinflating Unchanged/Add и сохранить идемпотентность.
+		if seenKeys[key] {
+			continue
+		}
 		seenKeys[key] = true
 
 		existingDupes := existingByKey[key]
@@ -102,8 +116,7 @@ func ComputeDiff(desired []RouteKey, existing []mikrotik.Route) (*Diff, error) {
 	}
 
 	// Шаг 3: всё, под чем не "увидели" desired-ключа — на удаление
-	// (все экземпляры, включая ранее добавленные в шаге 2 дубли НЕ помечаем
-	// дважды: дубли удалены, оригинал учтён как unchanged).
+	// (все экземпляры; дубли уже помечены в шаге 2, оригинал учтён как unchanged).
 	for key, routes := range existingByKey {
 		if seenKeys[key] {
 			continue
