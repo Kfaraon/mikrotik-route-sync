@@ -29,6 +29,22 @@ type Client struct {
 	requestTimeout   time.Duration
 }
 
+// Route — структура маршрута из MikroTik RouterOS REST API (/rest/ip/route).
+// Используется core.ComputeDiff для инкрементальной синхронизации маршрутов.
+type Route struct {
+	ID           string `json:".id,omitempty"`
+	DstAddress   string `json:"dst-address"`
+	Gateway      string `json:"gateway,omitempty"`
+	RoutingTable string `json:"routing-table,omitempty"`
+	Distance     string `json:"distance,omitempty"` // RouterOS возвращает строку
+	Active       bool   `json:"active,omitempty"`
+	Dynamic      bool   `json:"dynamic,omitempty"`
+	Static       bool   `json:"static,omitempty"`
+	Disabled     bool   `json:"disabled,omitempty"`
+	Blackhole    bool   `json:"blackhole,omitempty"`
+	Comment      string `json:"comment,omitempty"`
+}
+
 // New создаёт клиент из конфигурации.
 func New(c config.MikroTikConfig, rc config.RetryConfig, log *slog.Logger) *Client {
 	scheme := "http"
