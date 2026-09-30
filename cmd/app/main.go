@@ -194,7 +194,7 @@ func listCmd() *cobra.Command {
 				for _, name := range services {
 					routes := 0
 					if rs, err := s.Backup(ctx, name); err == nil {
-						routes = len(rs)
+    					routes = len(rs.Entries)
 					}
 					fmt.Fprintf(w, "%s\t%s\t%d\n", name, cfg.EffectiveSchedule(name), routes)
 				}
@@ -328,7 +328,7 @@ func backupCmd() *cobra.Command {
 					if err := os.WriteFile(outputFile, data, 0o600); err != nil {
 						return err
 					}
-					fmt.Printf("Backup saved to %s (%d routes)\n", outputFile, len(routes))
+					fmt.Printf("Backup saved to %s (%d entries)\n", outputFile, len(routes.Entries))
 					return nil
 				}
 				fmt.Println(string(data))
@@ -355,29 +355,26 @@ func restoreCmd() *cobra.Command {
 				if !forceOp {
 					return fmt.Errorf("restore replaces routes and requires --force")
 				}
-
-				var routes []mikrotik.Route
-				switch {
-				case fromFile != "":
-					data, err := os.ReadFile(fromFile)
-					if err != nil {
-						return fmt.Errorf("read backup: %w", err)
-					}
-					if err := json.Unmarshal(data, &routes); err != nil {
-						return fmt.Errorf("parse backup: %w", err)
-					}
-				case fromSnapshot != "":
-					if err := s.GetSnapshot(ctx, name, fromSnapshot, &routes); err != nil {
-						return err
-					}
-				default:
-					return fmt.Errorf("--from-file или --from-snapshot обязателен")
+				var entries []addresslist.Entry
+				if fromSnapshot != "" {
+				    if err := s.GetSnapshot(ctx, name, fromSnapshot, &entries); err != nil {
+				        return fmt.Errorf("get snapshot: %w", err)
+				    }
+				} else {
+				    var backup core.BackupFile
+				    data, err := os.ReadFile(args[1])
+				    if err != nil {
+				        return fmt.Errorf("read backup file: %w", err)
+				    }
+				    if err := json.Unmarshal(data, &backup); err != nil {
+				        return fmt.Errorf("parse backup file: %w", err)
+				    }
+				    entries = backup.Entries
 				}
-
-				if err := s.Restore(ctx, name, routes); err != nil {
-					return err
+				if err := s.Restore(ctx, name, entries); err != nil {
+				    return err
 				}
-				fmt.Printf("Restored '%s' from %d routes\n", name, len(routes))
+				fmt.Printf("Restored '%s' from %d entries\n", name, len(entries))
 				return nil
 			})
 		},
