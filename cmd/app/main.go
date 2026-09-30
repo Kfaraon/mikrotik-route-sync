@@ -432,21 +432,22 @@ func snapshotsCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
-				routes, err := s.Backup(ctx, args[0])
+				backup, err := s.Backup(ctx, args[0])
 				if err != nil {
-					return err
+				    return err
 				}
-				prefixes := make([]netip.Prefix, 0, len(routes))
-				for _, r := range routes {
-					if p, err := netip.ParsePrefix(r.DstAddress); err == nil {
-						prefixes = append(prefixes, p)
-					}
+				addresses := make([]string, 0, len(backup.Entries))
+				for _, e := range backup.Entries {
+				    norm, err := addresslist.NormalizeAddress(e.Address)
+				    if err == nil {
+				        addresses = append(addresses, norm)
+				    }
 				}
-				id, err := s.CreateSnapshot(ctx, args[0], prefixes)
+				id, err := s.CreateSnapshot(ctx, args[0], addresses)
 				if err != nil {
-					return err
+				    return err
 				}
-				fmt.Printf("Snapshot created: %s (routes: %d)\n", id, len(prefixes))
+				fmt.Printf("Snapshot created: %s (entries: %d)\n", id, len(addresses))
 				return nil
 			})
 		},
