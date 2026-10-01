@@ -56,9 +56,23 @@ func verifyList(entries []addresslist.Entry, list string) []addresslist.Entry {
 	return out
 }
 
-// AddEntry создаёт запись address-list (PUT) и возвращает .id.
-func (c *Client) AddEntry(ctx context.Context, e addresslist.Entry) (string, error) {
-	return c.putID(ctx, addressListPath, e)
+// AddEntry создаёт запись address-list (PUT) и возвращает запись с заполненным .id.
+//
+// Ранее возвращался только string-ID, из-за чего в transaction.go возникала ошибка:
+// cannot use created (variable of type string) as addresslist.Entry value.
+// Теперь возвращаем полноценный Entry, пригодный для rollback.
+func (c *Client) AddEntry(ctx context.Context, e addresslist.Entry) (addresslist.Entry, error) {
+	in := e
+	in.ID = ""
+
+	id, err := c.putID(ctx, addressListPath, in)
+	if err != nil {
+		return addresslist.Entry{}, err
+	}
+
+	out := e
+	out.ID = id
+	return out, nil
 }
 
 // DeleteEntry удаляет запись по .id.
