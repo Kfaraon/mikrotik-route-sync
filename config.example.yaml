@@ -33,11 +33,11 @@ web:
   enabled: true
   # Для Docker-контейнера указать 0.0.0.0:8080 (доступ ограничен allowed_cidrs
   # и пробросом портов "127.0.0.1:8080:8080" в docker-compose.yml)
-  listen: 127.0.0.1:8080
+  listen: 0.0.0.0:8080
   allowed_cidrs: [127.0.0.0/8, 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12]
   trusted_proxies: []
   auth:
-    enabled: true
+    enabled: false
     username: admin
     password: "SET_A_SECRET"
   session_timeout: 24h
