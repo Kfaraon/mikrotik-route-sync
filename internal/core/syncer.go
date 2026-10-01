@@ -1,3 +1,4 @@
+// Package core — оркестратор синхронизации (сервисы, история, снапшоты, кэш).
 package core
 
 import (
@@ -339,12 +340,21 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// 1. Управляемые записи сервиса (list + comment + dynamic=false).
 	existing, err := s.mt().ListServiceEntries(ctx, list, s.cfg.Firewall.CommentPrefix, name)
 	if err != nil {
-		res.Error = fmt.Sprintf("list entries: %v", err)
-		log.Error("failed to list address entries", "err", err)
-		s.notifyError(ctx, name, err)
-		return res, fmt.Errorf("list entries: %w", err)
+		// ИЗМЕНЕНИЕ: Если это режим эмуляции (теста), разрешаем продолжать без Микротика,
+		// считая текущий список пустым. Это позволяет тестировать сбор данных
+		// из внешних источников без доступа к роутеру.
+		if dry {
+			log.Warn("MikroTik is unavailable in DRY-RUN mode. Assuming empty list for testing.", "err", err)
+			existing = nil
+		} else {
+			res.Error = fmt.Sprintf("list entries: %v", err)
+			log.Error("failed to list address entries", "err", err)
+			s.notifyError(ctx, name, err)
+			return res, fmt.Errorf("list entries: %w", err)
+		}
+	} else {
+		log.Info("fetched existing managed entries", "count", len(existing))
 	}
-	log.Info("fetched existing managed entries", "count", len(existing))
 
 	// 2. Сбор IPv4 CIDR.
 	ov := s.cfg.Overrides[name]
@@ -730,7 +740,7 @@ func (s *Syncer) AuditAddressList(ctx context.Context) ([]OrphanEntry, error) {
 // CleanupAutoEntries удаляет ТОЛЬКО orphan AUTO-записи (нужен force — PROMPT IV.6).
 func (s *Syncer) CleanupAutoEntries(ctx context.Context, force bool) (int, error) {
 	if !force {
-		return 0, fmt.Errorf("cleanup-auto-entries requires --force (orphan-записи не удаляются молча)")
+		return 0, fmt.Errorf("cleanup_auto_entries requires --force (orphan-записи не удаляются молча)")
 	}
 	orphans, err := s.AuditAddressList(ctx)
 	if err != nil {
