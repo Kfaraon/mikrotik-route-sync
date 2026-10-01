@@ -432,7 +432,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		Handler:           router,
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      0, // WebSocket требует открытых долгих записей; per-write deadlines ставятся в hub
+		WriteTimeout:      0, // WebSocket требуют открытых долгих записей; per-write deadlines ставятся в hub
 		IdleTimeout:       120 * time.Second,
 	}
 	return s, nil
@@ -1276,7 +1276,8 @@ func (s *Server) pageAddressList(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.syncer.ListGlobalEntries(ctx)
 	if err != nil {
-		data["Error"] = "адресный список недоступен: " + logging.RedactString(err.Error())
+		s.log.Warn("failed to list global address entries", "err", err)
+		data["Error"] = "MikroTik недоступен. Проверьте подключение к роутеру, правильность адреса, порта и настроек SSL/TLS."
 	} else {
 		data["Rows"] = s.toAddressRows(entries)
 	}
@@ -1290,7 +1291,8 @@ func (s *Server) apiAddressList(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := s.syncer.ListGlobalEntries(ctx)
 	if err != nil {
-		writeErr(w, http.StatusServiceUnavailable, logging.RedactString(err.Error()))
+		s.log.Warn("failed to list global address entries via API", "err", err)
+		writeErr(w, http.StatusServiceUnavailable, "MikroTik недоступен. Проверьте подключение к роутеру, правильность адреса, порта и настроек SSL/TLS.")
 		return
 	}
 	writeOK(w, map[string]any{
@@ -1311,7 +1313,8 @@ func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := s.syncer.ListServiceEntries(ctx, name)
 	if err != nil {
-		writeErr(w, http.StatusServiceUnavailable, logging.RedactString(err.Error()))
+		s.log.Warn("failed to list service address entries via API", "service", name, "err", err)
+		writeErr(w, http.StatusServiceUnavailable, "MikroTik недоступен. Проверьте подключение к роутеру, правильность адреса, порта и настроек SSL/TLS.")
 		return
 	}
 	writeOK(w, map[string]any{
