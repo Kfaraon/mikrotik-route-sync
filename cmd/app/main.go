@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,11 +17,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/bot"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/mikrotik"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
