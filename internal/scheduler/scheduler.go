@@ -29,8 +29,6 @@ type Scheduler struct {
 	started bool
 }
 
-// NewScheduler создаёт планировщик. Notifier и logger выводятся из конфига,
-// что позволяет запускать планировщик из CLI одной строкой.
 func NewScheduler(cfg *config.Config, s *core.Syncer) *Scheduler {
 	log := slog.Default()
 	return &Scheduler{
@@ -41,12 +39,10 @@ func NewScheduler(cfg *config.Config, s *core.Syncer) *Scheduler {
 	}
 }
 
-// New создаёт планировщик с явными зависимостями (DI, PROMPT X.10.2).
 func New(cfg *config.Config, s *core.Syncer, n notifier.Notifier, l *slog.Logger) *Scheduler {
 	return &Scheduler{cfg: cfg, syncer: s, notify: n, log: l}
 }
 
-// Start запускает планировщик и блокирует до отмены ctx.
 func (s *Scheduler) Start(ctx context.Context) error {
 	s.StartNow()
 	<-ctx.Done()
@@ -54,7 +50,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	return nil
 }
 
-// StartNow неблокируемо запускает планировщик.
+// ИЗМЕНЕНО: передаём quiet=false при первичном запуске
 func (s *Scheduler) StartNow() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -65,6 +61,7 @@ func (s *Scheduler) StartNow() {
 	s.started = true
 }
 
+// ИЗМЕНЕНО: добавлен параметр quiet bool
 func (s *Scheduler) startLocked(quiet bool) {
 	loc, err := time.LoadLocation(s.cfg.Timezone)
 	if err != nil {
@@ -88,7 +85,6 @@ func (s *Scheduler) startLocked(quiet bool) {
 	}
 	s.cron.Start()
 
-	// Периодическая очистка кэша: scheduler.cache_purge (по умолчанию every 1h).
 	if d, ok := purgeInterval(s.cfg.Scheduler.CachePurge); ok {
 		s.wg.Add(1)
 		go func() {
@@ -108,7 +104,6 @@ func (s *Scheduler) startLocked(quiet bool) {
 		}()
 	}
 
-	// Периодический перечитающий перезагрузка расписаний: scheduler.reload_interval.
 	if d := s.cfg.Scheduler.ReloadInterval.Duration(); d > 0 {
 		s.wg.Add(1)
 		go func() {
@@ -128,12 +123,12 @@ func (s *Scheduler) startLocked(quiet bool) {
 		}()
 	}
 
+	// ИЗМЕНЕНО: логируем только при тихом запуске (первый запуск или ручной Reload)
 	if !quiet {
 		s.log.Info("scheduler started", "max_concurrent", limit, "timezone", loc.String())
 	}
 }
 
-// purgeInterval разбирает "every 1h" из scheduler.cache_purge.
 func purgeInterval(spec string) (time.Duration, bool) {
 	spec = strings.TrimSpace(strings.ToLower(spec))
 	if spec == "" {
@@ -187,8 +182,6 @@ func (s *Scheduler) addLocked(ctx context.Context, service, spec string) {
 }
 
 func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
-	// Capture the semaphore for this scheduler generation. Reload replaces
-	// s.sem; releasing through the field could otherwise target the new channel.
 	sem := s.sem
 	select {
 	case sem <- struct{}{}:
@@ -201,8 +194,6 @@ func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
 	}
 }
 
-// run выполняет одну синхронизацию по расписанию.
-// Уведомления о старте/результате/ошибке шлёт сам SyncService.
 func (s *Scheduler) run(parent context.Context, service, spec string) {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Minute)
 	defer cancel()
@@ -238,8 +229,6 @@ func (s *Scheduler) Stop(ctx context.Context) {
 	}
 }
 
-// Reload rebuilds all schedules from the current in-memory config. It is safe
-// to call after config changes made by the web UI or another controller.
 func (s *Scheduler) Reload() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -249,8 +238,6 @@ func (s *Scheduler) Reload() error {
 	return s.reloadLocked(false)
 }
 
-// ReloadQuiet перестраивает расписания без Info-логирования (периодическая
-// перезагрузка по scheduler.reload_interval не должна шуметь в логах).
 func (s *Scheduler) ReloadQuiet() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -260,6 +247,7 @@ func (s *Scheduler) ReloadQuiet() error {
 	return s.reloadLocked(true)
 }
 
+// ИЗМЕНЕНО: передаём quiet в startLocked
 func (s *Scheduler) reloadLocked(quiet bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -273,8 +261,6 @@ func (s *Scheduler) reloadLocked(quiet bool) error {
 	return nil
 }
 
-// ValidSpec reports whether a schedule is one of the supported special values,
-// a 5-field cron expression, or a supported human-readable expression.
 func ValidSpec(spec string) bool {
 	if err := Validate(spec); err == nil {
 		if s := strings.TrimSpace(strings.ToLower(spec)); s == "every" || s == "daily" || s == "weekly" {
@@ -286,7 +272,6 @@ func ValidSpec(spec string) bool {
 }
 
 func toCron(spec string) (string, bool) {
-	// Human-readable forms first: their word count can collide with 5-field cron.
 	if strings.HasPrefix(spec, "daily at ") {
 		h, m, ok := clock(strings.TrimPrefix(spec, "daily at "))
 		if ok {
