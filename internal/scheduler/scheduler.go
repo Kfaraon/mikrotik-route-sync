@@ -61,11 +61,11 @@ func (s *Scheduler) StartNow() {
 	if s.started {
 		return
 	}
-	s.startLocked()
+	s.startLocked(false)
 	s.started = true
 }
 
-func (s *Scheduler) startLocked() {
+func (s *Scheduler) startLocked(quiet bool) {
 	loc, err := time.LoadLocation(s.cfg.Timezone)
 	if err != nil {
 		loc = time.UTC
@@ -108,7 +108,7 @@ func (s *Scheduler) startLocked() {
 		}()
 	}
 
-	// Периодический перечитающий перезагрузк расписаний: scheduler.reload_interval.
+	// Периодический перечитающий перезагрузка расписаний: scheduler.reload_interval.
 	if d := s.cfg.Scheduler.ReloadInterval.Duration(); d > 0 {
 		s.wg.Add(1)
 		go func() {
@@ -128,7 +128,9 @@ func (s *Scheduler) startLocked() {
 		}()
 	}
 
-	s.log.Info("scheduler started", "max_concurrent", limit, "timezone", loc.String())
+	if !quiet {
+		s.log.Info("scheduler started", "max_concurrent", limit, "timezone", loc.String())
+	}
 }
 
 // purgeInterval разбирает "every 1h" из scheduler.cache_purge.
@@ -262,7 +264,7 @@ func (s *Scheduler) reloadLocked(quiet bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	s.stopLocked(ctx)
-	s.startLocked()
+	s.startLocked(quiet)
 	if quiet {
 		s.log.Debug("scheduler quietly reloaded")
 	} else {
