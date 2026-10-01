@@ -48,7 +48,6 @@ var webFS embed.FS
 // WebSocket Hub
 // ============================================================================
 
-// wsClient — соединение с последовательной записью.
 type wsClient struct {
 	conn *websocket.Conn
 	send chan []byte
@@ -73,16 +72,13 @@ func (c *wsClient) writeLoop(done chan struct{}) {
 	}
 }
 
-// Hub — набор WebSocket-клиентов для live-обновлений.
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[*wsClient]bool
 }
 
-// NewHub создаёт пустой hub.
 func NewHub() *Hub { return &Hub{clients: map[*wsClient]bool{}} }
 
-// Broadcast отправляет JSON-событие всем клиентам.
 func (h *Hub) Broadcast(event string, data any) {
 	payload, err := json.Marshal(map[string]any{"event": event, "data": data, "time": time.Now().Format(time.RFC3339)})
 	if err != nil {
@@ -199,7 +195,6 @@ func (st *sessionStore) create(username string) (string, *session) {
 	return id, s
 }
 
-// get возвращает сессию по id cookie.
 func (st *sessionStore) get(id string) (*session, bool) {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
@@ -248,7 +243,6 @@ func (c *ipChecker) allowedIP(ip net.IP) bool {
 	return false
 }
 
-// clientIP учитывает X-Forwarded-For только от trusted proxies.
 func (c *ipChecker) clientIP(r *http.Request) net.IP {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -272,7 +266,6 @@ func (c *ipChecker) clientIP(r *http.Request) net.IP {
 	return ip
 }
 
-// ipLimiter — rate limit на IP.
 type ipLimiter struct {
 	mu       sync.Mutex
 	limiters map[string]*rate.Limiter
@@ -302,7 +295,6 @@ func (l *ipLimiter) allow(ip string) bool {
 // Server
 // ============================================================================
 
-// Server — веб-сервер приложения.
 type Server struct {
 	cfg      *config.Config
 	syncer   *core.Syncer
@@ -315,7 +307,6 @@ type Server struct {
 	httpSrv  *http.Server
 }
 
-// NewServer создаёт и настраивает веб-сервер.
 func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
@@ -346,7 +337,6 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		sessions: newSessionStore(cfg.Web.SessionTimeout.Duration()),
 	}
 
-	// Live-события синхронизации -> WebSocket.
 	syncer.SetEventHook(func(event string, data any) {
 		s.hub.Broadcast(event, data)
 	})
@@ -358,12 +348,10 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	router.Use(s.rateLimitMiddleware)
 	router.Use(s.maxBodyMiddleware)
 
-	// liveness без авторизации (Docker HEALTHCHECK)
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"status": "alive"}})
 	})
 
-	// readiness без авторизации: доступность RouterOS API и кэша
 	router.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
@@ -380,7 +368,6 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		writeJSON(w, http.StatusOK, payload)
 	})
 
-	// API
 	router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.Use(s.csrfMiddleware)
@@ -401,7 +388,6 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Get("/ws", s.hub.handleWS)
 	})
 
-	// Pages (тоже под auth)
 	pages := router.With(s.authMiddleware)
 	pages.Get("/", s.pageDashboard)
 	pages.Get("/services", s.pageServices)
@@ -411,7 +397,6 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	pages.Get("/logs", s.pageLogs)
 	pages.Get("/partials/status", s.partialStatus)
 
-	// HTMX actions
 	pages.Route("/actions", func(r chi.Router) {
 		r.Use(s.csrfMiddleware)
 		r.Post("/sync-all", s.actionSyncAll)
@@ -423,7 +408,6 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Post("/logs-clear", s.actionLogsClear)
 	})
 
-	// Static
 	static, _ := fs.Sub(webFS, "static")
 	router.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 
@@ -432,7 +416,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		Handler:           router,
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      0, // WebSocket требуют открытых долгих записей; per-write deadlines ставятся в hub
+		WriteTimeout:      0,
 		IdleTimeout:       120 * time.Second,
 	}
 	return s, nil
@@ -497,7 +481,6 @@ func (s *Server) maxBodyMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// authMiddleware — Basic Auth + session cookie.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.cfg.Web.Auth.Enabled {
@@ -534,9 +517,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			SameSite: http.SameSiteStrictMode,
 			Expires:  sess.expires,
 		})
-		// Request authenticated via Basic header is inherently CSRF-safe
-		// (browsers do not attach Authorization to cross-site requests),
-		// so csrfMiddleware will skip token check for it.
 		next.ServeHTTP(w, withBasicAuth(r, sess))
 	})
 }
@@ -568,7 +548,6 @@ func sessionFrom(r *http.Request) *sessionInfo {
 	return v
 }
 
-// csrfMiddleware — двойная проверка токена для изменяющих запросов.
 func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.cfg.Web.CSRFEnabled || !s.cfg.Web.Auth.Enabled {
@@ -580,8 +559,6 @@ func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Basic-auth (header) requests are CSRF-exempt; cookie sessions must
-		// present the matching X-CSRF-Token / csrf_token.
 		if si := sessionFrom(r); si != nil && si.basicAuth {
 			next.ServeHTTP(w, r)
 			return
@@ -701,9 +678,6 @@ func (s *Server) partialStatus(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "status.html", s.statusData(r))
 }
 
-// serviceRow — строка API/страницы сервисов. Поле Routes исторически
-// названо так и используется фронтендом как число управляемых записей
-// address-list (services.js читает row.Routes).
 type serviceRow struct {
 	Name      string
 	List      string
@@ -785,25 +759,22 @@ func (s *Server) pageSchedules(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
-// Страница настроек: полное описание всех параметров config.yaml
+// Settings
 // ============================================================================
 
-// settingSpec — описание одного настраиваемого параметра.
 type settingSpec struct {
-	Group string // название секции на странице
-	Key   string // точечный путь в конфиге
-	Title string // русская подпись
-	Type  string // text|number|float|bool|duration|secret|list|level
-	Help  string // русское описание для подсказки "?"
+	Group string
+	Key   string
+	Title string
+	Type  string
+	Help  string
 }
 
-// settingsSpec покрывает все поля конфигурации из config.example.yaml.
 var settingsSpec = []settingSpec{
 	{"Общее", "timezone", "Часовой пояс", "text",
 		"IANA-имя (Europe/Moscow). Используется планировщиком для cron-расписаний. Применяется сразу."},
 	{"Общее", "cache_path", "Путь к базе bbolt", "text",
 		"Файл кэша, снапшотов и истории (cache.db). Изменение требует перезапуска приложения."},
-
 	{"Логирование", "logging.level", "Уровень логирования", "level",
 		"debug | info | warn | error. Применяется немедленно без перезапуска."},
 	{"Логирование", "logging.file", "Файл лога", "text",
@@ -818,7 +789,6 @@ var settingsSpec = []settingSpec{
 		"gzip-сжатие ротированных логов (по умолчанию true)."},
 	{"Логирование", "logging.also_stdout", "Дублировать в stdout", "bool",
 		"Писать логи одновременно в файл и стандартный вывод (для docker logs / systemd)."},
-
 	{"MikroTik", "mikrotik.host", "Адрес роутера", "text",
 		"IP или hostname RouterOS (например 192.168.88.1). Применяется сразу — клиент пересоздаётся."},
 	{"MikroTik", "mikrotik.port", "Порт REST API", "number",
@@ -835,7 +805,6 @@ var settingsSpec = []settingSpec{
 		"Go-формат длительности: 30s, 1m. Применяется сразу."},
 	{"MikroTik", "mikrotik.rate_limit", "Лимит запросов/сек", "number",
 		"Ограничение частоты запросов к RouterOS REST API (по умолчанию 20)."},
-
 	{"Firewall Address List", "firewall.address_list", "Глобальный address-list", "text",
 		"Единственный Firewall Address List для всех сервисов (например TO-VPN). Обязателен. Все сервисы пишут в него; изоляция — по комментарию. Имя: буквы/цифры/_.- (до 63). Применяется сразу."},
 	{"Firewall Address List", "firewall.comment_prefix", "Префикс комментария", "text",
@@ -854,7 +823,6 @@ var settingsSpec = []settingSpec{
 		"Список через запятую. Только эти chat_id могут управлять ботом; остальным бот не отвечает."},
 	{"Telegram", "telegram.rate_limit", "Сообщений/сек на чат", "number",
 		"Антифлуд бота (по умолчанию 1)."},
-
 	{"Веб-интерфейс", "web.enabled", "Включить Web UI", "bool",
 		"Включение/выключение сервера интерфейса. Изменение требует перезапуска процесса."},
 	{"Веб-интерфейс", "web.listen", "Адрес и порт", "text",
@@ -875,7 +843,6 @@ var settingsSpec = []settingSpec{
 		"Требовать токен для изменяющих запросов от cookie-сессий. Держите включённым."},
 	{"Веб-интерфейс", "web.security_headers", "Заголовки безопасности", "bool",
 		"CSP, X-Frame-Options: DENY, X-Content-Type-Options: nosniff, Referrer-Policy, HSTS при HTTPS."},
-
 	{"Планировщик", "scheduler.parallel", "Параллельные синхронизации", "bool",
 		"false — строго последовательно. true — до max_concurrent сервисов одновременно."},
 	{"Планировщик", "scheduler.max_concurrent", "Максимум одновременно", "number",
@@ -888,7 +855,6 @@ var settingsSpec = []settingSpec{
 		"Формат 'every 1h' — период удаления протухших записей bbolt."},
 	{"Планировщик", "schedules.global", "Глобальное расписание", "text",
 		"По умолчанию для сервисов без override: every 6h, daily at 03:00, cron '0 3 * * *', manual, disabled. По сервису/группе — на странице «Расписания»."},
-
 	{"Безопасность", "safety.max_delete_ratio", "Макс. доля удаления", "float",
 		"Safe-diff: если будет удалено больше доли от существующих маршрутов сервиса (0.5 = 50%) — синхронизация прервётся, потребуется --force."},
 	{"Безопасность", "safety.require_confirmation_over", "Абсолютный лимит удалений", "number",
@@ -899,7 +865,6 @@ var settingsSpec = []settingSpec{
 		"Хост-маршруты из dynamic-сбора. По умолчанию false — одиночные IP не записываются."},
 	{"Безопасность", "safety.max_asn_prefixes", "Лимит префиксов ASN/whois", "number",
 		"Защита от захвата чужих сетей мелкими сервисами (100). Переопределяется в overrides.<svc>.max_asn_prefixes."},
-
 	{"Retry", "retry.max_attempts", "Число попыток", "number",
 		"Максимум попыток для сетевых ошибок и 5xx (3). 4xx не повторяются, кроме 429."},
 	{"Retry", "retry.base_delay", "Базовая задержка", "duration",
@@ -908,7 +873,6 @@ var settingsSpec = []settingSpec{
 		"Потолок backoff (30s)."},
 	{"Retry", "retry.jitter", "Джиттер", "bool",
 		"Случайная добавка к задержке, чтобы ретраи не совпадали по фазе."},
-
 	{"Внешние API", "external.http_timeout", "Таймаут HTTP", "duration",
 		"Таймаут запросов к bgp.tools/RIPEstat/CDN/спискам (15s). Применяется сразу."},
 	{"Внешние API", "external.max_response_mb", "Макс. ответ, МБ", "number",
@@ -921,7 +885,6 @@ var settingsSpec = []settingSpec{
 		"Проверка принадлежности префиксов ASN через RDAP (10s)."},
 	{"Внешние API", "external.resolver", "DNS-резолвер", "text",
 		"ip:port (1.1.1.1:53) для A-записей и Cymru-запросов ASN. Пусто — системный DNS. Применяется сразу."},
-
 	{"Снапшоты", "snapshots.enabled", "Снимки перед синхронизацией", "bool",
 		"Сохранять текущие маршруты сервиса в bbolt перед применением diff (нужно для ручного restore)."},
 	{"Снапшоты", "snapshots.ttl", "TTL снапшотов", "duration",
@@ -930,24 +893,20 @@ var settingsSpec = []settingSpec{
 		"Лишние (сверх 50) старые снапшоты удаляются при cleanup."},
 }
 
-// settingRow — отрисовка одной строки формы.
 type settingRow struct {
 	Key     string
 	Title   string
 	Type    string
 	Value   string
 	Help    string
-	Options []string // только для Type=="level"
+	Options []string
 }
 
-// settingGroup — секция страницы настроек.
 type settingGroup struct {
 	Title string
 	Rows  []settingRow
 }
 
-// settingValue читает текущее значение параметра через GetPath и
-// приводит его к строке для формы.
 func (s *Server) settingValue(key string) string {
 	v, err := s.cfg.GetPath(key)
 	if err != nil || v == nil {
@@ -997,7 +956,7 @@ func (s *Server) pageLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
-// REST API /api/v1 (envelope ok/data/error)
+// REST API /api/v1
 // ============================================================================
 
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
@@ -1133,9 +1092,6 @@ func (s *Server) apiUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]string{"service": service, "schedule": req.Schedule})
 }
 
-// applySchedule валидирует и сохраняет расписание сервиса.
-// Использует SetServiceSchedule (прямую запись в map), т.к. точечный путь
-// ломается на доменных именах сервисов (youtube.com).
 func (s *Server) applySchedule(service, spec string) error {
 	service = strings.ToLower(strings.TrimSpace(service))
 	spec = strings.TrimSpace(spec)
@@ -1211,10 +1167,9 @@ func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
-// Firewall Address List (страница + API)
+// Firewall Address List
 // ============================================================================
 
-// addressRow — строка таблицы глобального address-list.
 type addressRow struct {
 	Address  string
 	List     string
@@ -1266,6 +1221,7 @@ func rowsLess(a, b addressRow) bool {
 	return a.Address < b.Address
 }
 
+// ИЗМЕНЕНО: pageAddressList — русское сообщение, DEBUG-уровень логирования
 func (s *Server) pageAddressList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -1276,7 +1232,7 @@ func (s *Server) pageAddressList(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.syncer.ListGlobalEntries(ctx)
 	if err != nil {
-		s.log.Warn("failed to list global address entries", "err", err)
+		s.log.Debug("failed to list global address entries (MikroTik unavailable)", "err", err)
 		data["Error"] = "MikroTik недоступен. Проверьте подключение к роутеру, правильность адреса, порта и настроек SSL/TLS."
 	} else {
 		data["Rows"] = s.toAddressRows(entries)
@@ -1284,15 +1240,19 @@ func (s *Server) pageAddressList(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "addresslist.html", data)
 }
 
-// apiAddressList — записи глобального address-list (PROMPT VIII).
+// ИЗМЕНЕНО: apiAddressList — возвращаем пустой список с HTTP 200 при недоступности Микротика
 func (s *Server) apiAddressList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
 	entries, err := s.syncer.ListGlobalEntries(ctx)
 	if err != nil {
-		s.log.Warn("failed to list global address entries via API", "err", err)
-		writeErr(w, http.StatusServiceUnavailable, "MikroTik недоступен. Проверьте подключение к роутеру, правильность адреса, порта и настроек SSL/TLS.")
+		s.log.Debug("MikroTik is unavailable when listing global entries via API, returning empty list", "err", err)
+		writeOK(w, map[string]any{
+			"list":          s.cfg.Firewall.AddressList,
+			"entries":       []addressRow{},
+			"mikrotik_down": true,
+		})
 		return
 	}
 	writeOK(w, map[string]any{
@@ -1301,7 +1261,7 @@ func (s *Server) apiAddressList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// apiServiceAddressList — управляемые записи конкретного сервиса.
+// ИЗМЕНЕНО: apiServiceAddressList — возвращаем пустой список с HTTP 200 при недоступности Микротика
 func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "service")
 	if !config.ValidateServiceName(name) {
@@ -1313,8 +1273,16 @@ func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := s.syncer.ListServiceEntries(ctx, name)
 	if err != nil {
-		s.log.Warn("failed to list service address entries via API", "service", name, "err", err)
-		writeErr(w, http.StatusServiceUnavailable, "MikroTik недоступен. Проверьте подключение к роутеру, правильность адреса, порта и настроек SSL/TLS.")
+		s.log.Debug("MikroTik is unavailable when listing service entries via API, returning empty list",
+			"service", name, "err", err)
+		writeOK(w, map[string]any{
+			"service":       name,
+			"list":          s.cfg.Firewall.AddressList,
+			"comment":       addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
+			"entries":       []addresslist.Entry{},
+			"count":         0,
+			"mikrotik_down": true,
+		})
 		return
 	}
 	writeOK(w, map[string]any{
@@ -1327,7 +1295,7 @@ func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
-// HTMX actions (form-encoded)
+// HTMX actions
 // ============================================================================
 
 func (s *Server) actionSyncAll(w http.ResponseWriter, r *http.Request) {
@@ -1389,6 +1357,7 @@ func (s *Server) actionUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Refresh", "true")
 	writeOK(w, map[string]string{"service": service, "schedule": spec})
 }
+
 func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	user := s.currentUser(r)
 	if err := r.ParseForm(); err != nil {
@@ -1409,8 +1378,6 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		updates = append(updates, update{key, value})
 	}
 
-	// Проверяем изменения на КОПИИ конфига: живой конфиг не должен получать
-	// невалидные значения, даже если сохранение будет отклонено.
 	cand, err := s.cloneConfig()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "clone config: "+err.Error())
@@ -1443,7 +1410,6 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Авто-применение сохранённых настроек без перезапуска процесса.
 	s.applyRuntimeChanges()
 
 	s.log.Info("settings updated", "user", user, "changed_keys", len(updates))
@@ -1451,9 +1417,6 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]any{"updated": len(updates)})
 }
 
-// cloneConfig — глубокая копия текущей конфигурации через YAML round-trip.
-// Используется для предпроверки candidate-изменений, чтобы не трогать живой
-// конфиг при невалидных значениях.
 func (s *Server) cloneConfig() (*config.Config, error) {
 	data, err := yaml.Marshal(s.cfg)
 	if err != nil {
@@ -1466,11 +1429,6 @@ func (s *Server) cloneConfig() (*config.Config, error) {
 	return clone, nil
 }
 
-// applyRuntimeChanges переносит только что сохранённую конфигурацию
-// в живые компоненты: уровень логов, клиенты MikroTik/HTTP/резолвер,
-// нотификатор Telegram и расписания планировщика.
-// Поля, требующие рестарта (web.listen, logging.file, cache_path),
-// в подсказках UI помечены явно.
 func (s *Server) applyRuntimeChanges() {
 	logging.SetLevel(s.cfg.Logging.Level)
 
@@ -1478,7 +1436,6 @@ func (s *Server) applyRuntimeChanges() {
 		s.log.Error("failed to apply config to clients", "err", err)
 	}
 
-	// Нотификатор пересоздаётся, если менялись telegram.* настройки.
 	s.syncer.SetNotifier(notifier.FromConfig(s.cfg.Telegram, s.log))
 
 	if err := s.syncer.ReloadScheduler(); err != nil {
@@ -1511,12 +1468,10 @@ func (s *Server) auditChange(r *http.Request, source, action, subject string) {
 	s.log.Info("web change", "audit_action", action, "user", user, "source", source, "subject", subject)
 }
 
-// ServeHTTP предоставляет доступ к внутреннему роутеру (для httptest).
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.httpSrv.Handler.ServeHTTP(w, r)
 }
 
-// Start запускает HTTP-сервер и работает до отмены ctx (graceful shutdown).
 func (s *Server) Start(ctx context.Context) error {
 	if !s.cfg.Web.Enabled {
 		s.log.Info("web server disabled by config")
