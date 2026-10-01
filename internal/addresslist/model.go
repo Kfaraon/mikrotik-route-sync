@@ -96,3 +96,45 @@ func ServiceFromComment(comment, prefix string) (string, bool) {
 	}
 	return comment[len(prefix)+1:], true
 }
+
+// Subtract возвращает элементы из a, которых нет в b.
+//
+// Сравнение выполняется по:
+//   - list
+//   - comment
+//   - нормализованному address
+//
+// Это нужно для безопасных diff/rollback операций, где один и тот же адрес
+// может прийти в разных текстовых формах: 1.1.1.1 и 1.1.1.1/32.
+func Subtract(a, b []Entry) []Entry {
+	if len(a) == 0 {
+		return nil
+	}
+	if len(b) == 0 {
+		out := make([]Entry, len(a))
+		copy(out, a)
+		return out
+	}
+
+	skip := make(map[string]struct{}, len(b))
+	for _, e := range b {
+		skip[subtractKey(e)] = struct{}{}
+	}
+
+	out := make([]Entry, 0, len(a))
+	for _, e := range a {
+		if _, ok := skip[subtractKey(e)]; ok {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func subtractKey(e Entry) string {
+	addr := strings.TrimSpace(e.Address)
+	if normalized, err := NormalizeAddress(addr); err == nil {
+		addr = normalized
+	}
+	return e.List + "\x00" + e.Comment + "\x00" + addr
+}
