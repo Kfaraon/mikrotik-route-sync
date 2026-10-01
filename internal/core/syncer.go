@@ -32,7 +32,6 @@ import (
 // Типы данных
 // ============================================================================
 
-// Result — итог синхронизации одного сервиса (address-list записи).
 type Result struct {
 	Service    string    `json:"service"`
 	List       string    `json:"list"`
@@ -49,7 +48,6 @@ type Result struct {
 	Version    string    `json:"version,omitempty"`
 }
 
-// ServiceInfo — метаинформация о сервисе для `app info` / web / bot.
 type ServiceInfo struct {
 	Name          string                 `json:"name"`
 	List          string                 `json:"list"`
@@ -60,7 +58,6 @@ type ServiceInfo struct {
 	SnapshotCount int                    `json:"snapshot_count"`
 }
 
-// SnapshotInfo — метаинформация о снапшоте (CLI/Web/Telegram).
 type SnapshotInfo struct {
 	ID        string    `json:"id"`
 	Service   string    `json:"service"`
@@ -68,7 +65,6 @@ type SnapshotInfo struct {
 	Count     int       `json:"count"`
 }
 
-// BackupFile — формат `app backup <service>` (PROMPT IV.5).
 type BackupFile struct {
 	Service   string              `json:"service"`
 	List      string              `json:"list"`
@@ -77,13 +73,11 @@ type BackupFile struct {
 	Entries   []addresslist.Entry `json:"entries"`
 }
 
-// OrphanEntry — AUTO-запись без активного сервиса (PROMPT IV.6).
 type OrphanEntry struct {
 	Addresslist addresslist.Entry `json:"entry"`
 	Service     string            `json:"comment_service"`
 }
 
-// Syncer — главный оркестратор синхронизации Firewall Address List.
 type Syncer struct {
 	cfg     *config.Config
 	cache   *storage.Cache
@@ -91,7 +85,6 @@ type Syncer struct {
 	audit   *audit.Logger
 	history *history.History
 
-	// Горяче-заменяемые зависимости (ApplyConfig).
 	mtPtr  atomic.Pointer[mikrotik.Client]
 	resPtr atomic.Pointer[resolver.Resolver]
 	deps   *collectors.Deps
@@ -100,24 +93,19 @@ type Syncer struct {
 	notifyMu sync.RWMutex
 	notify   notifier.Notifier
 
-	// serviceMu защищает мутации конфига и запись в history/lastSync.
 	serviceMu sync.Mutex
 	startTime time.Time
 	lastSync  time.Time
 
-	// busyMu — защита от наложения запусков по ОДНОМУ сервису (PROMPT IV.2).
 	busyMu sync.Mutex
 	busy   map[string]bool
 
-	// degradedMu — статусы сервисов с неуспешным rollback (PROMPT II.5).
 	degradedMu sync.Mutex
 	degraded   map[string]time.Time
 
-	// onEvent — хук live-событий (WebSocket в web UI).
 	onEventMu sync.Mutex
 	onEvent   func(event string, data any)
 
-	// reload — хук перезагрузки планировщика (daemon).
 	reloadMu sync.Mutex
 	reload   func() error
 }
@@ -126,7 +114,6 @@ type Syncer struct {
 // Конструктор и горячее применение
 // ============================================================================
 
-// NewSyncer создает Syncer с явной передачей зависимостей (PROMPT XI.DI).
 func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, notify notifier.Notifier) (*Syncer, error) {
 	mt, err := mikrotik.NewClient(cfg, log)
 	if err != nil {
@@ -153,7 +140,6 @@ func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, notif
 	return s, nil
 }
 
-// buildDepsLocked пересоздаёт http-клиент, резолвер и реестр коллекторов.
 func (s *Syncer) buildDepsLocked() {
 	httpClient := collectors.NewHTTP(s.cfg.External.HTTPTimeout.Duration(), s.cfg.Retry, s.cfg.External.MaxResponseMB, s.cfg.External.BGPToolsContact)
 	res := resolver.NewResolver(s.cfg.External.Resolver, httpClient, s.cache, s.cfg.Scheduler.CacheTTL.Duration())
@@ -171,8 +157,6 @@ func (s *Syncer) buildDepsLocked() {
 	s.regPtr.Store(reg)
 }
 
-// ApplyConfig пересоздаёт клиенты из текущей конфигурации (web UI save).
-// Не применяются на лету: web.listen, logging.file, cache_path (рестарт).
 func (s *Syncer) ApplyConfig() error {
 	mt, err := mikrotik.NewClient(s.cfg, s.log)
 	if err != nil {
@@ -216,21 +200,18 @@ func (s *Syncer) getNotify() notifier.Notifier {
 	return s.notify
 }
 
-// SetNotifier подменяет канал уведомлений.
 func (s *Syncer) SetNotifier(n notifier.Notifier) {
 	s.notifyMu.Lock()
 	s.notify = n
 	s.notifyMu.Unlock()
 }
 
-// MarkDegraded помечает сервис degraded (частично неуспешный rollback).
 func (s *Syncer) MarkDegraded(service string) {
 	s.degradedMu.Lock()
 	defer s.degradedMu.Unlock()
 	s.degraded[service] = time.Now()
 }
 
-// IsDegraded возвращает статус degraded сервиса.
 func (s *Syncer) IsDegraded(service string) bool {
 	s.degradedMu.Lock()
 	defer s.degradedMu.Unlock()
@@ -238,14 +219,12 @@ func (s *Syncer) IsDegraded(service string) bool {
 	return ok
 }
 
-// ClearDegraded снимает флаг degraded.
 func (s *Syncer) ClearDegraded(service string) {
 	s.degradedMu.Lock()
 	defer s.degradedMu.Unlock()
 	delete(s.degraded, service)
 }
 
-// DegradedServices — список degraded-сервисов.
 func (s *Syncer) DegradedServices() []string {
 	s.degradedMu.Lock()
 	defer s.degradedMu.Unlock()
@@ -256,7 +235,6 @@ func (s *Syncer) DegradedServices() []string {
 	return out
 }
 
-// SetEventHook регистрирует callback live-событий (web WebSocket).
 func (s *Syncer) SetEventHook(fn func(event string, data any)) {
 	s.onEventMu.Lock()
 	defer s.onEventMu.Unlock()
@@ -272,24 +250,20 @@ func (s *Syncer) emit(event string, data any) {
 	}
 }
 
-// SetReloadFunc регистрирует хук перечитывания расписаний (daemon/web).
 func (s *Syncer) SetReloadFunc(fn func() error) {
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
 	s.reload = fn
 }
 
-// ResolveDomain — диагностика для `app test-dns`.
 func (s *Syncer) ResolveDomain(ctx context.Context, domain string) ([]string, error) {
 	return s.resolver().ResolveDomain(ctx, domain)
 }
 
-// PurgeCache удаляет просроченные записи bbolt-кэша.
 func (s *Syncer) PurgeCache() error {
 	return s.cache.PurgeExpired()
 }
 
-// PingMikroTik проверяет доступность RouterOS REST API (address-list).
 func (s *Syncer) PingMikroTik(ctx context.Context) error {
 	return s.mt().Ping(ctx)
 }
@@ -298,13 +272,8 @@ func (s *Syncer) PingMikroTik(ctx context.Context) error {
 // Основная логика синхронизации
 // ============================================================================
 
-// SyncService выполняет полный цикл для одного сервиса:
-//
-//	collect → validate → aggregate → get managed address-list entries →
-//	diff → safety-check → snapshot → transactional apply → history → notify
-//
-// Fail-closed: любая ошибка сбора/валидации/API — существующие записи
-// не изменяются. Mutex на сервис: повторный запуск пропускается с WARN.
+// ИЗМЕНЕНО: В блоке 1 (получение записей) добавлена проверка `if dry` —
+// при недоступности Микротика в режиме DRY-RUN продолжаем с пустым списком.
 func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) (Result, error) {
 	start := time.Now()
 	list := s.cfg.Firewall.AddressList
@@ -338,11 +307,9 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	s.emit("sync_start", map[string]any{"service": name, "list": list, "dry_run": dry})
 
 	// 1. Управляемые записи сервиса (list + comment + dynamic=false).
+	// ИЗМЕНЕНО: при недоступности Микротика в DRY-RUN режиме продолжаем с пустым списком
 	existing, err := s.mt().ListServiceEntries(ctx, list, s.cfg.Firewall.CommentPrefix, name)
 	if err != nil {
-		// ИЗМЕНЕНИЕ: Если это режим эмуляции (теста), разрешаем продолжать без Микротика,
-		// считая текущий список пустым. Это позволяет тестировать сбор данных
-		// из внешних источников без доступа к роутеру.
 		if dry {
 			log.Warn("MikroTik is unavailable in DRY-RUN mode. Assuming empty list for testing.", "err", err)
 			existing = nil
@@ -377,7 +344,6 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		return res, fmt.Errorf("validate: %w", err)
 	}
 
-	// FAIL-CLOSED (PROMPT II.4): пусто — прерываем, существующие не трогаем.
 	if len(prefixes) == 0 {
 		res.Error = "no valid prefixes after validation, aborting sync (fail-closed)"
 		log.Error("fail-closed: no valid prefixes collected")
@@ -398,7 +364,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		desired = append(desired, p.String())
 	}
 
-	// 5. Diff по нормализованному address (PROMPT II.7).
+	// 5. Diff по нормализованному address.
 	diff, err := addresslist.ComputeDiff(name, list, comment, desired, existing)
 	if err != nil {
 		res.Error = fmt.Sprintf("compute diff: %v", err)
@@ -412,7 +378,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	res.Unchanged = len(diff.Unchanged)
 	log.Info("computed diff", "add", res.Added, "remove", res.Removed, "unchanged", res.Unchanged)
 
-	// 6. SAFE-DIFF (PROMPT II.6).
+	// 6. SAFE-DIFF.
 	if len(existing) > 0 && !force {
 		if err := addresslist.CheckDeletion(len(existing), len(diff.Remove), addresslist.SafetyParams{
 			MaxDeleteRatio:          s.cfg.Safety.MaxDeleteRatio,
@@ -425,7 +391,6 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		}
 	}
 
-	// План удаления (с дублями) и список добавления.
 	toRemove := addresslist.RemovalPlan(desired, existing)
 	toAdd := make([]addresslist.Entry, 0, len(diff.Add))
 	for _, a := range diff.Add {
@@ -449,7 +414,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		return res, nil
 	}
 
-	// 9. Транзакционное применение (сначала add, затем remove).
+	// 9. Транзакционное применение.
 	tx := mikrotik.NewTransaction(s.mt(), s.cfg, s.cache, name, log)
 	if snapshotID != "" {
 		tx.SetSnapshotID(snapshotID)
@@ -520,8 +485,6 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	return res, nil
 }
 
-// SyncMany — параллельная синхронизация набора сервисов с ограничением
-// max_concurrent; ошибки изолированы; итог — одно уведомление.
 func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, force bool) error {
 	if len(services) == 0 {
 		return nil
@@ -609,7 +572,6 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 	return firstErr
 }
 
-// SyncOneResult — синхронизация одного сервиса сNotifier-результатом (scheduler).
 func (s *Syncer) SyncOneResult(ctx context.Context, name string, dry bool) notifier.SyncResult {
 	res, err := s.SyncService(ctx, name, dry, false)
 	sr := notifier.SyncResult{
@@ -628,10 +590,9 @@ func (s *Syncer) SyncOneResult(ctx context.Context, name string, dry bool) notif
 }
 
 // ============================================================================
-// CLI/Web-хелперы: info, diff, address-list, audit
+// CLI/Web-хелперы
 // ============================================================================
 
-// InfoService — детальная информация о сервисе.
 func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, error) {
 	list := s.cfg.Firewall.AddressList
 	info := &ServiceInfo{
@@ -659,7 +620,6 @@ func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, er
 	return info, nil
 }
 
-// DiffService — diff без применения (для `app diff`, `--dry-run`).
 func (s *Syncer) DiffService(ctx context.Context, name string) (*addresslist.Diff, error) {
 	list := s.cfg.Firewall.AddressList
 	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
@@ -696,18 +656,15 @@ func (s *Syncer) DiffService(ctx context.Context, name string) (*addresslist.Dif
 	return addresslist.ComputeDiff(name, list, comment, desired, existing)
 }
 
-// ListGlobalEntries — все записи глобального address-list (страница /address-list).
 func (s *Syncer) ListGlobalEntries(ctx context.Context) ([]addresslist.Entry, error) {
 	return s.mt().ListEntries(ctx, s.cfg.Firewall.AddressList)
 }
 
-// ListServiceEntries — управляемые записи одного сервиса.
 func (s *Syncer) ListServiceEntries(ctx context.Context, name string) ([]addresslist.Entry, error) {
 	return s.mt().ListServiceEntries(ctx,
 		s.cfg.Firewall.AddressList, s.cfg.Firewall.CommentPrefix, name)
 }
 
-// AuditAddressList — AUTO-записи, не принадлежащие активным сервисам (orphan).
 func (s *Syncer) AuditAddressList(ctx context.Context) ([]OrphanEntry, error) {
 	entries, err := s.ListGlobalEntries(ctx)
 	if err != nil {
@@ -737,7 +694,6 @@ func (s *Syncer) AuditAddressList(ctx context.Context) ([]OrphanEntry, error) {
 	return orphans, nil
 }
 
-// CleanupAutoEntries удаляет ТОЛЬКО orphan AUTO-записи (нужен force — PROMPT IV.6).
 func (s *Syncer) CleanupAutoEntries(ctx context.Context, force bool) (int, error) {
 	if !force {
 		return 0, fmt.Errorf("cleanup_auto_entries requires --force (orphan-записи не удаляются молча)")
@@ -759,7 +715,6 @@ func (s *Syncer) CleanupAutoEntries(ctx context.Context, force bool) (int, error
 	return deleted, nil
 }
 
-// RemoveServiceEntries — удалить управляемые записи сервиса (purge при remove-service).
 func (s *Syncer) RemoveServiceEntries(ctx context.Context, name string) (int, error) {
 	entries, err := s.ListServiceEntries(ctx, name)
 	if err != nil {
@@ -783,10 +738,9 @@ func (s *Syncer) RemoveServiceEntries(ctx context.Context, name string) (int, er
 }
 
 // ============================================================================
-// Сбор префиксов (classifier + collectors)
+// Сбор префиксов
 // ============================================================================
 
-// collect определяет методы сбора и объединяет их результаты.
 func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOverride) ([]netip.Prefix, string, error) {
 	class := classifier.Classify(name, ov.Method)
 
@@ -868,8 +822,6 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 
 	usedMethod := strings.Join(used, "+")
 
-	// Уровень 3 валидации (PROMPT III.3): RDAP-принадлежность ASN (best-effort,
-	// ограниченный выборкой).
 	if asn > 0 && (strings.Contains(usedMethod, "asn") || strings.Contains(usedMethod, "whois")) {
 		acc = s.verifyASNOwnership(ctx, acc, asn)
 	}
@@ -877,12 +829,10 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	return acc, usedMethod, nil
 }
 
-// resolverParseASN — разбор "AS13335" в число.
 func resolverParseASN(s string) (int, error) {
 	return resolver.ParseASN(s)
 }
 
-// verifyASNOwnership — RDAP-проверка выборки префиксов.
 const rdapVerifySample = 32
 
 func (s *Syncer) verifyASNOwnership(ctx context.Context, in []netip.Prefix, asn int) []netip.Prefix {
@@ -922,7 +872,6 @@ func (s *Syncer) verifyASNOwnership(ctx context.Context, in []netip.Prefix, asn 
 	return out
 }
 
-// cdnNameToASN — словарь имён CDN из also_cdn.
 var cdnNameToASN = map[string]int{
 	"cloudflare": 13335,
 	"aws":        16509,
@@ -940,10 +889,9 @@ func hasMethod(methods []string, want string) bool {
 }
 
 // ============================================================================
-// Снапшоты / backup / restore (bucket address_list_snapshots)
+// Снапшоты / backup / restore
 // ============================================================================
 
-// createSnapshot — снимок управляемых адресов сервиса перед применением.
 func (s *Syncer) createSnapshot(ctx context.Context, name string, entries []addresslist.Entry) string {
 	if !s.cfg.Snapshots.Enabled {
 		return ""
@@ -973,7 +921,6 @@ func (s *Syncer) createSnapshot(ctx context.Context, name string, entries []addr
 	return id
 }
 
-// CreateSnapshot сохраняет снимок адресов сервиса в bbolt.
 func (s *Syncer) CreateSnapshot(ctx context.Context, service string, addresses []string) (string, error) {
 	if !s.cfg.Snapshots.Enabled {
 		return "", fmt.Errorf("snapshots are disabled")
@@ -986,7 +933,6 @@ func (s *Syncer) CreateSnapshot(ctx context.Context, service string, addresses [
 	return id, nil
 }
 
-// GetSnapshot читает адреса снапшота и собирает из них управляемые записи.
 func (s *Syncer) GetSnapshot(ctx context.Context, service, id string, entries *[]addresslist.Entry) error {
 	var addresses []string
 	if err := s.cache.GetSnapshot(service, id, &addresses); err != nil {
@@ -1003,7 +949,6 @@ func (s *Syncer) GetSnapshot(ctx context.Context, service, id string, entries *[
 	return nil
 }
 
-// ListSnapshots — список снапшотов сервиса.
 func (s *Syncer) ListSnapshots(ctx context.Context, service string) ([]SnapshotInfo, error) {
 	infos, err := s.cache.ListSnapshots(service)
 	if err != nil {
@@ -1021,12 +966,10 @@ func (s *Syncer) ListSnapshots(ctx context.Context, service string) ([]SnapshotI
 	return result, nil
 }
 
-// DeleteSnapshot удаляет конкретный снапшот.
 func (s *Syncer) DeleteSnapshot(ctx context.Context, service, id string) error {
 	return s.cache.DeleteSnapshot(service, id)
 }
 
-// CleanupSnapshots удаляет старые снапшоты по TTL и сверх max_count.
 func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.Duration) (int, error) {
 	ids, err := s.cache.ListSnapshots(service)
 	if err != nil {
@@ -1072,12 +1015,10 @@ func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.
 // Управление сервисами
 // ============================================================================
 
-// AddService регистрирует сервис с дефолтными настройками.
 func (s *Syncer) AddService(ctx context.Context, name string) error {
 	return s.AddServiceWithConfig(ctx, name, config.ServiceOverride{})
 }
 
-// AddServiceWithConfig добавляет сервис (валидация имени, атомарное сохранение).
 func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override config.ServiceOverride) error {
 	s.serviceMu.Lock()
 	defer s.serviceMu.Unlock()
@@ -1112,7 +1053,6 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	return nil
 }
 
-// RemoveService удаляет сервис из конфига и (purgeRoutes) его AUTO-записи.
 func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes bool) error {
 	s.serviceMu.Lock()
 	defer s.serviceMu.Unlock()
@@ -1132,8 +1072,6 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	}
 
 	if purgeRoutes {
-		// Fail-fast: пока записи сервиса не удалены с роутера, сервис
-		// НЕ снимаем с конфигурации — иначе они станут невидимыми orphan'ами.
 		n, err := s.RemoveServiceEntries(ctx, name)
 		if err != nil {
 			return fmt.Errorf("purge address-list entries failed, сервис НЕ удалён из конфигурации: %w", err)
@@ -1159,16 +1097,14 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	return nil
 }
 
-// ListServices — список зарегистрированных сервисов.
 func (s *Syncer) ListServices() []string {
 	return s.cfg.Services
 }
 
 // ============================================================================
-// Backup / Restore (адреса сервиса)
+// Backup / Restore
 // ============================================================================
 
-// Backup собирает BackupFile по управляемым записям сервиса.
 func (s *Syncer) Backup(ctx context.Context, name string) (*BackupFile, error) {
 	entries, err := s.ListServiceEntries(ctx, name)
 	if err != nil {
@@ -1183,7 +1119,6 @@ func (s *Syncer) Backup(ctx context.Context, name string) (*BackupFile, error) {
 	}, nil
 }
 
-// Restore добавляет управляемые address-list записи сервиса, пропуская дубли.
 func (s *Syncer) Restore(ctx context.Context, name string, entries []addresslist.Entry) error {
 	existing, err := s.ListServiceEntries(ctx, name)
 	if err != nil {
@@ -1258,7 +1193,6 @@ func (s *Syncer) notifyError(ctx context.Context, service string, err error) {
 	_ = s.getNotify().Error(ctx, service, logging.RedactError(err))
 }
 
-// ReloadScheduler сигналит планировщику перечитать конфиг.
 func (s *Syncer) ReloadScheduler() error {
 	s.reloadMu.Lock()
 	fn := s.reload
@@ -1270,7 +1204,6 @@ func (s *Syncer) ReloadScheduler() error {
 	return nil
 }
 
-// GetLogs возвращает последние N записей из лог-файла.
 func (s *Syncer) GetLogs(ctx context.Context, limit int) ([]map[string]any, error) {
 	if limit <= 0 {
 		limit = 100
@@ -1287,7 +1220,6 @@ func (s *Syncer) GetLogs(ctx context.Context, limit int) ([]map[string]any, erro
 	return entries, nil
 }
 
-// EntryToAudit конвертирует Result в запись аудита.
 func EntryToAudit(res Result) audit.Entry {
 	status := "success"
 	if !res.Success {
