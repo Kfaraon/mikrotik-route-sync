@@ -109,6 +109,7 @@ type Syncer struct {
 	reloadMu sync.Mutex
 	reload   func() error
 
+	// telegramRestartMu защищает функцию перезапуска Telegram-бота
 	telegramRestartMu   sync.Mutex
 	telegramRestartFunc func() error
 }
@@ -275,8 +276,6 @@ func (s *Syncer) PingMikroTik(ctx context.Context) error {
 // Основная логика синхронизации
 // ============================================================================
 
-// ИЗМЕНЕНО: В блоке 1 (получение записей) добавлена проверка `if dry` —
-// при недоступности Микротика в режиме DRY-RUN продолжаем с пустым списком.
 func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) (Result, error) {
 	start := time.Now()
 	list := s.cfg.Firewall.AddressList
@@ -1207,8 +1206,8 @@ func (s *Syncer) ReloadScheduler() error {
 	return nil
 }
 
-// SetTelegramRestartFunc регистрирует функцию перезапуска бота.
-// Вызывается из главного процесса при инициализации.
+// SetTelegramRestartFunc регистрирует функцию перезапуска Telegram-бота.
+// Вызывается из главного процесса при инициализации демона.
 func (s *Syncer) SetTelegramRestartFunc(fn func() error) {
 	s.telegramRestartMu.Lock()
 	defer s.telegramRestartMu.Unlock()
@@ -1216,7 +1215,7 @@ func (s *Syncer) SetTelegramRestartFunc(fn func() error) {
 }
 
 // RestartTelegramBot перезапускает бота с новыми настройками.
-// Возвращает ошибку, если функция перезапуска не зарегистрирована.
+// Вызывается при изменении telegram.* в веб-интерфейсе.
 func (s *Syncer) RestartTelegramBot() error {
 	s.telegramRestartMu.Lock()
 	fn := s.telegramRestartFunc
