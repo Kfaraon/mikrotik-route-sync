@@ -1,125 +1,33 @@
 {{ define "services.html" }}
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Сервисы</title>
-    <meta name="csrf-token" content="{{ .CSRF }}">
-    <link rel="stylesheet" href="/static/app.css">
-    <script src="/static/theme.js"></script>
-    <script src="/static/htmx.min.js"></script>
-    <script src="/static/app.js" defer></script>
-    <style>
-        .toast-container {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 9999;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .toast {
-            padding: 12px 20px;
-            border-radius: 8px;
-            color: white;
-            font-size: 14px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            animation: slideIn 0.3s ease;
-            max-width: 400px;
-        }
-        .toast-success { background: #28a745; }
-        .toast-error { background: #dc3545; }
-        .toast-warning { background: #ffc107; color: #000; }
-        .toast-info { background: #17a2b8; }
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-
-        .services-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        .services-table th,
-        .services-table td {
-            padding: 10px 12px;
-            text-align: left;
-            border-bottom: 1px solid var(--border-color, #e0e0e0);
-        }
-        .services-table th {
-            background: var(--bg-secondary, #f5f5f5);
-            font-weight: 600;
-        }
-        .services-table tbody tr:hover {
-            background: var(--bg-hover, #f9f9f9);
-        }
-
-        .service-actions {
-            display: flex;
-            gap: 4px;
-            flex-wrap: wrap;
-        }
-        .btn-small {
-            padding: 4px 10px;
-            font-size: 12px;
-            border-radius: 4px;
-            border: none;
-            cursor: pointer;
-            transition: opacity 0.2s;
-        }
-        .btn-small:hover { opacity: 0.85; }
-        .btn-details { background: #6c757d; color: white; }
-        .btn-sync { background: #007bff; color: white; }
-        .btn-test { background: #28a745; color: white; }
-        .btn-delete { background: #dc3545; color: white; }
-
-        .controls-bar {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-        .controls-bar input {
-            padding: 8px 12px;
-            border: 1px solid var(--border-color, #ddd);
-            border-radius: 6px;
-            font-size: 14px;
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        .badge-success { background: #d4edda; color: #155724; }
-        .badge-warning { background: #fff3cd; color: #856404; }
-        .badge-error { background: #f8d7da; color: #721c24; }
-        .badge-info { background: #d1ecf1; color: #0c5460; }
-
-        @media (max-width: 768px) {
-            .services-table th,
-            .services-table td {
-                padding: 8px 6px;
-                font-size: 13px;
-            }
-            .service-actions {
-                flex-direction: column;
-            }
-            .controls-bar {
-                flex-direction: column;
-            }
-            .controls-bar input,
-            .controls-bar button {
-                width: 100%;
-            }
-        }
-    </style>
+  <meta charset="utf-8">
+  <title>MikroTik Route Sync — Сервисы</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="csrf-token" content="{{ .CSRF }}">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/theme.js"></script>
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/app.js" defer></script>
+  <style>
+    .services-table { width: 100%; border-collapse: collapse; }
+    .services-table th, .services-table td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+    .services-table th { background: var(--bg-alt); font-weight: 600; }
+    .services-table tbody tr:hover { background: var(--bg-alt); }
+    .service-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .service-actions button { padding: 0.4rem 0.8rem; font-size: 0.8125rem; }
+    .controls-bar { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-bottom: 1.5rem; }
+    .controls-bar input { max-width: 320px; }
+    .badge-success { background: var(--badge-ok-bg); color: var(--badge-ok-text); }
+    .badge-error { background: var(--badge-err-bg); color: var(--badge-err-text); }
+    .loading { text-align: center; padding: 2rem; color: var(--muted); }
+    @media (max-width: 768px) {
+      .service-actions { flex-direction: column; }
+      .controls-bar { flex-direction: column; align-items: stretch; }
+      .controls-bar input { max-width: none; }
+    }
+  </style>
 </head>
 <body>
   <nav class="bar">
@@ -139,225 +47,193 @@
 
   <main class="wrap">
     <h1>Сервисы</h1>
-    <p>Глобальный список: <strong>{{ .GlobalList }}</strong></p>
+    <p class="muted">Глобальный список: <strong>{{ .GlobalList }}</strong></p>
 
     <div class="controls-bar">
       <input type="text" id="newServiceName" placeholder="Имя нового сервиса (например, instagram)">
-      <button class="btn btn-primary" onclick="addService()">Добавить сервис</button>
-      <button class="btn btn-success" onclick="syncAll()">Синхронизировать все</button>
-      <button class="btn btn-info" onclick="testAll()">Тест всех</button>
+      <button type="button" class="primary" onclick="addService()">Добавить сервис</button>
+      <button type="button" onclick="syncAll()">Синхронизировать все</button>
+      <button type="button" class="secondary" onclick="testAll()">Тест всех</button>
     </div>
 
-    <div class="table-responsive">
-      <table class="services-table">
-        <thead>
-          <tr>
-            <th>Сервис</th>
-            <th>Расписание</th>
-            <th>Маршрутов</th>
-            <th>Последняя синхронизация</th>
-            <th>Действия</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{ range .Services }}
-          <tr data-service="{{ .Name }}">
-            <td><strong>{{ .Name }}</strong></td>
-            <td>{{ .Schedule }}</td>
-            <td>{{ .Routes }}</td>
-            <td>{{ .LastSync }}</td>
-            <td>
-              <div class="service-actions">
-                <button class="btn-small btn-details" onclick="openDetailsModal('{{ .Name }}')">Детали</button>
-                <button class="btn-small btn-sync" onclick="syncService('{{ .Name }}')">Синхронизировать</button>
-                <button class="btn-small btn-test" onclick="testService('{{ .Name }}')">Тест</button>
-                <button class="btn-small btn-delete" onclick="deleteService('{{ .Name }}')">Удалить</button>
-              </div>
-            </td>
-          </tr>
-          {{ end }}
-        </tbody>
-      </table>
-    </div>
+    <article style="padding: 0; overflow: hidden;">
+      <div style="overflow-x: auto;">
+        <table class="services-table">
+          <thead>
+            <tr>
+              <th>Сервис</th>
+              <th>Расписание</th>
+              <th>Маршрутов</th>
+              <th>Последняя синхронизация</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .Services }}
+            <tr>
+              <td><strong>{{ .Name }}</strong></td>
+              <td><code>{{ .Schedule }}</code></td>
+              <td>{{ .Routes }}</td>
+              <td>{{ .LastSync }}</td>
+              <td>
+                <div class="service-actions">
+                  <button type="button" class="secondary" onclick="openDetailsModal('{{ .Name }}')">Детали</button>
+                  <button type="button" onclick="syncService('{{ .Name }}')">Синхронизировать</button>
+                  <button type="button" class="secondary" onclick="testService('{{ .Name }}')">Тест</button>
+                  <button type="button" class="danger" onclick="deleteService('{{ .Name }}')">Удалить</button>
+                </div>
+              </td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </article>
   </main>
 
-  <!-- Модальное окно деталей сервиса - скрыто через inline style -->
-  <div id="serviceDetailsModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
-    <div style="background: var(--bg, white); border-radius: 12px; width: 90%; max-width: 900px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
-      <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid #e0e0e0;">
-        <h3 id="detailsServiceName" style="margin: 0;">Детали сервиса</h3>
-        <button class="modal-close" onclick="closeDetailsModal()" style="background: none; border: none; font-size: 28px; cursor: pointer; color: #666;">&times;</button>
+  <!-- Модальное окно: ВСЕ стили inline, скрыто по умолчанию -->
+  <div id="serviceDetailsModal"
+       onclick="if(event.target===this)closeDetailsModal()"
+       style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:10000;align-items:center;justify-content:center;">
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;width:92%;max-width:900px;max-height:88vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,0.4);">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:1rem 1.5rem;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:5;">
+        <h3 id="detailsServiceName" style="margin:0;">Детали сервиса</h3>
+        <button type="button" onclick="closeDetailsModal()" style="background:transparent;color:var(--muted);font-size:1.5rem;padding:0 0.5rem;box-shadow:none;transform:none;">&times;</button>
       </div>
-      <div style="padding: 24px;">
-        <div class="details-tabs">
-          <button class="tab-btn active" onclick="switchTab('info', this)">Информация</button>
-          <button class="tab-btn" onclick="switchTab('routes', this)">Маршруты</button>
-          <button class="tab-btn" onclick="switchTab('history', this)">История</button>
+      <div style="padding:1.5rem;">
+        <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;border-bottom:2px solid var(--border);padding-bottom:0.75rem;flex-wrap:wrap;">
+          <button type="button" id="tabbtn-info" class="primary" onclick="switchTab('info')" style="padding:0.5rem 1rem;font-size:0.875rem;">Информация</button>
+          <button type="button" id="tabbtn-routes" class="secondary" onclick="switchTab('routes')" style="padding:0.5rem 1rem;font-size:0.875rem;">Маршруты</button>
+          <button type="button" id="tabbtn-history" class="secondary" onclick="switchTab('history')" style="padding:0.5rem 1rem;font-size:0.875rem;">История</button>
         </div>
-        
-        <div id="tab-info" class="tab-content active">
-          <table class="info-table">
-            <tr><th>Сервис</th><td id="detailName">-</td></tr>
-            <tr><th>Список</th><td id="detailList">-</td></tr>
-            <tr><th>Комментарий</th><td id="detailComment">-</td></tr>
-            <tr><th>Расписание</th><td id="detailSchedule">-</td></tr>
-            <tr><th>Количество маршрутов</th><td id="detailRoutes">-</td></tr>
-            <tr><th>Overrides</th><td id="detailOverrides">-</td></tr>
+
+        <div id="tab-info">
+          <table style="width:100%;border-collapse:collapse;">
+            <tr><td style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);color:var(--muted);width:220px;">Сервис</td><td id="detailName" style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);">-</td></tr>
+            <tr><td style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);color:var(--muted);">Список</td><td id="detailList" style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);">-</td></tr>
+            <tr><td style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);color:var(--muted);">Комментарий</td><td id="detailComment" style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);">-</td></tr>
+            <tr><td style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);color:var(--muted);">Расписание</td><td id="detailSchedule" style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);">-</td></tr>
+            <tr><td style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);color:var(--muted);">Маршрутов</td><td id="detailRoutes" style="padding:0.6rem 1rem;border-bottom:1px solid var(--border);">-</td></tr>
           </table>
         </div>
-        
-        <div id="tab-routes" class="tab-content">
-          <div class="loading" id="routesLoading" style="display: none;">
-            <div class="spinner"></div>
-            <p>Загрузка маршрутов...</p>
-          </div>
-          <div class="table-responsive">
-            <table class="routes-table" id="serviceRoutesTable">
+
+        <div id="tab-routes" style="display:none;">
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.875rem;">
               <thead>
                 <tr>
-                  <th>Адрес</th>
-                  <th>Комментарий</th>
-                  <th>Отключено</th>
+                  <th style="padding:0.6rem 1rem;text-align:left;background:var(--bg-alt);border-bottom:2px solid var(--border);">Адрес</th>
+                  <th style="padding:0.6rem 1rem;text-align:left;background:var(--bg-alt);border-bottom:2px solid var(--border);">Комментарий</th>
+                  <th style="padding:0.6rem 1rem;text-align:left;background:var(--bg-alt);border-bottom:2px solid var(--border);">Отключено</th>
                 </tr>
               </thead>
               <tbody id="serviceRoutesBody">
-                <tr><td colspan="3" class="loading">Выберите сервис</td></tr>
+                <tr><td colspan="3" class="loading">Нажмите «Детали» для загрузки</td></tr>
               </tbody>
             </table>
           </div>
         </div>
-        
-        <div id="tab-history" class="tab-content">
-          <div class="loading" id="historyLoading" style="display: none;">
-            <div class="spinner"></div>
-            <p>Загрузка истории...</p>
-          </div>
-          <div id="serviceHistoryContent">
-            <p class="loading">Выберите сервис</p>
-          </div>
+
+        <div id="tab-history" style="display:none;">
+          <div id="serviceHistoryContent"><p class="loading">Нет данных</p></div>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="toast-container" id="toastContainer"></div>
-
   <script>
-    let currentDetailsService = null;
-
-    function showToast(message, type = 'info') {
-      const container = document.getElementById('toastContainer');
-      const toast = document.createElement('div');
-      toast.className = `toast toast-${type}`;
-      toast.textContent = message;
-      container.appendChild(toast);
-      setTimeout(() => { toast.remove(); }, 4000);
-    }
+    var currentDetailsService = null;
 
     function addService() {
-      const nameInput = document.getElementById('newServiceName');
-      const name = nameInput.value.trim();
-      if (!name) { showToast('Введите имя сервиса', 'warning'); return; }
+      var name = document.getElementById('newServiceName').value.trim();
+      if (!name) { alert('Введите имя сервиса'); return; }
       fetch('/actions/service-add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `name=${encodeURIComponent(name)}&csrf_token={{ .CSRF }}`
-      }).then(r => r.json()).then(data => {
-        if (data.ok) {
-          showToast(`Сервис "${name}" добавлен`, 'success');
-          nameInput.value = '';
-          setTimeout(() => location.reload(), 1500);
-        } else {
-          showToast(data.error || 'Ошибка добавления', 'error');
-        }
-      }).catch(err => showToast('Ошибка: ' + err, 'error'));
+        body: 'name=' + encodeURIComponent(name) + '&csrf_token={{ .CSRF }}'
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        if (data.ok) { location.reload(); } else { alert(data.error || 'Ошибка добавления'); }
+      }).catch(function (e) { alert('Ошибка: ' + e); });
     }
 
     function syncService(name) {
-      showToast(`Синхронизация "${name}" запущена`, 'info');
-      fetch(`/api/v1/services/${name}/sync`, {
+      fetch('/api/v1/services/' + encodeURIComponent(name) + '/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
         body: JSON.stringify({ dry_run: false, force: false })
-      }).then(r => r.json()).then(data => {
-        if (data.ok) showToast(`Синхронизация "${name}" завершена`, 'success');
-        else showToast(data.error || 'Ошибка синхронизации', 'error');
-      }).catch(err => showToast('Ошибка: ' + err, 'error'));
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        alert(data.ok ? 'Синхронизация "' + name + '" запущена' : (data.error || 'Ошибка'));
+      }).catch(function (e) { alert('Ошибка: ' + e); });
     }
 
     function syncAll() {
-      showToast('Синхронизация всех сервисов запущена', 'info');
       fetch('/api/v1/services/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
         body: JSON.stringify({ dry_run: false, force: false })
-      }).then(r => r.json()).then(data => {
-        if (data.ok) showToast('Синхронизация запущена в фоне', 'success');
-        else showToast(data.error || 'Ошибка', 'error');
-      }).catch(err => showToast('Ошибка: ' + err, 'error'));
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        alert(data.ok ? 'Синхронизация всех сервисов запущена' : (data.error || 'Ошибка'));
+      }).catch(function (e) { alert('Ошибка: ' + e); });
     }
 
     function testService(name) {
-      showToast(`Тест "${name}" запущен`, 'info');
-      fetch(`/api/v1/services/${name}/dry-run`, {
+      fetch('/api/v1/services/' + encodeURIComponent(name) + '/dry-run', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      }).then(r => r.json()).then(data => {
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content }
+      }).then(function (r) { return r.json(); }).then(function (data) {
         if (data.ok) {
-          const res = data.data;
-          showToast(`Тест "${name}": +${res.added} -${res.removed} =${res.unchanged}`, 'success');
-        } else {
-          showToast(data.error || 'Ошибка теста', 'error');
-        }
-      }).catch(err => showToast('Ошибка: ' + err, 'error'));
+          var res = data.data;
+          alert('Тест "' + name + '":\n+' + res.added + ' добавлено\n-' + res.removed + ' удалено\n=' + res.unchanged + ' без изменений');
+        } else { alert(data.error || 'Ошибка теста'); }
+      }).catch(function (e) { alert('Ошибка: ' + e); });
     }
 
     function testAll() {
-      showToast('Тест всех сервисов запущен', 'info');
       fetch('/api/v1/services/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
         body: JSON.stringify({ dry_run: true, force: false })
-      }).then(r => r.json()).then(data => {
-        if (data.ok) showToast('Тест запущен в фоне', 'success');
-        else showToast(data.error || 'Ошибка', 'error');
-      }).catch(err => showToast('Ошибка: ' + err, 'error'));
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        alert(data.ok ? 'Тест всех сервисов запущен' : (data.error || 'Ошибка'));
+      }).catch(function (e) { alert('Ошибка: ' + e); });
     }
 
     function deleteService(name) {
-      if (!confirm(`Удалить сервис "${name}"? Это действие необратимо.`)) return;
-      fetch(`/api/v1/services/${name}?purge=1`, { method: 'DELETE' })
-      .then(r => r.json()).then(data => {
-        if (data.ok) {
-          showToast(`Сервис "${name}" удалён`, 'success');
-          setTimeout(() => location.reload(), 1500);
-        } else {
-          showToast(data.error || 'Ошибка удаления', 'error');
-        }
-      }).catch(err => showToast('Ошибка: ' + err, 'error'));
+      if (!confirm('Удалить сервис "' + name + '" вместе с его записями?')) return;
+      fetch('/api/v1/services/' + encodeURIComponent(name) + '?purge=1', {
+        method: 'DELETE',
+        headers: { 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content }
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        if (data.ok) { location.reload(); } else { alert(data.error || 'Ошибка удаления'); }
+      }).catch(function (e) { alert('Ошибка: ' + e); });
     }
 
     function openDetailsModal(serviceName) {
       currentDetailsService = serviceName;
-      const modal = document.getElementById('serviceDetailsModal');
+      var modal = document.getElementById('serviceDetailsModal');
       modal.style.display = 'flex';
-      document.getElementById('detailsServiceName').textContent = serviceName;
+      document.getElementById('detailsServiceName').textContent = 'Детали: ' + serviceName;
       document.getElementById('detailName').textContent = serviceName;
-      
-      fetch(`/api/v1/services`).then(r => r.json()).then(data => {
-        if (data.ok && data.data.services) {
-          const service = data.data.services.find(s => s.Name === serviceName || s.name === serviceName);
-          if (service) {
-            document.getElementById('detailList').textContent = service.List || service.list || '-';
-            document.getElementById('detailComment').textContent = service.Comment || service.comment || '-';
-            document.getElementById('detailSchedule').textContent = service.Schedule || service.schedule || '-';
-            document.getElementById('detailRoutes').textContent = service.Routes || service.routes || 0;
-            document.getElementById('detailOverrides').textContent = service.Overrides ? 'Да' : 'Нет';
+      document.getElementById('detailList').textContent = '{{ .GlobalList }}';
+      document.getElementById('detailComment').textContent = 'AUTO:' + serviceName;
+      switchTab('info');
+
+      fetch('/api/v1/services').then(function (r) { return r.json(); }).then(function (data) {
+        if (data.ok && data.data && data.data.services) {
+          var svc = null;
+          for (var i = 0; i < data.data.services.length; i++) {
+            var s = data.data.services[i];
+            if ((s.Name || s.name) === serviceName) { svc = s; break; }
+          }
+          if (svc) {
+            document.getElementById('detailSchedule').textContent = svc.Schedule || svc.schedule || '-';
+            document.getElementById('detailRoutes').textContent = String(svc.Routes != null ? svc.Routes : (svc.routes != null ? svc.routes : '-'));
           }
         }
-      }).catch(err => console.error('Ошибка:', err));
-      
+      }).catch(function () {});
+
       loadServiceRoutes(serviceName);
+      loadServiceHistory(serviceName);
     }
 
     function closeDetailsModal() {
@@ -365,85 +241,73 @@
       currentDetailsService = null;
     }
 
-    document.getElementById('serviceDetailsModal').addEventListener('click', function(e) {
-      if (e.target === this) closeDetailsModal();
-    });
-
     function loadServiceRoutes(serviceName) {
-      const tbody = document.getElementById('serviceRoutesBody');
-      const loading = document.getElementById('routesLoading');
-      loading.style.display = 'block';
-      tbody.innerHTML = '';
-      
-      fetch(`/api/v1/address-list/${serviceName}`).then(r => r.json()).then(data => {
-        loading.style.display = 'none';
-        if (data.ok && data.data.entries) {
-          const entries = data.data.entries;
-          if (entries.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" class="loading">Нет маршрутов для этого сервиса</td></tr>';
-            return;
+      var tbody = document.getElementById('serviceRoutesBody');
+      tbody.innerHTML = '<tr><td colspan="3" class="loading">Загрузка…</td></tr>';
+      fetch('/api/v1/address-list/' + encodeURIComponent(serviceName)).then(function (r) { return r.json(); }).then(function (data) {
+        if (data.ok && data.data && data.data.entries && data.data.entries.length > 0) {
+          var html = '';
+          for (var i = 0; i < data.data.entries.length; i++) {
+            var e = data.data.entries[i];
+            var addr = e.address || e.Address || '';
+            var com = e.comment || e.Comment || '';
+            var dis = (e.disabled === true || e.disabled === 'true' || e.Disabled === true);
+            html += '<tr>' +
+              '<td style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);"><code>' + addr + '</code></td>' +
+              '<td style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);">' + com + '</td>' +
+              '<td style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);">' + (dis ? 'Да' : 'Нет') + '</td></tr>';
           }
-          tbody.innerHTML = entries.map(e => `
-            <tr>
-              <td><code>${e.address || e.Address}</code></td>
-              <td>${e.comment || e.Comment}</td>
-              <td>${e.disabled ? '<span class="badge badge-error">Да</span>' : '<span class="badge badge-success">Нет</span>'}</td>
-            </tr>
-          `).join('');
+          tbody.innerHTML = html;
         } else {
-          tbody.innerHTML = '<tr><td colspan="3" class="loading">Ошибка загрузки или нет данных</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="3" class="loading">Нет маршрутов</td></tr>';
         }
-      }).catch(err => {
-        loading.style.display = 'none';
+      }).catch(function () {
         tbody.innerHTML = '<tr><td colspan="3" class="loading">Ошибка загрузки</td></tr>';
       });
     }
 
     function loadServiceHistory(serviceName) {
-      const container = document.getElementById('serviceHistoryContent');
-      const loading = document.getElementById('historyLoading');
-      loading.style.display = 'block';
-      container.innerHTML = '';
-      
-      fetch(`/api/v1/history?service=${serviceName}&limit=20`).then(r => r.json()).then(data => {
-        loading.style.display = 'none';
-        if (data.ok && data.data) {
-          const records = data.data;
-          if (records.length === 0) {
-            container.innerHTML = '<p class="loading">Нет записей истории</p>';
-            return;
+      var box = document.getElementById('serviceHistoryContent');
+      box.innerHTML = '<p class="loading">Загрузка…</p>';
+      fetch('/api/v1/history?service=' + encodeURIComponent(serviceName) + '&limit=20').then(function (r) { return r.json(); }).then(function (data) {
+        if (data.ok && data.data && data.data.length > 0) {
+          var html = '<table style="width:100%;border-collapse:collapse;font-size:0.875rem;">' +
+            '<thead><tr>' +
+            '<th style="padding:0.6rem 1rem;text-align:left;background:var(--bg-alt);">Время</th>' +
+            '<th style="padding:0.6rem 1rem;text-align:left;background:var(--bg-alt);">Статус</th>' +
+            '<th style="padding:0.6rem 1rem;text-align:left;background:var(--bg-alt);">+Добавлено</th>' +
+            '<th style="padding:0.6rem 1rem;text-align:left;background:var(--bg-alt);">-Удалено</th>' +
+            '</tr></thead><tbody>';
+          for (var i = 0; i < data.data.length; i++) {
+            var r = data.data[i];
+            var ok = (r.status || r.Status) === 'success';
+            html += '<tr>' +
+              '<td style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);">' + new Date(r.time || r.Time).toLocaleString() + '</td>' +
+              '<td style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);">' + (ok ? '✅ успех' : '❌ ошибка') + '</td>' +
+              '<td style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);">' + (r.added || r.Added || 0) + '</td>' +
+              '<td style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);">' + (r.removed || r.Removed || 0) + '</td></tr>';
           }
-          container.innerHTML = `
-            <table class="routes-table">
-              <thead><tr><th>Время</th><th>Метод</th><th>Статус</th><th>Добавлено</th><th>Удалено</th><th>Без изменений</th></tr></thead>
-              <tbody>
-                ${records.map(r => `
-                  <tr>
-                    <td>${new Date(r.time || r.Time).toLocaleString()}</td>
-                    <td>${r.method || r.Method || '-'}</td>
-                    <td>${(r.status || r.Status) === 'success' ? '<span class="badge badge-success">успех</span>' : '<span class="badge badge-error">ошибка</span>'}</td>
-                    <td>+${r.added || r.Added || 0}</td>
-                    <td>-${r.removed || r.Removed || 0}</td>
-                    <td>${r.unchanged || r.Unchanged || 0}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          `;
+          html += '</tbody></table>';
+          box.innerHTML = html;
+        } else {
+          box.innerHTML = '<p class="loading">Нет записей истории</p>';
         }
-      }).catch(err => {
-        loading.style.display = 'none';
-        container.innerHTML = '<p class="loading">Ошибка загрузки истории</p>';
+      }).catch(function () {
+        box.innerHTML = '<p class="loading">Ошибка загрузки</p>';
       });
     }
 
-    function switchTab(tabName, btn) {
-      document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.getElementById(`tab-${tabName}`).classList.add('active');
-      btn.classList.add('active');
-      if (tabName === 'history' && currentDetailsService) loadServiceHistory(currentDetailsService);
+    function switchTab(name) {
+      ['info', 'routes', 'history'].forEach(function (t) {
+        document.getElementById('tab-' + t).style.display = (t === name) ? 'block' : 'none';
+        var btn = document.getElementById('tabbtn-' + t);
+        btn.className = (t === name) ? 'primary' : 'secondary';
+      });
     }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeDetailsModal();
+    });
   </script>
 </body>
 </html>
