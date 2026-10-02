@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -26,7 +27,6 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/bot"
 	webui "github.com/Kfaraon/mikrotik-route-sync/internal/web"
 )
 
@@ -35,15 +35,15 @@ import (
 // ============================================================================
 
 var (
-	cfgPath      string
-	dryRun       bool
-	forceOp      bool
-	svcName      string
-	grpName      string
-	purge        bool
-	snapTTLHours int
-	logLimit     int
-	logFollow    bool
+	cfgPath       string
+	dryRun        bool
+	forceOp       bool
+	svcName       string
+	grpName       string
+	purge         bool
+	snapTTLHours  int
+	logLimit      int
+	logFollow     bool
 	telegramBot   *bot.Bot
 	telegramBotMu sync.Mutex
 	botCtx        context.Context
@@ -555,6 +555,49 @@ func webCmd() *cobra.Command {
 	}
 }
 
+// restartTelegramBot перезапускает Telegram-бота с новыми настройками.
+// Используется при изменении telegram.* в веб-интерфейсе.
+func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) error {
+	telegramBotMu.Lock()
+	defer telegramBotMu.Unlock()
+
+	// Останавливаем текущий бот
+	if botCancel != nil {
+		botCancel()
+		botCancel = nil
+	}
+	if telegramBot != nil {
+		telegramBot.Stop()
+		telegramBot = nil
+	}
+
+	// Создаём новый бот только если включён
+	if !cfg.Telegram.Enabled || cfg.Telegram.BotToken == "" {
+		log.Info("telegram bot disabled, skipping start")
+		return nil
+	}
+
+	// Создаём новый контекст для бота
+	botCtx, botCancel = context.WithCancel(context.Background())
+
+	// Создаём бот
+	newBot, err := bot.New(cfg.Telegram, s, log)
+	if err != nil {
+		return fmt.Errorf("create telegram bot: %w", err)
+	}
+	telegramBot = newBot
+
+	// Запускаем в отдельной горутине
+	go func() {
+		if err := newBot.Start(botCtx); err != nil {
+			log.Error("telegram bot stopped with error", "err", err)
+		}
+	}()
+
+	log.Info("telegram bot restarted with new configuration")
+	return nil
+}
+
 func daemonCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "daemon",
@@ -592,6 +635,11 @@ func daemonCmd() *cobra.Command {
 				return sched.Reload()
 			})
 
+			// Регистрируем функцию перезапуска бота в syncer
+			s.SetTelegramRestartFunc(func() error {
+				return restartTelegramBot(cfg, s, log)
+			})
+
 			sched.StartNow()
 
 			// SIGHUP → перечитать конфиг и перестроить расписания.
@@ -616,13 +664,10 @@ func daemonCmd() *cobra.Command {
 				}
 				go func() { errCh <- srv.Start(ctx) }()
 			}
-			if cfg.Telegram.Enabled {
-				b, err := bot.New(cfg.Telegram, s, log)
-				if err != nil {
-					log.Error("telegram bot init failed, continuing without bot", "err", err)
-				} else {
-					go func() { errCh <- b.Run(ctx) }()
-				}
+
+			// Первый запуск бота при старте демона
+			if err := restartTelegramBot(cfg, s, log); err != nil {
+				log.Error("failed to start telegram bot", "err", err)
 			}
 
 			log.Info("daemon started", "version", version.Version, "services", cfg.Services)
@@ -634,6 +679,11 @@ func daemonCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+			}
+
+			// Останавливаем Telegram-бот
+			if botCancel != nil {
+				botCancel()
 			}
 
 			sched.Stop(context.Background())
@@ -1018,60 +1068,4 @@ func printJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
-}
-
-// Функция перезапуска бота
-restartTelegramBot := func() error {
-	telegramBotMu.Lock()
-	defer telegramBotMu.Unlock()
-
-	// Останавливаем текущий бот
-	if botCancel != nil {
-		botCancel()
-		botCancel = nil
-	}
-	if telegramBot != nil {
-		telegramBot.Stop()
-		telegramBot = nil
-	}
-
-	// Создаём новый бот только если включён
-	if !cfg.Telegram.Enabled || cfg.Telegram.BotToken == "" {
-		log.Info("telegram bot disabled, skipping start")
-		return nil
-	}
-
-	// Создаём новый контекст для бота
-	botCtx, botCancel = context.WithCancel(context.Background())
-
-	// Создаём бот (адаптируйте под вашу структуру bot.New)
-	newBot, err := bot.New(cfg, log, syncer)
-	if err != nil {
-		return fmt.Errorf("create telegram bot: %w", err)
-	}
-	telegramBot = newBot
-
-	// Запускаем в отдельной горутине
-	go func() {
-		if err := newBot.Start(botCtx); err != nil {
-			log.Error("telegram bot stopped with error", "err", err)
-		}
-	}()
-
-	log.Info("telegram bot restarted with new configuration")
-	return nil
-}
-
-// Регистрируем функцию перезапуска в syncer
-syncer.SetTelegramRestartFunc(restartTelegramBot)
-
-// Первый запуск бота при старте
-if err := restartTelegramBot(); err != nil {
-	log.Error("failed to start telegram bot", "err", err)
-}
-
-// При завершении работы (в блоке shutdown):
-// Останавливаем бот
-if botCancel != nil {
-	botCancel()
 }
