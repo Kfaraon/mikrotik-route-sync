@@ -26,6 +26,7 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/bot"
 	webui "github.com/Kfaraon/mikrotik-route-sync/internal/web"
 )
 
@@ -43,6 +44,10 @@ var (
 	snapTTLHours int
 	logLimit     int
 	logFollow    bool
+	telegramBot   *bot.Bot
+	telegramBotMu sync.Mutex
+	botCtx        context.Context
+	botCancel     context.CancelFunc
 )
 
 // ============================================================================
@@ -1013,4 +1018,60 @@ func printJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+// Функция перезапуска бота
+restartTelegramBot := func() error {
+	telegramBotMu.Lock()
+	defer telegramBotMu.Unlock()
+
+	// Останавливаем текущий бот
+	if botCancel != nil {
+		botCancel()
+		botCancel = nil
+	}
+	if telegramBot != nil {
+		telegramBot.Stop()
+		telegramBot = nil
+	}
+
+	// Создаём новый бот только если включён
+	if !cfg.Telegram.Enabled || cfg.Telegram.BotToken == "" {
+		log.Info("telegram bot disabled, skipping start")
+		return nil
+	}
+
+	// Создаём новый контекст для бота
+	botCtx, botCancel = context.WithCancel(context.Background())
+
+	// Создаём бот (адаптируйте под вашу структуру bot.New)
+	newBot, err := bot.New(cfg, log, syncer)
+	if err != nil {
+		return fmt.Errorf("create telegram bot: %w", err)
+	}
+	telegramBot = newBot
+
+	// Запускаем в отдельной горутине
+	go func() {
+		if err := newBot.Start(botCtx); err != nil {
+			log.Error("telegram bot stopped with error", "err", err)
+		}
+	}()
+
+	log.Info("telegram bot restarted with new configuration")
+	return nil
+}
+
+// Регистрируем функцию перезапуска в syncer
+syncer.SetTelegramRestartFunc(restartTelegramBot)
+
+// Первый запуск бота при старте
+if err := restartTelegramBot(); err != nil {
+	log.Error("failed to start telegram bot", "err", err)
+}
+
+// При завершении работы (в блоке shutdown):
+// Останавливаем бот
+if botCancel != nil {
+	botCancel()
 }
