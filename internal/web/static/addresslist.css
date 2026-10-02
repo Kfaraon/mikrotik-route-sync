@@ -1,0 +1,163 @@
+/* Адаптивная таблица для мобильных */
+.address-table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.address-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.address-table th,
+.address-table td {
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, #e0e0e0);
+    white-space: nowrap;
+}
+
+.address-table th {
+    background: var(--bg-secondary, #f5f5f5);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+/* Компактные строки */
+.address-table tbody tr {
+    height: 32px;
+}
+
+.address-table tbody tr:hover {
+    background: var(--bg-hover, #f9f9f9);
+}
+
+/* Фильтры */
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--bg-secondary, #f5f5f5);
+    border-radius: 8px;
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.filter-group label {
+    font-size: 11px;
+    color: var(--text-muted, #666);
+}
+
+.filter-input {
+    padding: 6px 10px;
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 4px;
+    font-size: 13px;
+    min-width: 120px;
+}
+
+.filter-input:focus {
+    outline: none;
+    border-color: var(--primary, #007bff);
+}
+
+/* Мобильная версия */
+@media (max-width: 768px) {
+    .filter-bar {
+        flex-direction: column;
+    }
+    
+    .filter-group {
+        width: 100%;
+    }
+    
+    .filter-input {
+        width: 100%;
+    }
+    
+    .address-table th,
+    .address-table td {
+        padding: 4px 6px;
+        font-size: 12px;
+    }
+    
+    .address-table tbody tr {
+        height: 28px;
+    }
+}
+
+/* Бейджи */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.badge-managed {
+    background: #d4edda;
+    color: #155724;
+}
+
+.badge-disabled {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.badge-dynamic {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.badge-service {
+    background: #e2e3e5;
+    color: #383d41;
+}
+
+/* Уведомления */
+.toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.toast {
+    padding: 12px 20px;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    animation: slideIn 0.3s ease;
+    max-width: 400px;
+}
+
+.toast-success { background: #28a745; }
+.toast-error { background: #dc3545; }
+.toast-warning { background: #ffc107; color: #000; }
+.toast-info { background: #17a2b8; }
+
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+/* Счётчик результатов */
+.results-count {
+    font-size: 13px;
+    color: var(--text-muted, #666);
+    margin-bottom: 8px;
+}
