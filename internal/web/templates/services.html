@@ -1,255 +1,692 @@
-{{define "services.html"}}
-<!doctype html>
+{{ define "services.html" }}
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <title>MikroTik Route Sync — Сервисы</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="csrf-token" content="{{ .CSRF }}">
-  <link rel="stylesheet" href="/static/app.css">
-  <link rel="stylesheet" href="/static/services.css">
-  <script src="/static/theme.js"></script>
-  <script src="/static/services.js" defer></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Сервисы</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <style>
+        /* Уведомления */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .toast {
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            animation: slideIn 0.3s ease;
+            max-width: 400px;
+        }
+        .toast-success { background: #28a745; }
+        .toast-error { background: #dc3545; }
+        .toast-warning { background: #ffc107; color: #000; }
+        .toast-info { background: #17a2b8; }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        /* Таблица сервисов */
+        .services-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .services-table th,
+        .services-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color, #e0e0e0);
+        }
+        .services-table th {
+            background: var(--bg-secondary, #f5f5f5);
+            font-weight: 600;
+        }
+        .services-table tbody tr:hover {
+            background: var(--bg-hover, #f9f9f9);
+        }
+
+        /* Кнопки действий */
+        .service-actions {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .btn-small {
+            padding: 4px 10px;
+            font-size: 12px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn-small:hover { opacity: 0.85; }
+        .btn-details { background: #6c757d; color: white; }
+        .btn-sync { background: #007bff; color: white; }
+        .btn-test { background: #28a745; color: white; }
+        .btn-delete { background: #dc3545; color: white; }
+
+        /* Панель управления */
+        .controls-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .controls-bar input {
+            padding: 8px 12px;
+            border: 1px solid var(--border-color, #ddd);
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        /* Модальное окно деталей */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal.show { display: flex; }
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 900px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 24px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .modal-header h3 { margin: 0; }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: #666;
+            line-height: 1;
+        }
+        .modal-close:hover { color: #000; }
+        .modal-body {
+            padding: 24px;
+        }
+
+        /* Вкладки */
+        .details-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 12px;
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            border: none;
+            background: transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover { background: #f0f0f0; }
+        .tab-btn.active {
+            background: #007bff;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Таблица информации */
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .info-table th,
+        .info-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .info-table th {
+            width: 200px;
+            color: var(--text-muted, #666);
+            font-weight: 500;
+        }
+
+        /* Таблица маршрутов */
+        .routes-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .routes-table th,
+        .routes-table td {
+            padding: 8px 10px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .routes-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        .routes-table tbody tr:hover {
+            background: #f9f9f9;
+        }
+
+        /* Бейджи */
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .badge-success { background: #d4edda; color: #155724; }
+        .badge-warning { background: #fff3cd; color: #856404; }
+        .badge-error { background: #f8d7da; color: #721c24; }
+        .badge-info { background: #d1ecf1; color: #0c5460; }
+
+        /* Адаптивность */
+        @media (max-width: 768px) {
+            .services-table th,
+            .services-table td {
+                padding: 8px 6px;
+                font-size: 13px;
+            }
+            .service-actions {
+                flex-direction: column;
+            }
+            .controls-bar {
+                flex-direction: column;
+            }
+            .controls-bar input,
+            .controls-bar button {
+                width: 100%;
+            }
+            .modal-content {
+                width: 95%;
+                margin: 10px;
+            }
+            .details-tabs {
+                flex-wrap: wrap;
+            }
+        }
+
+        /* Spinner загрузки */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted, #666);
+        }
+        .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 <body>
-  <nav class="bar">
-    <span class="brand">MikroTik Route Sync</span>
-    <a href="/">Дашборд</a>
-    <a href="/services" class="active">Сервисы</a>
-    <a href="/address-list">Списки адресов</a>
-    <a href="/schedules">Расписания</a>
-    <a href="/settings">Настройки</a>
-    <a href="/logs">Логи</a>
-    <span class="bar-right">
-      <span id="live-dot" class="live-dot" title="Live: нет подключения"></span>
-      <span class="ver">v{{ .Version }}</span>
-      <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
-    </span>
-  </nav>
+    <div class="container">
+        <h1>Сервисы</h1>
+        <p>Глобальный список: <strong>{{ .GlobalList }}</strong></p>
 
-  <main class="wrap services-page" id="services-page">
-    <header class="svc-header">
-      <div>
-        <p class="muted">
-          Управление сервисами, синхронизация маршрутов, статусы, расписания и история в одном месте.
-        </p>
-      </div>
-
-      <div class="svc-header-actions">
-        <label class="svc-switch">
-          <input type="checkbox" id="svc-auto-refresh" checked>
-          <span>Авто 60с</span>
-        </label>
-        <button type="button" id="svc-refresh" class="svc-primary">⟳ Обновить</button>
-      </div>
-    </header>
-
-    <div id="svc-alert" class="svc-alert" hidden></div>
-
-    <section class="svc-kpi-grid" aria-label="Сводка по сервисам">
-      <article class="svc-kpi-card">
-        <span class="svc-kpi-label">Сервисы</span>
-        <strong class="svc-kpi-value" id="svc-total-value">…</strong>
-        <small class="svc-kpi-note" id="svc-total-note">загрузка</small>
-      </article>
-
-      <article class="svc-kpi-card">
-        <span class="svc-kpi-label">Маршруты</span>
-        <strong class="svc-kpi-value" id="svc-routes-value">…</strong>
-        <small class="svc-kpi-note" id="svc-routes-note">управляемые IPv4</small>
-      </article>
-
-      <article class="svc-kpi-card">
-        <span class="svc-kpi-label">Авто</span>
-        <strong class="svc-kpi-value" id="svc-auto-value">…</strong>
-        <small class="svc-kpi-note" id="svc-auto-note">по расписанию</small>
-      </article>
-
-      <article class="svc-kpi-card">
-        <span class="svc-kpi-label">Проблемы</span>
-        <strong class="svc-kpi-value" id="svc-problems-value">…</strong>
-        <small class="svc-kpi-note" id="svc-problems-note">ошибки / предупреждения / сбои</small>
-      </article>
-
-      <article class="svc-kpi-card">
-        <span class="svc-kpi-label">Последняя активность</span>
-        <strong class="svc-kpi-value" id="svc-last-value">…</strong>
-        <small class="svc-kpi-note" id="svc-last-note">история синхронизаций</small>
-      </article>
-
-      <article class="svc-kpi-card">
-        <span class="svc-kpi-label">Выбрано</span>
-        <strong class="svc-kpi-value" id="svc-selected-value">0</strong>
-        <small class="svc-kpi-note" id="svc-selected-note">для массовых действий</small>
-      </article>
-    </section>
-
-    <section class="svc-toolbar" aria-label="Фильтры и действия">
-      <div class="svc-toolbar-main">
-        <input
-          type="search"
-          id="svc-search"
-          placeholder="Поиск: сервис, расписание, группа"
-          autocomplete="off"
-        >
-
-        <select id="svc-filter" aria-label="Фильтр">
-          <option value="all">Все</option>
-          <option value="auto">Автоматические</option>
-          <option value="manual">Вручную</option>
-          <option value="disabled">Отключено</option>
-          <option value="routes">С маршрутами</option>
-          <option value="problems">Проблемные</option>
-          <option value="override">С переопределением</option>
-        </select>
-
-        <select id="svc-sort" aria-label="Сортировка">
-          <option value="name">По имени</option>
-          <option value="status">По проблемам</option>
-          <option value="routes">По маршрутам</option>
-          <option value="next">По ближайшему запуску</option>
-          <option value="last">По последней синхронизации</option>
-        </select>
-      </div>
-
-      <div class="svc-toolbar-actions">
-        <span class="svc-muted" id="svc-selected-info">выбрано: 0</span>
-        <button type="button" id="svc-bulk-sync" disabled>Синхр. выбранные</button>
-        <button type="button" id="svc-bulk-dry" class="svc-outline" disabled>Тестовый запуск выбранных</button>
-        <button type="button" id="svc-bulk-clear" class="svc-secondary">Снять выбор</button>
-      </div>
-    </section>
-
-    <section class="svc-add-card">
-      <form id="svc-add-form" class="svc-add-form">
-        <input
-          type="text"
-          id="svc-add-name"
-          placeholder="Добавить сервис: cloudflare, example.com, 1.1.1.1, AS13335"
-          autocomplete="off"
-        >
-        <button type="submit" id="svc-add-btn" class="svc-primary">Добавить</button>
-      </form>
-      <p class="svc-muted svc-small">
-        Сервис будет добавлен в конфигурацию и первоначально синхронизирован.
-      </p>
-    </section>
-
-    <article class="svc-table-wrap">
-      <table class="svc-table">
-        <thead>
-          <tr>
-            <th class="svc-col-check">
-              <input type="checkbox" id="svc-select-all" aria-label="Выбрать все">
-            </th>
-            <th>Сервис</th>
-            <th>Состояние</th>
-            <th>Расписание</th>
-            <th>Ближайший запуск</th>
-            <th>Маршрутов</th>
-            <th>Последняя синхр.</th>
-            <th>Действия</th>
-          </tr>
-        </thead>
-        <tbody id="services-body">
-          {{range .Services}}
-          <tr>
-            <td></td>
-            <td><strong>{{ .Name }}</strong></td>
-            <td><span class="svc-badge svc-badge-muted">—</span></td>
-            <td><span class="svc-muted">{{ .Schedule }}</span></td>
-            <td><span class="svc-muted">—</span></td>
-            <td>{{ .Routes }}</td>
-            <td><span class="svc-muted">—</span></td>
-            <td><span class="svc-muted">JS выключен</span></td>
-          </tr>
-          {{end}}
-        </tbody>
-      </table>
-
-      <div id="services-empty" class="svc-empty" hidden>
-        Нет сервисов.
-      </div>
-    </article>
-  </main>
-
-  <div id="svc-drawer" class="svc-drawer" hidden aria-hidden="true">
-    <div class="svc-drawer-backdrop" data-svc-close></div>
-
-    <aside class="svc-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="svc-drawer-title">
-      <header class="svc-drawer-header">
-        <div class="svc-drawer-title-wrap">
-          <h2 id="svc-drawer-title">Сервис</h2>
-          <p id="svc-drawer-subtitle" class="svc-muted"></p>
+        <!-- Панель управления -->
+        <div class="controls-bar">
+            <input type="text" id="newServiceName" placeholder="Имя нового сервиса (например, instagram)">
+            <button class="btn btn-primary" onclick="addService()">Добавить сервис</button>
+            <button class="btn btn-success" onclick="syncAll()">Синхронизировать все</button>
+            <button class="btn btn-info" onclick="testAll()">Тест всех</button>
         </div>
-        <button type="button" class="svc-icon-btn" data-svc-close aria-label="Закрыть">✕</button>
-      </header>
 
-      <nav class="svc-tabs" role="tablist">
-        <button type="button" class="svc-tab active" data-svc-tab="overview">Обзор</button>
-        <button type="button" class="svc-tab" data-svc-tab="history">История</button>
-        <button type="button" class="svc-tab" data-svc-tab="logs">Логи</button>
-        <button type="button" class="svc-tab" data-svc-tab="routes">Маршруты</button>
-      </nav>
-
-      <div class="svc-drawer-body" id="svc-drawer-body">
-        <div class="svc-empty">Загрузка…</div>
-      </div>
-
-      <footer class="svc-drawer-footer">
-        <button type="button" id="svc-drawer-sync" class="svc-primary">Синхронизировать</button>
-        <button type="button" id="svc-drawer-dry" class="svc-outline">Тестовый запуск</button>
-        <button type="button" id="svc-drawer-diff" class="svc-secondary">Diff</button>
-        <button type="button" id="svc-drawer-delete" class="svc-danger">Удалить…</button>
-      </footer>
-    </aside>
-  </div>
-
-  <div id="svc-delete-modal" class="svc-modal" hidden>
-    <div class="svc-modal-backdrop" data-svc-delete-cancel></div>
-
-    <div class="svc-modal-panel" role="dialog" aria-modal="true" aria-labelledby="svc-delete-title">
-      <h3 id="svc-delete-title">Удаление сервиса <span id="svc-delete-name"></span></h3>
-      <p class="svc-muted">
-        Маршруты сервиса помечаются комментарием <code>AUTO:&lt;service&gt;</code>.
-        Выберите, нужно ли удалять сами маршруты из RouterOS.
-      </p>
-
-      <div class="svc-modal-actions">
-        <button type="button" id="svc-delete-keep" class="svc-secondary">
-          Удалить сервис, сохранить маршруты
-        </button>
-        <button type="button" id="svc-delete-purge" class="svc-danger">
-          Удалить сервис и маршруты</button>
-        <button type="button" id="svc-delete-cancel" class="svc-outline">
-          Отмена
-        </button>
-      </div>
+        <!-- Таблица сервисов -->
+        <div class="table-responsive">
+            <table class="services-table">
+                <thead>
+                    <tr>
+                        <th>Сервис</th>
+                        <th>Расписание</th>
+                        <th>Маршрутов</th>
+                        <th>Последняя синхронизация</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{ range .Services }}
+                    <tr data-service="{{ .Name }}">
+                        <td><strong>{{ .Name }}</strong></td>
+                        <td>{{ .Schedule }}</td>
+                        <td>{{ .Routes }}</td>
+                        <td>{{ .LastSync }}</td>
+                        <td>
+                            <div class="service-actions">
+                                <button class="btn-small btn-details" onclick="openDetailsModal('{{ .Name }}')">Детали</button>
+                                <button class="btn-small btn-sync" onclick="syncService('{{ .Name }}')">Синхронизировать</button>
+                                <button class="btn-small btn-test" onclick="testService('{{ .Name }}')">Тест</button>
+                                <button class="btn-small btn-delete" onclick="deleteService('{{ .Name }}')">Удалить</button>
+                            </div>
+                        </td>
+                    </tr>
+                    {{ end }}
+                </tbody>
+            </table>
+        </div>
     </div>
-  </div>
 
-  <div id="svc-diff-modal" class="svc-modal" hidden>
-    <div class="svc-modal-backdrop" data-diff-close></div>
-
-    <div class="svc-modal-panel" role="dialog" aria-modal="true" aria-labelledby="svc-diff-title" style="max-width:700px">
-      <h3 id="svc-diff-title">Изменения маршрутов</h3>
-      <p class="svc-muted" id="svc-diff-subtitle"></p>
-
-      <div class="row" style="margin-top:0">
-        <input type="search" id="svc-diff-search" placeholder="Поиск по префиксу" autocomplete="off">
-        <label class="checkbox-label">
-          <input type="checkbox" id="svc-diff-only" checked>
-          только изменения
-        </label>
-      </div>
-
-      <div class="svc-diff-list" id="svc-diff-list"></div>
-
-      <div class="svc-modal-actions">
-        <button type="button" id="svc-diff-close" class="svc-outline">Закрыть</button>
-      </div>
+    <!-- Модальное окно деталей сервиса -->
+    <div id="serviceDetailsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="detailsServiceName">Детали сервиса</h3>
+                <button class="modal-close" onclick="closeDetailsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Вкладки -->
+                <div class="details-tabs">
+                    <button class="tab-btn active" onclick="switchTab('info', this)">Информация</button>
+                    <button class="tab-btn" onclick="switchTab('routes', this)">Маршруты</button>
+                    <button class="tab-btn" onclick="switchTab('history', this)">История</button>
+                </div>
+                
+                <!-- Вкладка: Информация -->
+                <div id="tab-info" class="tab-content active">
+                    <table class="info-table">
+                        <tr><th>Сервис</th><td id="detailName">-</td></tr>
+                        <tr><th>Список</th><td id="detailList">-</td></tr>
+                        <tr><th>Комментарий</th><td id="detailComment">-</td></tr>
+                        <tr><th>Расписание</th><td id="detailSchedule">-</td></tr>
+                        <tr><th>Количество маршрутов</th><td id="detailRoutes">-</td></tr>
+                        <tr><th>Overrides</th><td id="detailOverrides">-</td></tr>
+                    </table>
+                </div>
+                
+                <!-- Вкладка: Маршруты (только этого сервиса) -->
+                <div id="tab-routes" class="tab-content">
+                    <div class="loading" id="routesLoading" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Загрузка маршрутов...</p>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="routes-table" id="serviceRoutesTable">
+                            <thead>
+                                <tr>
+                                    <th>Адрес</th>
+                                    <th>Комментарий</th>
+                                    <th>Отключено</th>
+                                </tr>
+                            </thead>
+                            <tbody id="serviceRoutesBody">
+                                <tr><td colspan="3" class="loading">Выберите сервис</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Вкладка: История -->
+                <div id="tab-history" class="tab-content">
+                    <div class="loading" id="historyLoading" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Загрузка истории...</p>
+                    </div>
+                    <div id="serviceHistoryContent">
+                        <p class="loading">Выберите сервис</p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-  </div>
+
+    <!-- Контейнер для уведомлений -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        let currentDetailsService = null;
+
+        // ============================================
+        // Уведомления
+        // ============================================
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.remove();
+            }, 4000);
+        }
+
+        // ============================================
+        // Добавление сервиса
+        // ============================================
+        function addService() {
+            const nameInput = document.getElementById('newServiceName');
+            const name = nameInput.value.trim();
+            
+            if (!name) {
+                showToast('Введите имя сервиса', 'warning');
+                return;
+            }
+
+            fetch('/actions/service-add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `name=${encodeURIComponent(name)}&csrf_token={{ .CSRF }}`
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    showToast(`Сервис "${name}" добавлен`, 'success');
+                    nameInput.value = '';
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(data.error || 'Ошибка добавления', 'error');
+                }
+            })
+            .catch(err => showToast('Ошибка: ' + err, 'error'));
+        }
+
+        // ============================================
+        // Синхронизация
+        // ============================================
+        function syncService(name) {
+            showToast(`Синхронизация "${name}" запущена`, 'info');
+            
+            fetch(`/api/v1/services/${name}/sync`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dry_run: false, force: false })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    showToast(`Синхронизация "${name}" завершена`, 'success');
+                } else {
+                    showToast(data.error || 'Ошибка синхронизации', 'error');
+                }
+            })
+            .catch(err => showToast('Ошибка: ' + err, 'error'));
+        }
+
+        function syncAll() {
+            showToast('Синхронизация всех сервисов запущена', 'info');
+            
+            fetch('/api/v1/services/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dry_run: false, force: false })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    showToast('Синхронизация запущена в фоне', 'success');
+                } else {
+                    showToast(data.error || 'Ошибка', 'error');
+                }
+            })
+            .catch(err => showToast('Ошибка: ' + err, 'error'));
+        }
+
+        // ============================================
+        // Тест
+        // ============================================
+        function testService(name) {
+            showToast(`Тест "${name}" запущен`, 'info');
+            
+            fetch(`/api/v1/services/${name}/dry-run`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    const res = data.data;
+                    showToast(`Тест "${name}": +${res.added} -${res.removed} =${res.unchanged}`, 'success');
+                } else {
+                    showToast(data.error || 'Ошибка теста', 'error');
+                }
+            })
+            .catch(err => showToast('Ошибка: ' + err, 'error'));
+        }
+
+        function testAll() {
+            showToast('Тест всех сервисов запущен', 'info');
+            
+            fetch('/api/v1/services/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dry_run: true, force: false })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    showToast('Тест запущен в фоне', 'success');
+                } else {
+                    showToast(data.error || 'Ошибка', 'error');
+                }
+            })
+            .catch(err => showToast('Ошибка: ' + err, 'error'));
+        }
+
+        // ============================================
+        // Удаление сервиса
+        // ============================================
+        function deleteService(name) {
+            if (!confirm(`Удалить сервис "${name}"? Это действие необратимо.`)) {
+                return;
+            }
+
+            fetch(`/api/v1/services/${name}?purge=1`, {
+                method: 'DELETE'
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    showToast(`Сервис "${name}" удалён`, 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(data.error || 'Ошибка удаления', 'error');
+                }
+            })
+            .catch(err => showToast('Ошибка: ' + err, 'error'));
+        }
+
+        // ============================================
+        // Модальное окно деталей
+        // ============================================
+        function openDetailsModal(serviceName) {
+            currentDetailsService = serviceName;
+            document.getElementById('serviceDetailsModal').classList.add('show');
+            document.getElementById('detailsServiceName').textContent = serviceName;
+            document.getElementById('detailName').textContent = serviceName;
+            
+            // Загружаем информацию о сервисе
+            fetch(`/api/v1/services`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ok && data.data.services) {
+                        const service = data.data.services.find(s => s.Name === serviceName || s.name === serviceName);
+                        if (service) {
+                            document.getElementById('detailList').textContent = service.List || service.list || '-';
+                            document.getElementById('detailComment').textContent = service.Comment || service.comment || '-';
+                            document.getElementById('detailSchedule').textContent = service.Schedule || service.schedule || '-';
+                            document.getElementById('detailRoutes').textContent = service.Routes || service.routes || 0;
+                            document.getElementById('detailOverrides').textContent = service.Overrides ? 'Да' : 'Нет';
+                        }
+                    }
+                })
+                .catch(err => showToast('Ошибка загрузки данных', 'error'));
+            
+            // Загружаем маршруты сервиса
+            loadServiceRoutes(serviceName);
+        }
+
+        function closeDetailsModal() {
+            document.getElementById('serviceDetailsModal').classList.remove('show');
+            currentDetailsService = null;
+        }
+
+        // Закрытие по клику вне окна
+        document.getElementById('serviceDetailsModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeDetailsModal();
+            }
+        });
+
+        // ============================================
+        // Загрузка маршрутов сервиса
+        // ============================================
+        function loadServiceRoutes(serviceName) {
+            const tbody = document.getElementById('serviceRoutesBody');
+            const loading = document.getElementById('routesLoading');
+            
+            loading.style.display = 'block';
+            tbody.innerHTML = '';
+            
+            fetch(`/api/v1/address-list/${serviceName}`)
+                .then(r => r.json())
+                .then(data => {
+                    loading.style.display = 'none';
+                    
+                    if (data.ok && data.data.entries) {
+                        const entries = data.data.entries;
+                        if (entries.length === 0) {
+                            tbody.innerHTML = '<tr><td colspan="3" class="loading">Нет маршрутов для этого сервиса</td></tr>';
+                            return;
+                        }
+                        
+                        tbody.innerHTML = entries.map(e => `
+                            <tr>
+                                <td><code>${e.address || e.Address}</code></td>
+                                <td>${e.comment || e.Comment}</td>
+                                <td>${e.disabled ? '<span class="badge badge-error">Да</span>' : '<span class="badge badge-success">Нет</span>'}</td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        tbody.innerHTML = '<tr><td colspan="3" class="loading">Ошибка загрузки или нет данных</td></tr>';
+                    }
+                })
+                .catch(err => {
+                    loading.style.display = 'none';
+                    tbody.innerHTML = '<tr><td colspan="3" class="loading">Ошибка загрузки</td></tr>';
+                });
+        }
+
+        // ============================================
+        // Загрузка истории сервиса
+        // ============================================
+        function loadServiceHistory(serviceName) {
+            const container = document.getElementById('serviceHistoryContent');
+            const loading = document.getElementById('historyLoading');
+            
+            loading.style.display = 'block';
+            container.innerHTML = '';
+            
+            fetch(`/api/v1/history?service=${serviceName}&limit=20`)
+                .then(r => r.json())
+                .then(data => {
+                    loading.style.display = 'none';
+                    
+                    if (data.ok && data.data) {
+                        const records = data.data;
+                        if (records.length === 0) {
+                            container.innerHTML = '<p class="loading">Нет записей истории</p>';
+                            return;
+                        }
+                        
+                        container.innerHTML = `
+                            <table class="routes-table">
+                                <thead>
+                                    <tr>
+                                        <th>Время</th>
+                                        <th>Метод</th>
+                                        <th>Статус</th>
+                                        <th>Добавлено</th>
+                                        <th>Удалено</th>
+                                        <th>Без изменений</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${records.map(r => `
+                                        <tr>
+                                            <td>${new Date(r.time || r.Time).toLocaleString()}</td>
+                                            <td>${r.method || r.Method || '-'}</td>
+                                            <td>${(r.status || r.Status) === 'success' 
+                                                ? '<span class="badge badge-success">успех</span>' 
+                                                : '<span class="badge badge-error">ошибка</span>'}</td>
+                                            <td>+${r.added || r.Added || 0}</td>
+                                            <td>-${r.removed || r.Removed || 0}</td>
+                                            <td>${r.unchanged || r.Unchanged || 0}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        `;
+                    }
+                })
+                .catch(err => {
+                    loading.style.display = 'none';
+                    container.innerHTML = '<p class="loading">Ошибка загрузки истории</p>';
+                });
+        }
+
+        // ============================================
+        // Переключение вкладок
+        // ============================================
+        function switchTab(tabName, btn) {
+            // Скрываем все вкладки
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Убираем активный класс у всех кнопок
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            
+            // Показываем выбранную вкладку
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            btn.classList.add('active');
+            
+            // Загружаем историю при переключении
+            if (tabName === 'history' && currentDetailsService) {
+                loadServiceHistory(currentDetailsService);
+            }
+        }
+    </script>
 </body>
 </html>
-{{end}}
+{{ end }}
