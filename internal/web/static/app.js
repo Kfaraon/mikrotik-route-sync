@@ -566,4 +566,52 @@
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") closePop();
   });
+
+// ============================================
+// Система уведомлений
+// ============================================
+
+function showToast(message, type = 'info') {
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.remove();
+    }, 4000);
+}
+
+// Перехватываем fetch для автоматических уведомлений
+const originalFetch = window.fetch;
+window.fetch = async function(...args) {
+    try {
+        const response = await originalFetch.apply(this, args);
+        
+        if (response.ok) {
+            // Успешные операции
+            const url = args[0];
+            if (typeof url === 'string') {
+                if (url.includes('/sync') || url.includes('/actions')) {
+                    showToast('Операция выполнена успешно', 'success');
+                }
+            }
+        } else if (response.status >= 400) {
+            const data = await response.json().catch(() => ({}));
+            showToast(data.error || 'Ошибка при выполнении операции', 'error');
+        }
+        
+        return response;
+    } catch (error) {
+        showToast('Сетевая ошибка: ' + error.message, 'error');
+        throw error;
+    }
 })();
