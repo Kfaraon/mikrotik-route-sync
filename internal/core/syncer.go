@@ -108,6 +108,9 @@ type Syncer struct {
 
 	reloadMu sync.Mutex
 	reload   func() error
+
+	telegramRestartMu   sync.Mutex
+	telegramRestartFunc func() error
 }
 
 // ============================================================================
@@ -1202,6 +1205,30 @@ func (s *Syncer) ReloadScheduler() error {
 		return fn()
 	}
 	return nil
+}
+
+// SetTelegramRestartFunc регистрирует функцию перезапуска бота.
+// Вызывается из главного процесса при инициализации.
+func (s *Syncer) SetTelegramRestartFunc(fn func() error) {
+	s.telegramRestartMu.Lock()
+	defer s.telegramRestartMu.Unlock()
+	s.telegramRestartFunc = fn
+}
+
+// RestartTelegramBot перезапускает бота с новыми настройками.
+// Возвращает ошибку, если функция перезапуска не зарегистрирована.
+func (s *Syncer) RestartTelegramBot() error {
+	s.telegramRestartMu.Lock()
+	fn := s.telegramRestartFunc
+	s.telegramRestartMu.Unlock()
+	
+	if fn == nil {
+		s.log.Debug("telegram restart function not registered, skipping bot restart")
+		return nil
+	}
+	
+	s.log.Info("restarting telegram bot with new configuration")
+	return fn()
 }
 
 func (s *Syncer) GetLogs(ctx context.Context, limit int) ([]map[string]any, error) {
