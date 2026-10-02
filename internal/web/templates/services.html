@@ -7,87 +7,107 @@
     <title>Сервисы</title>
     <link rel="stylesheet" href="/static/app.css">
     <style>
-        /* Уведомления */
-        .toast-container {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 9999;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .toast {
-            padding: 12px 20px;
-            border-radius: 8px;
-            color: white;
-            font-size: 14px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            animation: slideIn 0.3s ease;
-            max-width: 400px;
-        }
-        .toast-success { background: #28a745; }
-        .toast-error { background: #dc3545; }
-        .toast-warning { background: #ffc107; color: #000; }
-        .toast-info { background: #17a2b8; }
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-
         /* Таблица сервисов */
         .services-table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 14px;
+            background: var(--bg);
+            border-radius: var(--radius);
+            overflow: hidden;
+            box-shadow: 0 1px 3px var(--shadow);
         }
+        
         .services-table th,
         .services-table td {
-            padding: 10px 12px;
+            padding: 12px 16px;
             text-align: left;
-            border-bottom: 1px solid var(--border-color, #e0e0e0);
+            border-bottom: 1px solid var(--border);
         }
+        
         .services-table th {
-            background: var(--bg-secondary, #f5f5f5);
+            background: var(--bg-alt);
             font-weight: 600;
+            color: var(--text);
         }
+        
+        .services-table tbody tr {
+            transition: background var(--transition);
+        }
+        
         .services-table tbody tr:hover {
-            background: var(--bg-hover, #f9f9f9);
+            background: var(--bg-alt);
         }
 
         /* Кнопки действий */
         .service-actions {
             display: flex;
-            gap: 4px;
+            gap: 6px;
             flex-wrap: wrap;
         }
+        
         .btn-small {
-            padding: 4px 10px;
+            padding: 6px 12px;
             font-size: 12px;
-            border-radius: 4px;
+            border-radius: var(--radius);
             border: none;
             cursor: pointer;
-            transition: opacity 0.2s;
+            transition: all var(--transition);
+            font-weight: 500;
         }
-        .btn-small:hover { opacity: 0.85; }
-        .btn-details { background: #6c757d; color: white; }
-        .btn-sync { background: #007bff; color: white; }
-        .btn-test { background: #28a745; color: white; }
-        .btn-delete { background: #dc3545; color: white; }
+        
+        .btn-small:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px var(--shadow);
+        }
+        
+        .btn-details {
+            background: var(--muted);
+            color: white;
+        }
+        
+        .btn-sync {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .btn-test {
+            background: var(--success);
+            color: white;
+        }
+        
+        .btn-delete {
+            background: var(--danger);
+            color: white;
+        }
 
         /* Панель управления */
         .controls-bar {
             display: flex;
             gap: 12px;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
             flex-wrap: wrap;
             align-items: center;
+            padding: 16px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: 0 1px 3px var(--shadow);
         }
+        
         .controls-bar input {
             padding: 8px 12px;
-            border: 1px solid var(--border-color, #ddd);
-            border-radius: 6px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
             font-size: 14px;
+            background: var(--bg);
+            color: var(--text);
+            transition: border var(--transition);
+        }
+        
+        .controls-bar input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
         }
 
         /* Модальное окно деталей */
@@ -97,39 +117,54 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.5);
+            background: rgba(0, 0, 0, 0.5);
             display: none;
             align-items: center;
             justify-content: center;
             z-index: 1000;
         }
-        .modal.show { display: flex; }
+        
+        .modal.show {
+            display: flex;
+        }
+        
         .modal-content {
-            background: white;
-            border-radius: 12px;
+            background: var(--bg);
+            border-radius: var(--radius);
             width: 90%;
             max-width: 900px;
             max-height: 90vh;
             overflow-y: auto;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            box-shadow: 0 10px 40px var(--shadow);
         }
+        
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 16px 24px;
-            border-bottom: 1px solid #e0e0e0;
+            padding: 20px 24px;
+            border-bottom: 2px solid var(--border);
         }
-        .modal-header h3 { margin: 0; }
+        
+        .modal-header h3 {
+            margin: 0;
+            color: var(--text);
+        }
+        
         .modal-close {
             background: none;
             border: none;
             font-size: 28px;
             cursor: pointer;
-            color: #666;
+            color: var(--muted);
             line-height: 1;
+            transition: color var(--transition);
         }
-        .modal-close:hover { color: #000; }
+        
+        .modal-close:hover {
+            color: var(--text);
+        }
+        
         .modal-body {
             padding: 24px;
         }
@@ -138,27 +173,36 @@
         .details-tabs {
             display: flex;
             gap: 8px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #e0e0e0;
+            margin-bottom: 24px;
+            border-bottom: 2px solid var(--border);
             padding-bottom: 12px;
         }
+        
         .tab-btn {
             padding: 10px 20px;
             border: none;
             background: transparent;
-            border-radius: 6px;
+            border-radius: var(--radius);
             cursor: pointer;
             font-size: 14px;
-            transition: all 0.2s;
+            font-weight: 500;
+            color: var(--text);
+            transition: all var(--transition);
         }
-        .tab-btn:hover { background: #f0f0f0; }
+        
+        .tab-btn:hover {
+            background: var(--bg-alt);
+        }
+        
         .tab-btn.active {
-            background: #007bff;
+            background: var(--primary);
             color: white;
         }
+        
         .tab-content {
             display: none;
         }
+        
         .tab-content.active {
             display: block;
         }
@@ -168,15 +212,17 @@
             width: 100%;
             border-collapse: collapse;
         }
+        
         .info-table th,
         .info-table td {
-            padding: 10px 12px;
+            padding: 12px 16px;
             text-align: left;
-            border-bottom: 1px solid #e0e0e0;
+            border-bottom: 1px solid var(--border);
         }
+        
         .info-table th {
             width: 200px;
-            color: var(--text-muted, #666);
+            color: var(--muted);
             font-weight: 500;
         }
 
@@ -186,54 +232,61 @@
             border-collapse: collapse;
             font-size: 13px;
         }
+        
         .routes-table th,
         .routes-table td {
-            padding: 8px 10px;
+            padding: 10px 12px;
             text-align: left;
-            border-bottom: 1px solid #e0e0e0;
+            border-bottom: 1px solid var(--border);
         }
+        
         .routes-table th {
-            background: #f8f9fa;
+            background: var(--bg-alt);
             font-weight: 600;
+            color: var(--text);
         }
+        
         .routes-table tbody tr:hover {
-            background: #f9f9f9;
+            background: var(--bg-alt);
         }
 
-        /* Бейджи */
-        .badge {
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 500;
+        /* Бейджи в модальном окне */
+        .badge-success {
+            background: var(--badge-ok-bg);
+            color: var(--badge-ok-text);
         }
-        .badge-success { background: #d4edda; color: #155724; }
-        .badge-warning { background: #fff3cd; color: #856404; }
-        .badge-error { background: #f8d7da; color: #721c24; }
-        .badge-info { background: #d1ecf1; color: #0c5460; }
+        
+        .badge-error {
+            background: var(--badge-err-bg);
+            color: var(--badge-err-text);
+        }
 
         /* Адаптивность */
         @media (max-width: 768px) {
             .services-table th,
             .services-table td {
-                padding: 8px 6px;
+                padding: 8px 12px;
                 font-size: 13px;
             }
+            
             .service-actions {
                 flex-direction: column;
             }
+            
             .controls-bar {
                 flex-direction: column;
             }
+            
             .controls-bar input,
             .controls-bar button {
                 width: 100%;
             }
+            
             .modal-content {
                 width: 95%;
                 margin: 10px;
             }
+            
             .details-tabs {
                 flex-wrap: wrap;
             }
@@ -243,17 +296,19 @@
         .loading {
             text-align: center;
             padding: 40px;
-            color: var(--text-muted, #666);
+            color: var(--muted);
         }
+        
         .spinner {
             display: inline-block;
             width: 24px;
             height: 24px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #007bff;
+            border: 3px solid var(--border);
+            border-top: 3px solid var(--primary);
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
+        
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
@@ -261,20 +316,20 @@
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="wrap">
         <h1>Сервисы</h1>
         <p>Глобальный список: <strong>{{ .GlobalList }}</strong></p>
 
         <!-- Панель управления -->
         <div class="controls-bar">
             <input type="text" id="newServiceName" placeholder="Имя нового сервиса (например, instagram)">
-            <button class="btn btn-primary" onclick="addService()">Добавить сервис</button>
-            <button class="btn btn-success" onclick="syncAll()">Синхронизировать все</button>
-            <button class="btn btn-info" onclick="testAll()">Тест всех</button>
+            <button class="btn" onclick="addService()">Добавить сервис</button>
+            <button class="btn" style="background: var(--success);" onclick="syncAll()">Синхронизировать все</button>
+            <button class="btn" style="background: var(--warning);" onclick="testAll()">Тест всех</button>
         </div>
 
         <!-- Таблица сервисов -->
-        <div class="table-responsive">
+        <div style="overflow-x: auto;">
             <table class="services-table">
                 <thead>
                     <tr>
@@ -340,7 +395,7 @@
                         <div class="spinner"></div>
                         <p>Загрузка маршрутов...</p>
                     </div>
-                    <div class="table-responsive">
+                    <div style="overflow-x: auto;">
                         <table class="routes-table" id="serviceRoutesTable">
                             <thead>
                                 <tr>
@@ -370,26 +425,8 @@
         </div>
     </div>
 
-    <!-- Контейнер для уведомлений -->
-    <div class="toast-container" id="toastContainer"></div>
-
     <script>
         let currentDetailsService = null;
-
-        // ============================================
-        // Уведомления
-        // ============================================
-        function showToast(message, type = 'info') {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            toast.textContent = message;
-            container.appendChild(toast);
-
-            setTimeout(() => {
-                toast.remove();
-            }, 4000);
-        }
 
         // ============================================
         // Добавление сервиса
@@ -399,7 +436,7 @@
             const name = nameInput.value.trim();
             
             if (!name) {
-                showToast('Введите имя сервиса', 'warning');
+                alert('Введите имя сервиса');
                 return;
             }
 
@@ -411,21 +448,20 @@
             .then(r => r.json())
             .then(data => {
                 if (data.ok) {
-                    showToast(`Сервис "${name}" добавлен`, 'success');
                     nameInput.value = '';
-                    setTimeout(() => location.reload(), 1500);
+                    setTimeout(() => location.reload(), 1000);
                 } else {
-                    showToast(data.error || 'Ошибка добавления', 'error');
+                    alert(data.error || 'Ошибка добавления');
                 }
             })
-            .catch(err => showToast('Ошибка: ' + err, 'error'));
+            .catch(err => alert('Ошибка: ' + err));
         }
 
         // ============================================
         // Синхронизация
         // ============================================
         function syncService(name) {
-            showToast(`Синхронизация "${name}" запущена`, 'info');
+            if (!confirm(`Синхронизировать сервис "${name}"?`)) return;
             
             fetch(`/api/v1/services/${name}/sync`, {
                 method: 'POST',
@@ -435,16 +471,16 @@
             .then(r => r.json())
             .then(data => {
                 if (data.ok) {
-                    showToast(`Синхронизация "${name}" завершена`, 'success');
+                    setTimeout(() => location.reload(), 1000);
                 } else {
-                    showToast(data.error || 'Ошибка синхронизации', 'error');
+                    alert(data.error || 'Ошибка синхронизации');
                 }
             })
-            .catch(err => showToast('Ошибка: ' + err, 'error'));
+            .catch(err => alert('Ошибка: ' + err));
         }
 
         function syncAll() {
-            showToast('Синхронизация всех сервисов запущена', 'info');
+            if (!confirm('Синхронизировать все сервисы?')) return;
             
             fetch('/api/v1/services/sync', {
                 method: 'POST',
@@ -454,20 +490,18 @@
             .then(r => r.json())
             .then(data => {
                 if (data.ok) {
-                    showToast('Синхронизация запущена в фоне', 'success');
+                    alert('Синхронизация запущена в фоне');
                 } else {
-                    showToast(data.error || 'Ошибка', 'error');
+                    alert(data.error || 'Ошибка');
                 }
             })
-            .catch(err => showToast('Ошибка: ' + err, 'error'));
+            .catch(err => alert('Ошибка: ' + err));
         }
 
         // ============================================
         // Тест
         // ============================================
         function testService(name) {
-            showToast(`Тест "${name}" запущен`, 'info');
-            
             fetch(`/api/v1/services/${name}/dry-run`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
@@ -476,16 +510,16 @@
             .then(data => {
                 if (data.ok) {
                     const res = data.data;
-                    showToast(`Тест "${name}": +${res.added} -${res.removed} =${res.unchanged}`, 'success');
+                    alert(`Тест "${name}":\n+${res.added} добавлено\n-${res.removed} удалено\n=${res.unchanged} без изменений`);
                 } else {
-                    showToast(data.error || 'Ошибка теста', 'error');
+                    alert(data.error || 'Ошибка теста');
                 }
             })
-            .catch(err => showToast('Ошибка: ' + err, 'error'));
+            .catch(err => alert('Ошибка: ' + err));
         }
 
         function testAll() {
-            showToast('Тест всех сервисов запущен', 'info');
+            if (!confirm('Запустить тест всех сервисов?')) return;
             
             fetch('/api/v1/services/sync', {
                 method: 'POST',
@@ -495,12 +529,12 @@
             .then(r => r.json())
             .then(data => {
                 if (data.ok) {
-                    showToast('Тест запущен в фоне', 'success');
+                    alert('Тест запущен в фоне');
                 } else {
-                    showToast(data.error || 'Ошибка', 'error');
+                    alert(data.error || 'Ошибка');
                 }
             })
-            .catch(err => showToast('Ошибка: ' + err, 'error'));
+            .catch(err => alert('Ошибка: ' + err));
         }
 
         // ============================================
@@ -517,13 +551,12 @@
             .then(r => r.json())
             .then(data => {
                 if (data.ok) {
-                    showToast(`Сервис "${name}" удалён`, 'success');
-                    setTimeout(() => location.reload(), 1500);
+                    setTimeout(() => location.reload(), 1000);
                 } else {
-                    showToast(data.error || 'Ошибка удаления', 'error');
+                    alert(data.error || 'Ошибка удаления');
                 }
             })
-            .catch(err => showToast('Ошибка: ' + err, 'error'));
+            .catch(err => alert('Ошибка: ' + err));
         }
 
         // ============================================
@@ -550,7 +583,7 @@
                         }
                     }
                 })
-                .catch(err => showToast('Ошибка загрузки данных', 'error'));
+                .catch(err => console.error('Ошибка загрузки данных:', err));
             
             // Загружаем маршруты сервиса
             loadServiceRoutes(serviceName);
