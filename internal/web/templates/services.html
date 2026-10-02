@@ -90,118 +90,6 @@
             font-size: 14px;
         }
 
-        /* КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: модальное окно явно скрыто */
-        .modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: none !important; /* !important чтобы переопределить любые другие стили */
-            align-items: center;
-            justify-content: center;
-            z-index: 10000;
-        }
-        .modal.show { 
-            display: flex !important; 
-        }
-        .modal-content {
-            background: var(--bg, white);
-            border-radius: 12px;
-            width: 90%;
-            max-width: 900px;
-            max-height: 90vh;
-            overflow-y: auto;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-        }
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 16px 24px;
-            border-bottom: 1px solid #e0e0e0;
-        }
-        .modal-header h3 { margin: 0; color: var(--text, #000); }
-        .modal-close {
-            background: none;
-            border: none;
-            font-size: 28px;
-            cursor: pointer;
-            color: #666;
-            line-height: 1;
-        }
-        .modal-close:hover { color: #000; }
-        .modal-body {
-            padding: 24px;
-        }
-
-        .details-tabs {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 12px;
-        }
-        .tab-btn {
-            padding: 10px 20px;
-            border: none;
-            background: transparent;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
-            color: var(--text, #000);
-        }
-        .tab-btn:hover { background: #f0f0f0; }
-        .tab-btn.active {
-            background: #007bff;
-            color: white;
-        }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
-        }
-
-        .info-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .info-table th,
-        .info-table td {
-            padding: 10px 12px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-            color: var(--text, #000);
-        }
-        .info-table th {
-            width: 200px;
-            color: var(--text-muted, #666);
-            font-weight: 500;
-        }
-
-        .routes-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }
-        .routes-table th,
-        .routes-table td {
-            padding: 8px 10px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-            color: var(--text, #000);
-        }
-        .routes-table th {
-            background: #f8f9fa;
-            font-weight: 600;
-        }
-        .routes-table tbody tr:hover {
-            background: #f9f9f9;
-        }
-
         .badge {
             display: inline-block;
             padding: 3px 10px;
@@ -230,32 +118,6 @@
             .controls-bar button {
                 width: 100%;
             }
-            .modal-content {
-                width: 95%;
-                margin: 10px;
-            }
-            .details-tabs {
-                flex-wrap: wrap;
-            }
-        }
-
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: var(--text-muted, #666);
-        }
-        .spinner {
-            display: inline-block;
-            width: 24px;
-            height: 24px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #007bff;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -319,14 +181,14 @@
     </div>
   </main>
 
-  <!-- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: модальное окно скрыто через inline style -->
-  <div id="serviceDetailsModal" class="modal" style="display: none;">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 id="detailsServiceName">Детали сервиса</h3>
-        <button class="modal-close" onclick="closeDetailsModal()">&times;</button>
+  <!-- Модальное окно деталей сервиса - скрыто через inline style -->
+  <div id="serviceDetailsModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
+    <div style="background: var(--bg, white); border-radius: 12px; width: 90%; max-width: 900px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid #e0e0e0;">
+        <h3 id="detailsServiceName" style="margin: 0;">Детали сервиса</h3>
+        <button class="modal-close" onclick="closeDetailsModal()" style="background: none; border: none; font-size: 28px; cursor: pointer; color: #666;">&times;</button>
       </div>
-      <div class="modal-body">
+      <div style="padding: 24px;">
         <div class="details-tabs">
           <button class="tab-btn active" onclick="switchTab('info', this)">Информация</button>
           <button class="tab-btn" onclick="switchTab('routes', this)">Маршруты</button>
@@ -478,7 +340,7 @@
     function openDetailsModal(serviceName) {
       currentDetailsService = serviceName;
       const modal = document.getElementById('serviceDetailsModal');
-      modal.classList.add('show');
+      modal.style.display = 'flex';
       document.getElementById('detailsServiceName').textContent = serviceName;
       document.getElementById('detailName').textContent = serviceName;
       
@@ -499,7 +361,7 @@
     }
 
     function closeDetailsModal() {
-      document.getElementById('serviceDetailsModal').classList.remove('show');
+      document.getElementById('serviceDetailsModal').style.display = 'none';
       currentDetailsService = null;
     }
 
