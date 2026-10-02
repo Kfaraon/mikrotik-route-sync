@@ -81,7 +81,6 @@
       return s;
     }
 
-    // Единый удобочитаемый формат: ДД.ММ.ГГГГ ЧЧ:ММ:СС
     function formatLogTime(ts) {
       if (!ts) return "";
       var d = new Date(ts);
@@ -117,7 +116,6 @@
       });
     }
 
-    // Подсветка совпадений поиска (по уже экранированному тексту)
     function hl(escaped) {
       if (!logQueryEsc) return escaped;
       var lower = escaped.toLowerCase();
@@ -353,7 +351,6 @@
 
           var entries = Array.isArray(j.data) ? j.data : [];
 
-          // Клиентский полнотекстовый поиск
           if (logQuery) {
             var qq = logQuery.toLowerCase();
             entries = entries.filter(function (e) {
@@ -378,8 +375,6 @@
 
           var html = "";
 
-          // API возвращает свежие записи первыми.
-          // В UI показываем хронологически: старые сверху, новые снизу.
           for (var i = entries.length - 1; i >= 0; i--) {
             html += renderLogEntry(entries[i]);
           }
@@ -387,7 +382,6 @@
           logOutput.innerHTML = html;
           updateStats();
 
-          // Автопрокрутка вниз, если не на паузе
           if (!logPaused) {
             logOutput.scrollTop = logOutput.scrollHeight;
           }
@@ -403,7 +397,6 @@
         });
     }
 
-    // Live-обновление логов каждые 15 с, если не на паузе
     function scheduleLive() {
       if (logLiveTimer) {
         clearInterval(logLiveTimer);
@@ -527,7 +520,6 @@
     });
   });
 
-  // Подсказки "?": клик по кнопке показывает/скрывает описание настройки.
   var activePop = null;
 
   function closePop() {
@@ -567,51 +559,4 @@
     if (e.key === "Escape") closePop();
   });
 
-// ============================================
-// Система уведомлений
-// ============================================
-
-function showToast(message, type = 'info') {
-    let container = document.getElementById('toastContainer');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'toastContainer';
-        container.className = 'toast-container';
-        document.body.appendChild(container);
-    }
-
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    container.appendChild(toast);
-
-    setTimeout(() => {
-        toast.remove();
-    }, 4000);
-}
-
-// Перехватываем fetch для автоматических уведомлений
-const originalFetch = window.fetch;
-window.fetch = async function(...args) {
-    try {
-        const response = await originalFetch.apply(this, args);
-        
-        if (response.ok) {
-            // Успешные операции
-            const url = args[0];
-            if (typeof url === 'string') {
-                if (url.includes('/sync') || url.includes('/actions')) {
-                    showToast('Операция выполнена успешно', 'success');
-                }
-            }
-        } else if (response.status >= 400) {
-            const data = await response.json().catch(() => ({}));
-            showToast(data.error || 'Ошибка при выполнении операции', 'error');
-        }
-        
-        return response;
-    } catch (error) {
-        showToast('Сетевая ошибка: ' + error.message, 'error');
-        throw error;
-    }
 })();
