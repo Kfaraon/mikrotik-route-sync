@@ -4,11 +4,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ .CSRF }}">
     <title>Списки адресов</title>
     <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="/static/addresslist.css">
 </head>
 <body>
+    <!-- Навигационная панель -->
+    <nav class="bar">
+        <span class="brand">MikroTik Route Sync</span>
+        <a href="/">Дашборд</a>
+        <a href="/services">Сервисы</a>
+        <a href="/address-list" class="active">Списки адресов</a>
+        <a href="/schedules">Расписания</a>
+        <a href="/settings">Настройки</a>
+        <a href="/logs">Логи</a>
+        <span class="bar-right">
+            <span id="live-dot" class="live-dot" title="Live: нет подключения"></span>
+            <span class="ver">v{{ .Version }}</span>
+            <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
+        </span>
+    </nav>
+
     <div class="container">
         <h1>Списки адресов</h1>
         <p>Глобальный список: <strong>{{ .GlobalList }}</strong> | Префикс: <code>{{ .Prefix }}</code></p>
@@ -109,6 +126,8 @@
     <!-- Контейнер для уведомлений -->
     <div class="toast-container" id="toastContainer"></div>
 
+    <!-- Скрипты -->
+    <script src="/static/theme.js"></script>
     <script src="/static/addresslist.js"></script>
 </body>
 </html>
