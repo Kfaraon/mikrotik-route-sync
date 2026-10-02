@@ -11,135 +11,12 @@
   <script src="/static/htmx.min.js"></script>
   <script src="/static/app.js" defer></script>
   <style>
-    .address-table-container {
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-    }
-    .address-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    .address-table th,
-    .address-table td {
-      padding: 6px 8px;
-      text-align: left;
-      border-bottom: 1px solid var(--border-color, #e0e0e0);
-      white-space: nowrap;
-    }
-    .address-table th {
-      background: var(--bg-secondary, #f5f5f5);
-      font-weight: 600;
-      position: sticky;
-      top: 0;
-      z-index: 10;
-    }
-    .address-table tbody tr {
-      height: 32px;
-    }
-    .address-table tbody tr:hover {
-      background: var(--bg-hover, #f9f9f9);
-    }
-    @media (max-width: 768px) {
-      .address-table th,
-      .address-table td {
-        padding: 4px 6px;
-        font-size: 12px;
-      }
-      .address-table tbody tr {
-        height: 28px;
-      }
-    }
-
-    .filter-bar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 16px;
-      padding: 12px;
-      background: var(--bg-secondary, #f5f5f5);
-      border-radius: 8px;
-    }
-    .filter-group {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .filter-group label {
-      font-size: 11px;
-      color: var(--text-muted, #666);
-    }
-    .filter-input {
-      padding: 6px 10px;
-      border: 1px solid var(--border-color, #ddd);
-      border-radius: 4px;
-      font-size: 13px;
-      min-width: 120px;
-    }
-    .filter-input:focus {
-      outline: none;
-      border-color: var(--primary, #007bff);
-    }
-    @media (max-width: 768px) {
-      .filter-bar {
-        flex-direction: column;
-      }
-      .filter-group {
-        width: 100%;
-      }
-      .filter-input {
-        width: 100%;
-      }
-    }
-
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 11px;
-      font-weight: 500;
-    }
-    .badge-managed {
-      background: #d4edda;
-      color: #155724;
-    }
-    .badge-disabled {
-      background: #f8d7da;
-      color: #721c24;
-    }
-    .badge-dynamic {
-      background: #fff3cd;
-      color: #856404;
-    }
-    .badge-service {
-      background: #e2e3e5;
-      color: #383d41;
-    }
-
-    .results-count {
-      font-size: 13px;
-      color: var(--text-muted, #666);
-      margin-bottom: 8px;
-    }
-
-    .loading {
-      text-align: center;
-      padding: 40px;
-      color: var(--text-muted, #666);
-    }
-    .spinner {
-      display: inline-block;
-      width: 24px;
-      height: 24px;
-      border: 3px solid #f3f3f3;
-      border-top: 3px solid #007bff;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
+    .address-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    .address-table th, .address-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .address-table th { background: var(--bg-alt); font-weight: 600; }
+    .address-table tbody tr:hover { background: var(--bg-alt); }
+    .results-count { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.75rem; }
+    .loading { text-align: center; padding: 2rem; color: var(--muted); }
   </style>
 </head>
 <body>
@@ -160,123 +37,136 @@
 
   <main class="wrap">
     <h1>Списки адресов</h1>
-    <p>Глобальный список: <strong>{{ .GlobalList }}</strong> | Префикс: <code>{{ .Prefix }}</code></p>
+    <p class="muted">Глобальный список: <strong>{{ .GlobalList }}</strong> | Префикс: <code>{{ .Prefix }}</code></p>
 
-    <div class="filter-bar">
-      <div class="filter-group">
-        <label for="filterAddress">Адрес</label>
-        <input type="text" class="filter-input" id="filterAddress" placeholder="192.168.1.0/24">
+    <!-- Панель фильтров — ТАКАЯ ЖЕ как на странице «Логи» -->
+    <div class="log-toolbar">
+      <div class="log-filters">
+        <div class="filter-group">
+          <label for="filterAddress">Адрес:</label>
+          <input type="text" id="filterAddress" placeholder="192.168.1.0/24">
+        </div>
+        <div class="filter-group">
+          <label for="filterComment">Комментарий:</label>
+          <input type="text" id="filterComment" placeholder="AUTO:…">
+        </div>
+        <div class="filter-group">
+          <label for="filterService">Сервис:</label>
+          <input type="text" id="filterService" placeholder="rutor.org">
+        </div>
+        <div class="filter-group">
+          <label for="filterManaged">Управляемая:</label>
+          <select id="filterManaged">
+            <option value="">Все</option>
+            <option value="yes">Да</option>
+            <option value="no">Нет</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filterDisabled">Отключено:</label>
+          <select id="filterDisabled">
+            <option value="">Все</option>
+            <option value="yes">Да</option>
+            <option value="no">Нет</option>
+          </select>
+        </div>
       </div>
-      <div class="filter-group">
-        <label for="filterComment">Комментарий</label>
-        <input type="text" class="filter-input" id="filterComment" placeholder="AUTO:...">
-      </div>
-      <div class="filter-group">
-        <label for="filterService">Сервис</label>
-        <input type="text" class="filter-input" id="filterService" placeholder="rutor.org">
-      </div>
-      <div class="filter-group">
-        <label for="filterManaged">Управляемая</label>
-        <select class="filter-input" id="filterManaged">
-          <option value="">Все</option>
-          <option value="yes">Да</option>
-          <option value="no">Нет</option>
-        </select>
-      </div>
-      <div class="filter-group">
-        <label for="filterDisabled">Отключено</label>
-        <select class="filter-input" id="filterDisabled">
-          <option value="">Все</option>
-          <option value="yes">Да</option>
-          <option value="no">Нет</option>
-        </select>
-      </div>
-      <div class="filter-group" style="justify-content: flex-end;">
-        <button class="btn secondary" onclick="clearFilters()">Сбросить</button>
-        <button class="btn primary" onclick="loadData()">Обновить</button>
+      <div class="log-actions">
+        <button type="button" class="primary" onclick="loadData()">⟳ Обновить</button>
+        <button type="button" class="secondary" onclick="clearFilters()">Сбросить</button>
       </div>
     </div>
 
-    <div class="results-count" id="resultsCount">Загрузка...</div>
+    <div class="results-count" id="resultsCount">Загрузка…</div>
 
-    <div class="address-table-container">
-      <table class="address-table" id="addressTable">
-        <thead>
-          <tr>
-            <th>Адрес</th>
-            <th>Комментарий</th>
-            <th>Сервис</th>
-            <th>Управляемая</th>
-            <th>Отключено</th>
-          </tr>
-        </thead>
-        <tbody id="addressTableBody">
-          <tr><td colspan="5" class="loading"><div class="spinner"></div><p>Загрузка данных...</p></td></tr>
-        </tbody>
-      </table>
-    </div>
+    <article style="padding: 0; overflow: hidden;">
+      <div style="overflow-x: auto;">
+        <table class="address-table">
+          <thead>
+            <tr>
+              <th>Адрес</th>
+              <th>Комментарий</th>
+              <th>Сервис</th>
+              <th>Управляемая</th>
+              <th>Отключено</th>
+            </tr>
+          </thead>
+          <tbody id="addressTableBody">
+            <tr><td colspan="5" class="loading">Загрузка данных…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
   </main>
 
   <script>
-    let allData = [];
+    var allData = [];
 
     function loadData() {
-      const tbody = document.getElementById('addressTableBody');
-      tbody.innerHTML = '<tr><td colspan="5" class="loading"><div class="spinner"></div><p>Загрузка данных...</p></td></tr>';
-
+      var tbody = document.getElementById('addressTableBody');
+      tbody.innerHTML = '<tr><td colspan="5" class="loading">Загрузка данных…</td></tr>';
       fetch('/api/v1/address-list', { credentials: 'same-origin' })
-        .then(r => r.json())
-        .then(data => {
-          if (data.ok && data.data.entries) {
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.ok && data.data && data.data.entries) {
             allData = data.data.entries;
             applyFilters();
           } else {
-            tbody.innerHTML = '<tr><td colspan="5" class="loading">Ошибка загрузки данных</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="loading">MikroTik недоступен или нет данных</td></tr>';
+            document.getElementById('resultsCount').textContent = 'Нет данных';
           }
         })
-        .catch(err => {
+        .catch(function () {
           tbody.innerHTML = '<tr><td colspan="5" class="loading">Ошибка сети</td></tr>';
         });
     }
 
     function applyFilters() {
-      const tbody = document.getElementById('addressTableBody');
-      const addressFilter = document.getElementById('filterAddress').value.toLowerCase();
-      const commentFilter = document.getElementById('filterComment').value.toLowerCase();
-      const serviceFilter = document.getElementById('filterService').value.toLowerCase();
-      const managedFilter = document.getElementById('filterManaged').value;
-      const disabledFilter = document.getElementById('filterDisabled').value;
+      var tbody = document.getElementById('addressTableBody');
+      var fAddr = document.getElementById('filterAddress').value.toLowerCase();
+      var fCom = document.getElementById('filterComment').value.toLowerCase();
+      var fSvc = document.getElementById('filterService').value.toLowerCase();
+      var fMan = document.getElementById('filterManaged').value;
+      var fDis = document.getElementById('filterDisabled').value;
 
-      const filtered = allData.filter(entry => {
-        const address = (entry.address || entry.Address || '').toLowerCase();
-        const comment = (entry.comment || entry.Comment || '').toLowerCase();
-        const service = (entry.service || entry.Service || '').toLowerCase();
-        const managed = (entry.managed || entry.Managed) ? 'yes' : 'no';
-        const disabled = (entry.disabled || entry.Disabled) ? 'yes' : 'no';
-
-        return (!addressFilter || address.includes(addressFilter)) &&
-               (!commentFilter || comment.includes(commentFilter)) &&
-               (!serviceFilter || service.includes(serviceFilter)) &&
-               (!managedFilter || managed === managedFilter) &&
-               (!disabledFilter || disabled === disabledFilter);
+      var filtered = allData.filter(function (e) {
+        var addr = String(e.address || e.Address || '').toLowerCase();
+        var com = String(e.comment || e.Comment || '').toLowerCase();
+        var svc = '';
+        if (com.indexOf('auto:') === 0) svc = com.substring(5);
+        var man = (com.indexOf('auto:') === 0) ? 'yes' : 'no';
+        var dis = (e.disabled === true || e.disabled === 'true' || e.Disabled === true) ? 'yes' : 'no';
+        return (!fAddr || addr.indexOf(fAddr) !== -1) &&
+               (!fCom || com.indexOf(fCom) !== -1) &&
+               (!fSvc || svc.indexOf(fSvc) !== -1) &&
+               (!fMan || man === fMan) &&
+               (!fDis || dis === fDis);
       });
 
-      document.getElementById('resultsCount').textContent = `Показано ${filtered.length} из ${allData.length} записей`;
+      document.getElementById('resultsCount').textContent =
+        'Показано ' + filtered.length + ' из ' + allData.length + ' записей';
 
       if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="loading">Нет записей, соответствующих фильтрам</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="loading">Нет записей по заданным фильтрам</td></tr>';
         return;
       }
 
-      tbody.innerHTML = filtered.map(entry => `
-        <tr>
-          <td><code>${entry.address || entry.Address || ''}</code></td>
-          <td>${entry.comment || entry.Comment || ''}</td>
-          <td>${(entry.service || entry.Service) ? `<span class="badge badge-service">${entry.service || entry.Service}</span>` : '—'}</td>
-          <td>${(entry.managed || entry.Managed) ? '<span class="badge badge-managed">Да</span>' : '<span class="badge badge-dynamic">Нет</span>'}</td>
-          <td>${(entry.disabled || entry.Disabled) ? '<span class="badge badge-disabled">Да</span>' : '—'}</td>
-        </tr>
-      `).join('');
+      var html = '';
+      for (var i = 0; i < filtered.length; i++) {
+        var e = filtered[i];
+        var addr = e.address || e.Address || '';
+        var com = e.comment || e.Comment || '';
+        var svc = (com.indexOf('auto:') === 0) ? com.substring(5) : '';
+        var man = (com.indexOf('auto:') === 0);
+        var dis = (e.disabled === true || e.disabled === 'true' || e.Disabled === true);
+        html += '<tr>' +
+          '<td><code>' + addr + '</code></td>' +
+          '<td>' + com + '</td>' +
+          '<td>' + (svc ? '<span class="badge badge-auto">' + svc + '</span>' : '—') + '</td>' +
+          '<td>' + (man ? '<span class="badge badge-ok">Да</span>' : '<span class="badge badge-muted">Нет</span>') + '</td>' +
+          '<td>' + (dis ? '<span class="badge badge-err">Да</span>' : '—') + '</td></tr>';
+      }
+      tbody.innerHTML = html;
     }
 
     function clearFilters() {
@@ -288,8 +178,11 @@
       applyFilters();
     }
 
-    ['filterAddress', 'filterComment', 'filterService', 'filterManaged', 'filterDisabled'].forEach(id => {
+    ['filterAddress', 'filterComment', 'filterService'].forEach(function (id) {
       document.getElementById(id).addEventListener('input', applyFilters);
+    });
+    ['filterManaged', 'filterDisabled'].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', applyFilters);
     });
 
     loadData();
