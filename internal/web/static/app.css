@@ -1130,3 +1130,80 @@ code {
 .svc-diff-add { color: var(--success); font-weight: 600; }
 .svc-diff-del { color: var(--danger); font-weight: 600; }
 .svc-diff-same { color: var(--muted); }
+
+/* ============================================
+   Уведомления (Toast)
+   ============================================ */
+.toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.toast {
+    padding: 12px 20px;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    animation: toastSlideIn 0.3s ease;
+    max-width: 400px;
+}
+
+.toast-success { background: #28a745; }
+.toast-error { background: #dc3545; }
+.toast-warning { background: #ffc107; color: #000; }
+.toast-info { background: #17a2b8; }
+
+@keyframes toastSlideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+/* ============================================
+   Компактные таблицы
+   ============================================ */
+.table-compact {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.table-compact th,
+.table-compact td {
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.table-compact tbody tr {
+    height: 32px;
+}
+
+/* ============================================
+   Адаптивность
+   ============================================ */
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 768px) {
+    .table-compact th,
+    .table-compact td {
+        padding: 4px 6px;
+        font-size: 12px;
+    }
+    
+    .table-compact tbody tr {
+        height: 28px;
+    }
+    
+    .filter-bar {
+        flex-direction: column;
+    }
+}
