@@ -814,7 +814,7 @@ var settingsSpec = []settingSpec{
 	{"Firewall Address List", "firewall.manage_disabled", "Создавать записи disabled", "bool",
 		"false (рекомендуется) — новые записи всегда disabled=false. true — поле disabled не задаётся явно."},
 	{"Telegram", "telegram.enabled", "Включить Telegram", "bool",
-		"Уведомления и команды бота. Нотификатор пересоздаётся сразу; отдельно запущенному 'app bot' может понадобиться рестарт."},
+		"Уведомления и команды бота. Нотификатор и бот пересоздаются сразу."},
 	{"Telegram", "telegram.bot_token", "Токен бота", "secret",
 		"Выдаётся @BotFather. ENV MRS_TELEGRAM_BOT_TOKEN имеет приоритет."},
 	{"Telegram", "telegram.chat_id", "Chat ID для уведомлений", "text",
@@ -1221,7 +1221,7 @@ func rowsLess(a, b addressRow) bool {
 	return a.Address < b.Address
 }
 
-// ИЗМЕНЕНО: pageAddressList — русское сообщение, DEBUG-уровень логирования
+// ИЗМЕНЕНО: русское сообщение, DEBUG-уровень логирования
 func (s *Server) pageAddressList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -1240,7 +1240,7 @@ func (s *Server) pageAddressList(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "addresslist.html", data)
 }
 
-// ИЗМЕНЕНО: apiAddressList — возвращаем пустой список с HTTP 200 при недоступности Микротика
+// ИЗМЕНЕНО: возвращаем пустой список с HTTP 200 при недоступности Микротика
 func (s *Server) apiAddressList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -1261,7 +1261,7 @@ func (s *Server) apiAddressList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ИЗМЕНЕНО: apiServiceAddressList — возвращаем пустой список с HTTP 200 при недоступности Микротика
+// ИЗМЕНЕНО: возвращаем пустой список с HTTP 200 при недоступности Микротика
 func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "service")
 	if !config.ValidateServiceName(name) {
@@ -1429,6 +1429,7 @@ func (s *Server) cloneConfig() (*config.Config, error) {
 	return clone, nil
 }
 
+// ИЗМЕНЕНО: добавлен вызов RestartTelegramBot
 func (s *Server) applyRuntimeChanges() {
 	logging.SetLevel(s.cfg.Logging.Level)
 
@@ -1436,10 +1437,10 @@ func (s *Server) applyRuntimeChanges() {
 		s.log.Error("failed to apply config to clients", "err", err)
 	}
 
-	// Пересоздаём нотификатор для отправки сообщений
+	// Нотификатор пересоздаётся, если менялись telegram.* настройки.
 	s.syncer.SetNotifier(notifier.FromConfig(s.cfg.Telegram, s.log))
 
-	// ДОБАВЛЕНО: перезапуск бота при изменении telegram.* настроек
+	// Перезапуск Telegram-бота при изменении настроек telegram.*
 	if err := s.syncer.RestartTelegramBot(); err != nil {
 		s.log.Warn("failed to restart telegram bot", "err", err)
 	}
