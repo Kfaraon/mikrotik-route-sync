@@ -561,13 +561,14 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 	telegramBotMu.Lock()
 	defer telegramBotMu.Unlock()
 
-	// Останавливаем текущий бот
+	// Останавливаем текущий бот через отмену контекста
 	if botCancel != nil {
 		botCancel()
 		botCancel = nil
 	}
+	
+	// Ждём завершения текущей горутины бота
 	if telegramBot != nil {
-		telegramBot.Stop()
 		telegramBot = nil
 	}
 
@@ -589,7 +590,7 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 
 	// Запускаем в отдельной горутине
 	go func() {
-		if err := newBot.Start(botCtx); err != nil {
+		if err := newBot.Run(botCtx); err != nil {
 			log.Error("telegram bot stopped with error", "err", err)
 		}
 	}()
