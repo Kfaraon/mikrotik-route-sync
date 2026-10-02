@@ -1,87 +1,71 @@
-document.addEventListener('DOMContentLoaded', function() {
-    const filters = {
-        address: document.getElementById('filterAddress'),
-        comment: document.getElementById('filterComment'),
-        service: document.getElementById('filterService'),
-        managed: document.getElementById('filterManaged'),
-        disabled: document.getElementById('filterDisabled')
+(function () {
+    "use strict";
+
+    var page = document.getElementById("addressTable");
+    if (!page) return;
+
+    var filters = {
+        address: document.getElementById("filterAddress"),
+        comment: document.getElementById("filterComment"),
+        service: document.getElementById("filterService"),
+        managed: document.getElementById("filterManaged"),
+        disabled: document.getElementById("filterDisabled")
     };
 
-    const clearBtn = document.getElementById('btnClearFilters');
-    if (clearBtn) {
-        clearBtn.addEventListener('click', clearFilters);
-    }
+    var clearBtn = document.getElementById("btnClearFilters");
 
     function applyFilters() {
-        const rows = document.querySelectorAll('#addressTable tbody tr');
-        let visibleCount = 0;
+        var rows = document.querySelectorAll("#addressTable tbody tr");
+        var visibleCount = 0;
 
-        const addressFilter = filters.address ? filters.address.value.toLowerCase() : '';
-        const commentFilter = filters.comment ? filters.comment.value.toLowerCase() : '';
-        const serviceFilter = filters.service ? filters.service.value.toLowerCase() : '';
-        const managedFilter = filters.managed ? filters.managed.value : '';
-        const disabledFilter = filters.disabled ? filters.disabled.value : '';
+        var addressFilter = filters.address ? filters.address.value.toLowerCase() : "";
+        var commentFilter = filters.comment ? filters.comment.value.toLowerCase() : "";
+        var serviceFilter = filters.service ? filters.service.value.toLowerCase() : "";
+        var managedFilter = filters.managed ? filters.managed.value : "";
+        var disabledFilter = filters.disabled ? filters.disabled.value : "";
 
-        rows.forEach(function(row) {
-            const address = row.dataset.address ? row.dataset.address.toLowerCase() : '';
-            const comment = row.dataset.comment ? row.dataset.comment.toLowerCase() : '';
-            const service = row.dataset.service ? row.dataset.service.toLowerCase() : '';
-            const managed = row.dataset.managed || '';
-            const disabled = row.dataset.disabled || '';
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            var address = (row.dataset.address || "").toLowerCase();
+            var comment = (row.dataset.comment || "").toLowerCase();
+            var service = (row.dataset.service || "").toLowerCase();
+            var managed = row.dataset.managed || "";
+            var disabled = row.dataset.disabled || "";
 
-            const matchAddress = !addressFilter || address.includes(addressFilter);
-            const matchComment = !commentFilter || comment.includes(commentFilter);
-            const matchService = !serviceFilter || service.includes(serviceFilter);
-            const matchManaged = !managedFilter || managed === managedFilter;
-            const matchDisabled = !disabledFilter || disabled === disabledFilter;
+            var match = (!addressFilter || address.indexOf(addressFilter) !== -1) &&
+                        (!commentFilter || comment.indexOf(commentFilter) !== -1) &&
+                        (!serviceFilter || service.indexOf(serviceFilter) !== -1) &&
+                        (!managedFilter || managed === managedFilter) &&
+                        (!disabledFilter || disabled === disabledFilter);
 
-            if (matchAddress && matchComment && matchService && matchManaged && matchDisabled) {
-                row.style.display = '';
-                visibleCount++;
-            } else {
-                row.style.display = 'none';
-            }
-        });
+            row.style.display = match ? "" : "none";
+            if (match) visibleCount++;
+        }
 
-        const countEl = document.getElementById('resultsCount');
+        var countEl = document.getElementById("resultsCount");
         if (countEl) {
-            countEl.textContent = 'Показано ' + visibleCount + ' из ' + rows.length + ' записей';
+            countEl.textContent = "Показано " + visibleCount + " из " + rows.length + " записей";
         }
     }
 
     function clearFilters() {
-        if (filters.address) filters.address.value = '';
-        if (filters.comment) filters.comment.value = '';
-        if (filters.service) filters.service.value = '';
-        if (filters.managed) filters.managed.value = '';
-        if (filters.disabled) filters.disabled.value = '';
+        if (filters.address) filters.address.value = "";
+        if (filters.comment) filters.comment.value = "";
+        if (filters.service) filters.service.value = "";
+        if (filters.managed) filters.managed.value = "";
+        if (filters.disabled) filters.disabled.value = "";
         applyFilters();
     }
 
-    // Привязка событий ко всем фильтрам
-    Object.keys(filters).forEach(function(key) {
-        const input = filters[key];
-        if (input) {
-            input.addEventListener('input', applyFilters);
+    if (clearBtn) {
+        clearBtn.addEventListener("click", clearFilters);
+    }
+
+    for (var key in filters) {
+        if (filters[key]) {
+            filters[key].addEventListener("input", applyFilters);
         }
-    });
+    }
 
-    // Инициализация
     applyFilters();
-});
-
-// Глобальная функция для уведомлений (может использоваться в других местах)
-window.showToast = function(message, type) {
-    type = type || 'info';
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
-    
-    const toast = document.createElement('div');
-    toast.className = 'toast toast-' + type;
-    toast.textContent = message;
-    container.appendChild(toast);
-
-    setTimeout(function() {
-        toast.remove();
-    }, 4000);
-};
+})();
