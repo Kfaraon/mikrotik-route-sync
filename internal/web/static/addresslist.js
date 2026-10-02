@@ -1,8 +1,8 @@
 (function () {
     "use strict";
 
-    var page = document.getElementById("addressTable");
-    if (!page) return;
+    var table = document.getElementById("addressTable");
+    if (!table) return;
 
     var filters = {
         address: document.getElementById("filterAddress"),
