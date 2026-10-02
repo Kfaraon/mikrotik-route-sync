@@ -10,7 +10,6 @@
     <link rel="stylesheet" href="/static/addresslist.css">
 </head>
 <body>
-    <!-- Навигационная панель -->
     <nav class="bar">
         <span class="brand">MikroTik Route Sync</span>
         <a href="/">Дашборд</a>
@@ -34,7 +33,6 @@
         <div class="alert alert-error">{{ .Error }}</div>
         {{ else }}
 
-        <!-- Фильтры -->
         <div class="filter-bar">
             <div class="filter-group">
                 <label>Адрес</label>
@@ -69,10 +67,8 @@
             </div>
         </div>
 
-        <!-- Счётчик результатов -->
         <div class="results-count" id="resultsCount"></div>
 
-        <!-- Таблица -->
         <div class="address-table-container">
             <table class="address-table" id="addressTable">
                 <thead>
@@ -119,16 +115,14 @@
                 </tbody>
             </table>
         </div>
-
         {{ end }}
     </div>
 
-    <!-- Контейнер для уведомлений -->
-    <div class="toast-container" id="toastContainer"></div>
+    <div id="mrs-toast" class="toast"></div>
 
-    <!-- Скрипты -->
     <script src="/static/theme.js"></script>
-    <script src="/static/addresslist.js"></script>
+    <script src="/static/addresslist.js" defer></script>
+    <script src="/static/app.js" defer></script>
 </body>
 </html>
 {{ end }}
