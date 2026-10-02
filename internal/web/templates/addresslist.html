@@ -1,192 +1,115 @@
 {{ define "addresslist.html" }}
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <title>MikroTik Route Sync — Списки адресов</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="csrf-token" content="{{ .CSRF }}">
-  <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/theme.js"></script>
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/app.js" defer></script>
-  <style>
-    .address-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    .address-table th, .address-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
-    .address-table th { background: var(--bg-alt); font-weight: 600; }
-    .address-table tbody tr:hover { background: var(--bg-alt); }
-    .results-count { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.75rem; }
-    .loading { text-align: center; padding: 2rem; color: var(--muted); }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Списки адресов</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <link rel="stylesheet" href="/static/addresslist.css">
 </head>
 <body>
-  <nav class="bar">
-    <span class="brand">MikroTik Route Sync</span>
-    <a href="/">Дашборд</a>
-    <a href="/services">Сервисы</a>
-    <a href="/address-list" class="active">Списки адресов</a>
-    <a href="/schedules">Расписания</a>
-    <a href="/settings">Настройки</a>
-    <a href="/logs">Логи</a>
-    <span class="bar-right">
-      <span id="live-dot" class="live-dot" title="Live: нет подключения"></span>
-      <span class="ver">v{{ .Version }}</span>
-      <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
-    </span>
-  </nav>
+    <div class="container">
+        <h1>Списки адресов</h1>
+        <p>Глобальный список: <strong>{{ .GlobalList }}</strong> | Префикс: <code>{{ .Prefix }}</code></p>
 
-  <main class="wrap">
-    <h1>Списки адресов</h1>
-    <p class="muted">Глобальный список: <strong>{{ .GlobalList }}</strong> | Префикс: <code>{{ .Prefix }}</code></p>
+        {{ if .Error }}
+        <div class="alert alert-error">{{ .Error }}</div>
+        {{ else }}
 
-    <!-- Панель фильтров — ТАКАЯ ЖЕ как на странице «Логи» -->
-    <div class="log-toolbar">
-      <div class="log-filters">
-        <div class="filter-group">
-          <label for="filterAddress">Адрес:</label>
-          <input type="text" id="filterAddress" placeholder="192.168.1.0/24">
+        <!-- Фильтры -->
+        <div class="filter-bar">
+            <div class="filter-group">
+                <label>Адрес</label>
+                <input type="text" class="filter-input" id="filterAddress" placeholder="192.168.1.0/24">
+            </div>
+            <div class="filter-group">
+                <label>Комментарий</label>
+                <input type="text" class="filter-input" id="filterComment" placeholder="AUTO:...">
+            </div>
+            <div class="filter-group">
+                <label>Сервис</label>
+                <input type="text" class="filter-input" id="filterService" placeholder="rutor.org">
+            </div>
+            <div class="filter-group">
+                <label>Управляемая</label>
+                <select class="filter-input" id="filterManaged">
+                    <option value="">Все</option>
+                    <option value="yes">Да</option>
+                    <option value="no">Нет</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Отключено</label>
+                <select class="filter-input" id="filterDisabled">
+                    <option value="">Все</option>
+                    <option value="yes">Да</option>
+                    <option value="no">Нет</option>
+                </select>
+            </div>
+            <div class="filter-group" style="justify-content: flex-end;">
+                <button class="btn btn-secondary" id="btnClearFilters">Сбросить</button>
+            </div>
         </div>
-        <div class="filter-group">
-          <label for="filterComment">Комментарий:</label>
-          <input type="text" id="filterComment" placeholder="AUTO:…">
+
+        <!-- Счётчик результатов -->
+        <div class="results-count" id="resultsCount"></div>
+
+        <!-- Таблица -->
+        <div class="address-table-container">
+            <table class="address-table" id="addressTable">
+                <thead>
+                    <tr>
+                        <th>Адрес</th>
+                        <th>Комментарий</th>
+                        <th>Сервис</th>
+                        <th>Управляемая</th>
+                        <th>Отключено</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{ range .Rows }}
+                    <tr data-address="{{ .Address }}" 
+                        data-comment="{{ .Comment }}" 
+                        data-service="{{ .Service }}"
+                        data-managed="{{ if .Managed }}yes{{ else }}no{{ end }}"
+                        data-disabled="{{ if .Disabled }}yes{{ else }}no{{ end }}">
+                        <td><code>{{ .Address }}</code></td>
+                        <td>{{ .Comment }}</td>
+                        <td>
+                            {{ if .Service }}
+                            <span class="badge badge-service">{{ .Service }}</span>
+                            {{ else }}
+                            —
+                            {{ end }}
+                        </td>
+                        <td>
+                            {{ if .Managed }}
+                            <span class="badge badge-managed">Да</span>
+                            {{ else }}
+                            <span class="badge badge-dynamic">Нет</span>
+                            {{ end }}
+                        </td>
+                        <td>
+                            {{ if .Disabled }}
+                            <span class="badge badge-disabled">Да</span>
+                            {{ else }}
+                            —
+                            {{ end }}
+                        </td>
+                    </tr>
+                    {{ end }}
+                </tbody>
+            </table>
         </div>
-        <div class="filter-group">
-          <label for="filterService">Сервис:</label>
-          <input type="text" id="filterService" placeholder="rutor.org">
-        </div>
-        <div class="filter-group">
-          <label for="filterManaged">Управляемая:</label>
-          <select id="filterManaged">
-            <option value="">Все</option>
-            <option value="yes">Да</option>
-            <option value="no">Нет</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <label for="filterDisabled">Отключено:</label>
-          <select id="filterDisabled">
-            <option value="">Все</option>
-            <option value="yes">Да</option>
-            <option value="no">Нет</option>
-          </select>
-        </div>
-      </div>
-      <div class="log-actions">
-        <button type="button" class="primary" onclick="loadData()">⟳ Обновить</button>
-        <button type="button" class="secondary" onclick="clearFilters()">Сбросить</button>
-      </div>
+
+        {{ end }}
     </div>
 
-    <div class="results-count" id="resultsCount">Загрузка…</div>
+    <!-- Контейнер для уведомлений -->
+    <div class="toast-container" id="toastContainer"></div>
 
-    <article style="padding: 0; overflow: hidden;">
-      <div style="overflow-x: auto;">
-        <table class="address-table">
-          <thead>
-            <tr>
-              <th>Адрес</th>
-              <th>Комментарий</th>
-              <th>Сервис</th>
-              <th>Управляемая</th>
-              <th>Отключено</th>
-            </tr>
-          </thead>
-          <tbody id="addressTableBody">
-            <tr><td colspan="5" class="loading">Загрузка данных…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </article>
-  </main>
-
-  <script>
-    var allData = [];
-
-    function loadData() {
-      var tbody = document.getElementById('addressTableBody');
-      tbody.innerHTML = '<tr><td colspan="5" class="loading">Загрузка данных…</td></tr>';
-      fetch('/api/v1/address-list', { credentials: 'same-origin' })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (data.ok && data.data && data.data.entries) {
-            allData = data.data.entries;
-            applyFilters();
-          } else {
-            tbody.innerHTML = '<tr><td colspan="5" class="loading">MikroTik недоступен или нет данных</td></tr>';
-            document.getElementById('resultsCount').textContent = 'Нет данных';
-          }
-        })
-        .catch(function () {
-          tbody.innerHTML = '<tr><td colspan="5" class="loading">Ошибка сети</td></tr>';
-        });
-    }
-
-    function applyFilters() {
-      var tbody = document.getElementById('addressTableBody');
-      var fAddr = document.getElementById('filterAddress').value.toLowerCase();
-      var fCom = document.getElementById('filterComment').value.toLowerCase();
-      var fSvc = document.getElementById('filterService').value.toLowerCase();
-      var fMan = document.getElementById('filterManaged').value;
-      var fDis = document.getElementById('filterDisabled').value;
-
-      var filtered = allData.filter(function (e) {
-        var addr = String(e.address || e.Address || '').toLowerCase();
-        var com = String(e.comment || e.Comment || '').toLowerCase();
-        var svc = '';
-        if (com.indexOf('auto:') === 0) svc = com.substring(5);
-        var man = (com.indexOf('auto:') === 0) ? 'yes' : 'no';
-        var dis = (e.disabled === true || e.disabled === 'true' || e.Disabled === true) ? 'yes' : 'no';
-        return (!fAddr || addr.indexOf(fAddr) !== -1) &&
-               (!fCom || com.indexOf(fCom) !== -1) &&
-               (!fSvc || svc.indexOf(fSvc) !== -1) &&
-               (!fMan || man === fMan) &&
-               (!fDis || dis === fDis);
-      });
-
-      document.getElementById('resultsCount').textContent =
-        'Показано ' + filtered.length + ' из ' + allData.length + ' записей';
-
-      if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="loading">Нет записей по заданным фильтрам</td></tr>';
-        return;
-      }
-
-      var html = '';
-      for (var i = 0; i < filtered.length; i++) {
-        var e = filtered[i];
-        var addr = e.address || e.Address || '';
-        var com = e.comment || e.Comment || '';
-        var svc = (com.indexOf('auto:') === 0) ? com.substring(5) : '';
-        var man = (com.indexOf('auto:') === 0);
-        var dis = (e.disabled === true || e.disabled === 'true' || e.Disabled === true);
-        html += '<tr>' +
-          '<td><code>' + addr + '</code></td>' +
-          '<td>' + com + '</td>' +
-          '<td>' + (svc ? '<span class="badge badge-auto">' + svc + '</span>' : '—') + '</td>' +
-          '<td>' + (man ? '<span class="badge badge-ok">Да</span>' : '<span class="badge badge-muted">Нет</span>') + '</td>' +
-          '<td>' + (dis ? '<span class="badge badge-err">Да</span>' : '—') + '</td></tr>';
-      }
-      tbody.innerHTML = html;
-    }
-
-    function clearFilters() {
-      document.getElementById('filterAddress').value = '';
-      document.getElementById('filterComment').value = '';
-      document.getElementById('filterService').value = '';
-      document.getElementById('filterManaged').value = '';
-      document.getElementById('filterDisabled').value = '';
-      applyFilters();
-    }
-
-    ['filterAddress', 'filterComment', 'filterService'].forEach(function (id) {
-      document.getElementById(id).addEventListener('input', applyFilters);
-    });
-    ['filterManaged', 'filterDisabled'].forEach(function (id) {
-      document.getElementById(id).addEventListener('change', applyFilters);
-    });
-
-    loadData();
-  </script>
+    <script src="/static/addresslist.js"></script>
 </body>
 </html>
 {{ end }}
