@@ -1,244 +1,263 @@
 {{ define "services.html" }}
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <title>MikroTik Route Sync — Сервисы</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="csrf-token" content="{{ .CSRF }}">
-  <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/theme.js"></script>
-  <style>
-    .services-table {
-      width: 100%;
-      border-collapse: collapse;
-      background: var(--bg);
-      border-radius: var(--radius);
-      overflow: hidden;
-      box-shadow: 0 1px 3px var(--shadow);
-    }
-    .services-table th, .services-table td {
-      padding: 12px 16px;
-      text-align: left;
-      border-bottom: 1px solid var(--border);
-    }
-    .services-table th {
-      background: var(--bg-alt);
-      font-weight: 600;
-      color: var(--text);
-    }
-    .services-table tbody tr { transition: background var(--transition); }
-    .services-table tbody tr:hover { background: var(--bg-alt); }
-    @media (max-width: 768px) {
-      .services-table th, .services-table td { padding: 8px 12px; font-size: 13px; }
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Сервисы</title>
+    <meta name="csrf-token" content="{{ .CSRF }}">
+    <link rel="stylesheet" href="/static/app.css">
+    <script src="/static/theme.js"></script>
+    <script src="/static/htmx.min.js"></script>
+    <script src="/static/app.js" defer></script>
+    <style>
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .toast {
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            animation: slideIn 0.3s ease;
+            max-width: 400px;
+        }
+        .toast-success { background: #28a745; }
+        .toast-error { background: #dc3545; }
+        .toast-warning { background: #ffc107; color: #000; }
+        .toast-info { background: #17a2b8; }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
 
-    .service-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-    .btn-small {
-      padding: 6px 12px;
-      font-size: 12px;
-      border-radius: var(--radius);
-      border: none;
-      cursor: pointer;
-      transition: all var(--transition);
-      font-weight: 500;
-      color: white;
-    }
-    .btn-small:hover { transform: translateY(-1px); box-shadow: 0 2px 4px var(--shadow); }
-    .btn-details { background: var(--muted); }
-    .btn-sync { background: var(--primary); }
-    .btn-test { background: var(--success); }
-    .btn-delete { background: var(--danger); }
+        .services-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .services-table th,
+        .services-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color, #e0e0e0);
+        }
+        .services-table th {
+            background: var(--bg-secondary, #f5f5f5);
+            font-weight: 600;
+        }
+        .services-table tbody tr:hover {
+            background: var(--bg-hover, #f9f9f9);
+        }
 
-    .controls-bar {
-      display: flex;
-      gap: 12px;
-      margin-bottom: 24px;
-      flex-wrap: wrap;
-      align-items: center;
-      padding: 16px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: 0 1px 3px var(--shadow);
-    }
-    .controls-bar input {
-      padding: 8px 12px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      font-size: 14px;
-      background: var(--bg);
-      color: var(--text);
-      transition: border var(--transition);
-    }
-    .controls-bar input:focus {
-      outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-    }
-    @media (max-width: 768px) {
-      .service-actions { flex-direction: column; }
-      .controls-bar { flex-direction: column; }
-      .controls-bar input, .controls-bar button { width: 100%; }
-    }
+        .service-actions {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .btn-small {
+            padding: 4px 10px;
+            font-size: 12px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn-small:hover { opacity: 0.85; }
+        .btn-details { background: #6c757d; color: white; }
+        .btn-sync { background: #007bff; color: white; }
+        .btn-test { background: #28a745; color: white; }
+        .btn-delete { background: #dc3545; color: white; }
 
-    /* ВАЖНО: модальное окно скрыто по умолчанию */
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.5);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-    }
-    .modal-overlay.show {
-      display: flex;
-    }
-    .modal-content {
-      background: var(--bg);
-      border-radius: var(--radius);
-      width: 90%;
-      max-width: 900px;
-      max-height: 90vh;
-      overflow-y: auto;
-      box-shadow: 0 10px 40px var(--shadow);
-      position: relative;
-    }
-    .modal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 20px 24px;
-      border-bottom: 2px solid var(--border);
-      position: sticky;
-      top: 0;
-      background: var(--bg);
-      z-index: 10;
-    }
-    .modal-header h3 {
-      margin: 0;
-      color: var(--text);
-    }
-    .modal-close {
-      background: none;
-      border: none;
-      font-size: 28px;
-      cursor: pointer;
-      color: var(--muted);
-      line-height: 1;
-      transition: color var(--transition);
-      padding: 0;
-      width: 40px;
-      height: 40px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .modal-close:hover {
-      color: var(--text);
-    }
-    .modal-body {
-      padding: 24px;
-    }
+        .controls-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .controls-bar input {
+            padding: 8px 12px;
+            border: 1px solid var(--border-color, #ddd);
+            border-radius: 6px;
+            font-size: 14px;
+        }
 
-    .details-tabs {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 24px;
-      border-bottom: 2px solid var(--border);
-      padding-bottom: 12px;
-    }
-    .tab-btn {
-      padding: 10px 20px;
-      border: none;
-      background: transparent;
-      border-radius: var(--radius);
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text);
-      transition: all var(--transition);
-    }
-    .tab-btn:hover {
-      background: var(--bg-alt);
-    }
-    .tab-btn.active {
-      background: var(--primary);
-      color: white;
-    }
-    .tab-content {
-      display: none;
-    }
-    .tab-content.active {
-      display: block;
-    }
+        /* КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: модальное окно явно скрыто */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: none !important; /* !important чтобы переопределить любые другие стили */
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+        .modal.show { 
+            display: flex !important; 
+        }
+        .modal-content {
+            background: var(--bg, white);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 900px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 24px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .modal-header h3 { margin: 0; color: var(--text, #000); }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: #666;
+            line-height: 1;
+        }
+        .modal-close:hover { color: #000; }
+        .modal-body {
+            padding: 24px;
+        }
 
-    .info-table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    .info-table th, .info-table td {
-      padding: 12px 16px;
-      text-align: left;
-      border-bottom: 1px solid var(--border);
-    }
-    .info-table th {
-      width: 200px;
-      color: var(--muted);
-      font-weight: 500;
-    }
+        .details-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 12px;
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            border: none;
+            background: transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+            color: var(--text, #000);
+        }
+        .tab-btn:hover { background: #f0f0f0; }
+        .tab-btn.active {
+            background: #007bff;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
 
-    .routes-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    .routes-table th, .routes-table td {
-      padding: 10px 12px;
-      text-align: left;
-      border-bottom: 1px solid var(--border);
-    }
-    .routes-table th {
-      background: var(--bg-alt);
-      font-weight: 600;
-      color: var(--text);
-    }
-    .routes-table tbody tr:hover {
-      background: var(--bg-alt);
-    }
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .info-table th,
+        .info-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+            color: var(--text, #000);
+        }
+        .info-table th {
+            width: 200px;
+            color: var(--text-muted, #666);
+            font-weight: 500;
+        }
 
-    .badge-success {
-      background: var(--badge-ok-bg);
-      color: var(--badge-ok-text);
-    }
-    .badge-error {
-      background: var(--badge-err-bg);
-      color: var(--badge-err-text);
-    }
+        .routes-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .routes-table th,
+        .routes-table td {
+            padding: 8px 10px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+            color: var(--text, #000);
+        }
+        .routes-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        .routes-table tbody tr:hover {
+            background: #f9f9f9;
+        }
 
-    .loading {
-      text-align: center;
-      padding: 40px;
-      color: var(--muted);
-    }
-    .spinner {
-      display: inline-block;
-      width: 24px;
-      height: 24px;
-      border: 3px solid var(--border);
-      border-top: 3px solid var(--primary);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-  </style>
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .badge-success { background: #d4edda; color: #155724; }
+        .badge-warning { background: #fff3cd; color: #856404; }
+        .badge-error { background: #f8d7da; color: #721c24; }
+        .badge-info { background: #d1ecf1; color: #0c5460; }
+
+        @media (max-width: 768px) {
+            .services-table th,
+            .services-table td {
+                padding: 8px 6px;
+                font-size: 13px;
+            }
+            .service-actions {
+                flex-direction: column;
+            }
+            .controls-bar {
+                flex-direction: column;
+            }
+            .controls-bar input,
+            .controls-bar button {
+                width: 100%;
+            }
+            .modal-content {
+                width: 95%;
+                margin: 10px;
+            }
+            .details-tabs {
+                flex-wrap: wrap;
+            }
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted, #666);
+        }
+        .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 <body>
   <nav class="bar">
@@ -262,12 +281,12 @@
 
     <div class="controls-bar">
       <input type="text" id="newServiceName" placeholder="Имя нового сервиса (например, instagram)">
-      <button class="btn" onclick="addService()">Добавить сервис</button>
-      <button class="btn" style="background: var(--success);" onclick="syncAll()">Синхронизировать все</button>
-      <button class="btn" style="background: var(--warning);" onclick="testAll()">Тест всех</button>
+      <button class="btn btn-primary" onclick="addService()">Добавить сервис</button>
+      <button class="btn btn-success" onclick="syncAll()">Синхронизировать все</button>
+      <button class="btn btn-info" onclick="testAll()">Тест всех</button>
     </div>
 
-    <div style="overflow-x: auto;">
+    <div class="table-responsive">
       <table class="services-table">
         <thead>
           <tr>
@@ -300,8 +319,8 @@
     </div>
   </main>
 
-  <!-- Модальное окно (скрыто по умолчанию через display: none) -->
-  <div id="serviceDetailsModal" class="modal-overlay">
+  <!-- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: модальное окно скрыто через inline style -->
+  <div id="serviceDetailsModal" class="modal" style="display: none;">
     <div class="modal-content">
       <div class="modal-header">
         <h3 id="detailsServiceName">Детали сервиса</h3>
@@ -327,12 +346,17 @@
         
         <div id="tab-routes" class="tab-content">
           <div class="loading" id="routesLoading" style="display: none;">
-            <div class="spinner"></div><p>Загрузка маршрутов...</p>
+            <div class="spinner"></div>
+            <p>Загрузка маршрутов...</p>
           </div>
-          <div style="overflow-x: auto;">
+          <div class="table-responsive">
             <table class="routes-table" id="serviceRoutesTable">
               <thead>
-                <tr><th>Адрес</th><th>Комментарий</th><th>Отключено</th></tr>
+                <tr>
+                  <th>Адрес</th>
+                  <th>Комментарий</th>
+                  <th>Отключено</th>
+                </tr>
               </thead>
               <tbody id="serviceRoutesBody">
                 <tr><td colspan="3" class="loading">Выберите сервис</td></tr>
@@ -343,86 +367,112 @@
         
         <div id="tab-history" class="tab-content">
           <div class="loading" id="historyLoading" style="display: none;">
-            <div class="spinner"></div><p>Загрузка истории...</p>
+            <div class="spinner"></div>
+            <p>Загрузка истории...</p>
           </div>
-          <div id="serviceHistoryContent"><p class="loading">Выберите сервис</p></div>
+          <div id="serviceHistoryContent">
+            <p class="loading">Выберите сервис</p>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
+  <div class="toast-container" id="toastContainer"></div>
+
   <script>
     let currentDetailsService = null;
 
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      toast.textContent = message;
+      container.appendChild(toast);
+      setTimeout(() => { toast.remove(); }, 4000);
+    }
+
     function addService() {
-      const name = document.getElementById('newServiceName').value.trim();
-      if (!name) { alert('Введите имя сервиса'); return; }
+      const nameInput = document.getElementById('newServiceName');
+      const name = nameInput.value.trim();
+      if (!name) { showToast('Введите имя сервиса', 'warning'); return; }
       fetch('/actions/service-add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `name=${encodeURIComponent(name)}&csrf_token={{ .CSRF }}`
       }).then(r => r.json()).then(data => {
         if (data.ok) {
-          document.getElementById('newServiceName').value = '';
-          setTimeout(() => location.reload(), 1000);
-        } else { alert(data.error || 'Ошибка добавления'); }
-      }).catch(err => alert('Ошибка: ' + err));
+          showToast(`Сервис "${name}" добавлен`, 'success');
+          nameInput.value = '';
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          showToast(data.error || 'Ошибка добавления', 'error');
+        }
+      }).catch(err => showToast('Ошибка: ' + err, 'error'));
     }
 
     function syncService(name) {
-      if (!confirm(`Синхронизировать сервис "${name}"?`)) return;
+      showToast(`Синхронизация "${name}" запущена`, 'info');
       fetch(`/api/v1/services/${name}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dry_run: false, force: false })
       }).then(r => r.json()).then(data => {
-        if (data.ok) setTimeout(() => location.reload(), 1000);
-        else alert(data.error || 'Ошибка синхронизации');
-      }).catch(err => alert('Ошибка: ' + err));
+        if (data.ok) showToast(`Синхронизация "${name}" завершена`, 'success');
+        else showToast(data.error || 'Ошибка синхронизации', 'error');
+      }).catch(err => showToast('Ошибка: ' + err, 'error'));
     }
 
     function syncAll() {
-      if (!confirm('Синхронизировать все сервисы?')) return;
+      showToast('Синхронизация всех сервисов запущена', 'info');
       fetch('/api/v1/services/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dry_run: false, force: false })
       }).then(r => r.json()).then(data => {
-        if (data.ok) alert('Синхронизация запущена в фоне');
-        else alert(data.error || 'Ошибка');
-      }).catch(err => alert('Ошибка: ' + err));
+        if (data.ok) showToast('Синхронизация запущена в фоне', 'success');
+        else showToast(data.error || 'Ошибка', 'error');
+      }).catch(err => showToast('Ошибка: ' + err, 'error'));
     }
 
     function testService(name) {
+      showToast(`Тест "${name}" запущен`, 'info');
       fetch(`/api/v1/services/${name}/dry-run`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
       }).then(r => r.json()).then(data => {
         if (data.ok) {
           const res = data.data;
-          alert(`Тест "${name}":\n+${res.added} добавлено\n-${res.removed} удалено\n=${res.unchanged} без изменений`);
-        } else { alert(data.error || 'Ошибка теста'); }
-      }).catch(err => alert('Ошибка: ' + err));
+          showToast(`Тест "${name}": +${res.added} -${res.removed} =${res.unchanged}`, 'success');
+        } else {
+          showToast(data.error || 'Ошибка теста', 'error');
+        }
+      }).catch(err => showToast('Ошибка: ' + err, 'error'));
     }
 
     function testAll() {
-      if (!confirm('Запустить тест всех сервисов?')) return;
+      showToast('Тест всех сервисов запущен', 'info');
       fetch('/api/v1/services/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dry_run: true, force: false })
       }).then(r => r.json()).then(data => {
-        if (data.ok) alert('Тест запущен в фоне');
-        else alert(data.error || 'Ошибка');
-      }).catch(err => alert('Ошибка: ' + err));
+        if (data.ok) showToast('Тест запущен в фоне', 'success');
+        else showToast(data.error || 'Ошибка', 'error');
+      }).catch(err => showToast('Ошибка: ' + err, 'error'));
     }
 
     function deleteService(name) {
       if (!confirm(`Удалить сервис "${name}"? Это действие необратимо.`)) return;
       fetch(`/api/v1/services/${name}?purge=1`, { method: 'DELETE' })
       .then(r => r.json()).then(data => {
-        if (data.ok) setTimeout(() => location.reload(), 1000);
-        else alert(data.error || 'Ошибка удаления');
-      }).catch(err => alert('Ошибка: ' + err));
+        if (data.ok) {
+          showToast(`Сервис "${name}" удалён`, 'success');
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          showToast(data.error || 'Ошибка удаления', 'error');
+        }
+      }).catch(err => showToast('Ошибка: ' + err, 'error'));
     }
 
     function openDetailsModal(serviceName) {
