@@ -1436,7 +1436,13 @@ func (s *Server) applyRuntimeChanges() {
 		s.log.Error("failed to apply config to clients", "err", err)
 	}
 
+	// Пересоздаём нотификатор для отправки сообщений
 	s.syncer.SetNotifier(notifier.FromConfig(s.cfg.Telegram, s.log))
+
+	// ДОБАВЛЕНО: перезапуск бота при изменении telegram.* настроек
+	if err := s.syncer.RestartTelegramBot(); err != nil {
+		s.log.Warn("failed to restart telegram bot", "err", err)
+	}
 
 	if err := s.syncer.ReloadScheduler(); err != nil {
 		s.log.Warn("failed to reload scheduler", "err", err)
