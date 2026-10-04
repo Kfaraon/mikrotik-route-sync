@@ -82,13 +82,39 @@
     }
 
     function formatLogTime(ts) {
-      if (!ts) return "";
-      var d = new Date(ts);
-      if (isNaN(d.getTime())) return String(ts);
+      var d = parseLogTs(ts);
+      if (!d) return ts ? String(ts) : "";
       return pad(d.getDate(), 2) + "." + pad(d.getMonth() + 1, 2) + "." + d.getFullYear() + " " +
         pad(d.getHours(), 2) + ":" +
         pad(d.getMinutes(), 2) + ":" +
         pad(d.getSeconds(), 2);
+    }
+
+    // Go отдаёт время RFC3339 с дробными секундами до наносекунд
+    // (2026-10-03T15:04:40.463861256Z); часть движков не парсит дробную
+    // часть длиннее миллисекунд, поэтому собираем дату из компонент сами —
+    // в часовом поясе браузера.
+    function parseLogTs(value) {
+      if (value === null || value === undefined || value === "") return null;
+      var s = String(value).trim();
+      var m = /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|z|[+-]\d{2}:?\d{2})?$/.exec(s);
+      if (!m) {
+        var fallback = new Date(s);
+        return isNaN(fallback.getTime()) ? null : fallback;
+      }
+      var ms = parseInt(((m[7] || "0") + "000").slice(0, 3), 10);
+      if (!m[8]) {
+        return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms);
+      }
+      var utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms);
+      var tz = m[8];
+      if (tz !== "Z" && tz !== "z") {
+        var digits = tz.slice(1).replace(":", "");
+        var off = (+digits.slice(0, 2)) * 60 + (+digits.slice(2, 4));
+        utc += (tz[0] === "-" ? 1 : -1) * off * 60000;
+      }
+      var parsed = new Date(utc);
+      return isNaN(parsed.getTime()) ? null : parsed;
     }
 
     function safeString(v) {
@@ -267,14 +293,9 @@
 
     function setRefreshing(isRefreshing) {
       if (!refreshBtn) return;
-
-      if (isRefreshing) {
-        refreshBtn.classList.add("loading");
-        refreshBtn.textContent = "Загрузка…";
-      } else {
-        refreshBtn.classList.remove("loading");
-        refreshBtn.innerHTML = "⟳ Обновить";
-      }
+      // Подпись кнопки не меняем (иначе ширина «прыгает»): во время
+      // загрузки крутится только иконка, состояние — класс btn-loading.
+      refreshBtn.classList.toggle("btn-loading", isRefreshing);
     }
 
     function fallbackCopy(text, btn) {
@@ -520,43 +541,17 @@
     });
   });
 
-  var activePop = null;
+  // Кнопка «?» в заголовке группы «Общее» — показывает/скрывает подсказку.
+  (function () {
+    var btn = document.querySelector(".group-help-btn");
+    var panel = document.getElementById("settings-help");
+    if (!btn || !panel) return;
 
-  function closePop() {
-    if (activePop) {
-      activePop.remove();
-      activePop = null;
-    }
-  }
-
-  document.addEventListener("click", function (e) {
-    var btn = e.target.closest ? e.target.closest("button.hint") : null;
-    if (!btn) {
-      closePop();
-      return;
-    }
-
-    if (activePop && activePop._owner === btn) {
-      closePop();
-      return;
-    }
-
-    closePop();
-
-    var pop = document.createElement("div");
-    pop.className = "pop";
-    pop.textContent = btn.getAttribute("data-help") || "";
-
-    var host = btn.closest(".setting-label") || btn.parentElement;
-    host.style.position = "relative";
-    host.appendChild(pop);
-
-    pop._owner = btn;
-    activePop = pop;
-  });
-
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") closePop();
-  });
+    btn.addEventListener("click", function () {
+      var open = panel.hidden;
+      panel.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  })();
 
 })();

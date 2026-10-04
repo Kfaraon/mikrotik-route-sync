@@ -47,8 +47,16 @@ func (v Validator) Validate(raw []string, ov config.ServiceOverride) ([]netip.Pr
 	if err != nil {
 		return nil, fmt.Errorf("normalize: %w", err)
 	}
-	excludes, _ := aggregator.NormalizeAll(ov.Exclude)
-	includes, _ := aggregator.NormalizeAll(ov.IncludeOnly)
+	// Fail-closed: опечатка в exclude/include не должна молча игнорироваться
+	// (иначе исключённый диапазон останется в списке).
+	excludes, err := aggregator.NormalizeAll(ov.Exclude)
+	if err != nil {
+		return nil, fmt.Errorf("overrides.exclude: %w", err)
+	}
+	includes, err := aggregator.NormalizeAll(ov.IncludeOnly)
+	if err != nil {
+		return nil, fmt.Errorf("overrides.include_only: %w", err)
+	}
 
 	out := make([]netip.Prefix, 0, len(norm))
 	for _, p := range norm {
@@ -61,14 +69,18 @@ func (v Validator) Validate(raw []string, ov config.ServiceOverride) ([]netip.Pr
 		if p.Bits() < v.Safety.MinPrefixV4 || (!v.Safety.AllowHostRoutes && p.Bits() == 32) {
 			continue
 		}
-		skip := false
+		// Уровень 5, exclude: исключение, покрывающее p целиком (включая
+		// равенство), удаляет p; исключение внутри p вычитается из p —
+		// остальные адреса сохраняются (пример PROMPT II.3: include
+		// 1.2.3.0/24 + exclude 1.2.3.4/32 → /24 без одного хоста).
+		excluded := false
 		for _, x := range excludes {
-			if aggregator.ContainsPrefix(x, p) || aggregator.ContainsPrefix(p, x) {
-				skip = true
+			if aggregator.ContainsPrefix(x, p) {
+				excluded = true
 				break
 			}
 		}
-		if skip {
+		if excluded {
 			continue
 		}
 		if len(includes) > 0 {
@@ -83,7 +95,21 @@ func (v Validator) Validate(raw []string, ov config.ServiceOverride) ([]netip.Pr
 				continue
 			}
 		}
-		out = append(out, p)
+		pieces := []netip.Prefix{p}
+		for _, x := range excludes {
+			if !aggregator.ContainsPrefix(p, x) {
+				continue
+			}
+			next := make([]netip.Prefix, 0, len(pieces))
+			for _, piece := range pieces {
+				next = append(next, aggregator.SubtractPrefix(piece, x)...)
+			}
+			pieces = next
+			if len(pieces) == 0 {
+				break
+			}
+		}
+		out = append(out, pieces...)
 	}
 	out = aggregator.RemoveContained(out)
 	limit := ov.MaxPrefixes

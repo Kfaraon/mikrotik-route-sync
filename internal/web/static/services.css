@@ -1,8 +1,4 @@
 /* Страница сервисов */
-.services-page {
-  max-width: 1800px;
-}
-
 .svc-header {
   display: flex;
   justify-content: space-between;
@@ -17,6 +13,7 @@
   gap: 1rem;
   align-items: center;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .svc-switch {
@@ -118,7 +115,7 @@
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e0e0e0);
   border-radius: var(--radius, 8px);
-  overflow: hidden;
+  overflow-x: auto; /* вместо hidden: колонка «Действия» не обрезается */
   box-shadow: 0 1px 3px var(--shadow, rgba(0,0,0,0.05));
   margin-bottom: 1.5rem;
 }
@@ -162,13 +159,77 @@
   white-space: nowrap;
 }
 
-.svc-badge-ok { background: #d4edda; color: #155724; }
-.svc-badge-warn { background: #fff3cd; color: #856404; }
-.svc-badge-err { background: #f8d7da; color: #721c24; }
-.svc-badge-muted { background: #e2e3e5; color: #383d41; }
-.svc-badge-auto { background: #d1ecf1; color: #0c5460; }
-.svc-badge-override { background: #f8d7da; color: #721c24; }
-.svc-badge-group { background: #e2e3e5; color: #383d41; }
+.svc-badge-ok { background: var(--badge-ok-bg); color: var(--badge-ok-text); }
+.svc-badge-warn { background: var(--badge-warn-bg); color: var(--badge-warn-text); }
+.svc-badge-err { background: var(--badge-err-bg); color: var(--badge-err-text); }
+.svc-badge-muted { background: var(--badge-muted-bg); color: var(--badge-muted-text); }
+.svc-badge-auto { background: var(--badge-auto-bg); color: var(--badge-auto-text); }
+.svc-badge-override { background: var(--badge-override-bg); color: var(--badge-override-text); }
+.svc-badge-group { background: var(--badge-group-bg); color: var(--badge-group-text); }
+.svc-badge-disabled { background: var(--badge-err-bg); color: var(--badge-err-text); }
+
+/* Утилиты страницы */
+.svc-muted { color: var(--muted, #666); }
+.svc-small { font-size: 0.875rem; }
+.svc-name { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+
+/* Прогресс синхронизации в строке сервиса */
+.svc-progress {
+  margin-top: 0.35rem;
+  min-width: 150px;
+}
+
+.svc-progress-track {
+  height: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.svc-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background-color: var(--primary);
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.25) 0 6px,
+    transparent 6px 12px
+  );
+  background-size: 12px 12px;
+  transition: width 0.3s ease;
+  animation: svc-progress-stripes 0.8s linear infinite;
+}
+
+.svc-progress-label {
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--muted, #666);
+}
+
+@keyframes svc-progress-stripes {
+  to { background-position: 12px 0; }
+}
+
+/* Варианты кнопок в таблице/drawer */
+button.svc-secondary {
+  background: var(--bg-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+button.svc-secondary:hover:not(:disabled) { background: var(--border); color: var(--text); }
+
+button.svc-outline {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+}
+button.svc-outline:hover:not(:disabled) { background: var(--primary); color: white; }
+
+button.svc-danger { background: var(--danger); color: white; }
+button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
+.dark button.svc-danger:hover:not(:disabled) { background: var(--danger); }
 
 /* Действия в таблице */
 .svc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
@@ -247,15 +308,16 @@
 
 .svc-drawer-body { flex: 1; padding: 1.5rem; overflow-y: auto; }
 
+/* Футер drawer — сетка 2×2: все подписи помещаются без обрезки */
 .svc-drawer-footer {
   padding: 1.5rem;
   border-top: 1px solid var(--border, #e0e0e0);
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
   background: var(--bg-alt, #f8f9fa);
 }
-.svc-drawer-footer button { flex: 1; min-width: 120px; }
+.svc-drawer-footer button { width: 100%; min-width: 0; }
 
 /* Детали в drawer */
 .svc-detail-grid {
@@ -325,11 +387,54 @@
 .svc-modal-actions button { width: 100%; }
 
 /* Diff список */
-.svc-diff-list { font-family: monospace; font-size: 0.9rem; }
-.svc-diff-row { padding: 0.5rem; border-bottom: 1px solid var(--border, #e0e0e0); }
-.svc-diff-add { background: #d4edda; color: #155724; }
-.svc-diff-del { background: #f8d7da; color: #721c24; }
+.svc-diff-toolbar {
+  margin-top: 1rem;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.svc-diff-toolbar .svc-diff-search { flex: 2; min-width: 200px; }
+.svc-diff-toolbar .svc-switch { flex: 1; justify-content: flex-end; }
+
+.svc-diff-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  font-family: "Courier New", monospace;
+  font-size: 0.9rem;
+  margin-top: 1rem;
+}
+.svc-diff-row { padding: 0.5rem; border-bottom: 1px solid var(--border, #e0e0e0); white-space: nowrap; }
+.svc-diff-add { background: var(--badge-ok-bg); color: var(--badge-ok-text); font-weight: 600; }
+.svc-diff-del { background: var(--badge-err-bg); color: var(--badge-err-text); font-weight: 600; }
 .svc-diff-same { background: var(--bg-alt, #f8f9fa); color: var(--muted, #666); }
+
+/* Вкладка «Записи» в drawer */
+.svc-routes-meta {
+  font-size: 0.875rem;
+  color: var(--muted, #666);
+  margin-bottom: 0.75rem;
+}
+.svc-routes-search { margin-bottom: 0.75rem; }
+
+.svc-route-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-alt);
+  border-radius: var(--radius);
+  margin-bottom: 0.25rem;
+  font-family: "Courier New", monospace;
+  font-size: 0.875rem;
+}
+
+.svc-route-row .svc-route-copy {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
 
 /* Alert */
 .svc-alert {
@@ -339,19 +444,21 @@
   border-left: 4px solid;
 }
 .svc-alert[hidden] { display: none; }
-.svc-alert.ok { background: #d4edda; border-color: #28a745; color: #155724; }
-.svc-alert.warn { background: #fff3cd; border-color: #ffc107; color: #856404; }
-.svc-alert.err, .svc-alert.error { background: #f8d7da; border-color: #dc3545; color: #721c24; }
+.svc-alert.ok { background: var(--badge-ok-bg); border-color: var(--success); color: var(--badge-ok-text); }
+.svc-alert.warn { background: var(--badge-warn-bg); border-color: var(--warning); color: var(--badge-warn-text); }
+.svc-alert.err, .svc-alert.error { background: var(--badge-err-bg); border-color: var(--danger); color: var(--badge-err-text); }
 
 /* Скролл и загрузка */
 .svc-no-scroll { overflow: hidden; }
-.loading { opacity: 0.6; pointer-events: none; }
+/* Кнопка в состоянии загрузки (.btn-loading) — см. app.css. */
 
 /* Адаптивность */
 @media (max-width: 768px) {
   .svc-kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .svc-toolbar-main, .svc-toolbar-actions { flex-direction: column; align-items: stretch; }
   .svc-toolbar-main > * { width: 100%; }
+  .svc-diff-toolbar { flex-direction: column; align-items: stretch; }
+  .svc-diff-toolbar .svc-switch { justify-content: flex-start; }
   .svc-add-form { flex-direction: column; }
   .svc-add-form input { width: 100%; }
   .svc-table thead { display: none; }
@@ -363,8 +470,7 @@
   .svc-actions { justify-content: flex-start; }
   .svc-actions button { flex: 1; min-width: 80px; }
   .svc-drawer-panel { max-width: 100%; }
-  .svc-drawer-footer { flex-direction: column; }
-  .svc-drawer-footer button { width: 100%; }
+  .svc-drawer-footer { grid-template-columns: 1fr; }
   .svc-list-row { grid-template-columns: 1fr; gap: 0.5rem; }
   .svc-time { min-width: auto; }
   .svc-right { text-align: left; }

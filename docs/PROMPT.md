@@ -760,23 +760,34 @@ telegram:
 
 Встроенный dashboard через `//go:embed`.
 
-Страницы:
+### 7.1 Страницы и роуты
 
 | URL | Назначение |
 |---|---|
 | `/` | Dashboard: статус, сводка, сервисы, quick actions |
-| `/services` | Управление сервисами, синхронизация, удаление |
+| `/services` | Управление сервисами, синхронизация, удаление; поллинг прогресса синхронизации в строке сервиса |
 | `/schedules` | Расписания, inline-редактирование, effective schedule |
-| `/settings` | MikroTik, Firewall Address List, Telegram, Web, Scheduler, Safety, Retry, External, Logging |
+| `/settings` | MikroTik, Firewall Address List, Telegram, Web, Scheduler, Safety, Retry, External, Logging; карточки полей с подсказками под каждым |
 | `/logs` | Логи, фильтрация, очистка, скачивание |
 | `/address-list` | Текущие управляемые записи в глобальном address-list |
 
-Технически:
+- REST API: `/api/v1/*` (status, progress, services, sync, logs, history, address-list, ws)
+- Partials: `/partials/status` (HTMX-фрагменты)
+- Actions: `/actions/*` (HTMX form-запросы с CSRF)
+
+### 7.2 Архитектура и техническая основа
+
+- Структура файлов:
+  - `internal/web/templates/*.html` — Go-шаблоны страниц
+  - `internal/web/static/*.css` — CSS (без `@import`, без inline-style)
+  - `internal/web/static/*.js` — JavaScript (модули IIFE, без ES modules)
+  - `internal/web/server.go` — HTTP-сервер, роутинг, middleware
+- Все статические файлы встраиваются через `go:embed` (single binary);
 - `net/http` + `github.com/go-chi/chi/v5`;
 - `html/template` + `//go:embed`;
-- CSS;
+- CSS-переменные;
 - HTMX + vanilla JS;
-- WebSocket через `github.com/gorilla/websocket`;
+- WebSocket-эндпоинт через `github.com/gorilla/websocket` (события синхронизации);
 - Basic Auth + session cookie + CSRF;
 - ограничение по `allowed_cidrs`;
 - security headers;
@@ -791,6 +802,76 @@ Comment: AUTO:cloudflare
 Managed entries: 12
 Last sync: success
 ```
+
+### 7.3 Безопасность (STRICT)
+
+Content-Security-Policy:
+
+```text
+default-src 'self';
+script-src 'self';        ← БЕЗ 'unsafe-inline', БЕЗ 'unsafe-eval'
+style-src 'self';         ← БЕЗ 'unsafe-inline'
+img-src 'self' data:;
+connect-src 'self' ws: wss:;
+frame-ancestors 'none'
+```
+
+- Все скрипты и стили — во ВНЕШНИХ файлах (`/static/*.js`, `/static/*.css`).
+- ЗАПРЕЩЕНО:
+  - `<script>...</script>`, `<style>...</style>` в шаблонах
+  - `onclick="..."` / `onsubmit="..."`
+  - `eval()`, `new Function()`, `innerHTML` с непроверенными данными
+  - `javascript:`-ссылки
+- РАЗРЕШЕНО:
+  - `addEventListener()` для событий
+  - `data-*` атрибуты для передачи контекста
+  - CSRF-токен через `<meta name="csrf-token">`
+  - `textContent` вместо `innerHTML` где возможно
+- Дополнительно: Basic Auth + session cookie (HttpOnly, SameSite=Strict); CSRF для всех POST/PUT/DELETE от cookie-сессий; `allowed_cidrs`; `X-Frame-Options: DENY`; `X-Content-Type-Options: nosniff`; HSTS при HTTPS; rate limiting на IP; макс. тело запроса 1 МБ.
+
+### 7.4 Паттерны разработки
+
+JavaScript:
+
+- Все JS в IIFE: `(function() { "use strict"; ... })();`
+- Проверка наличия страницы: `if (!document.getElementById("page-id")) return;`
+- Делегирование событий вместо навешивания на каждый элемент
+- Деструктуризация API-ответов: `{ ok, data, error }`
+- Fetch с `credentials: "same-origin"`
+- CSRF-токен из meta: `document.querySelector('meta[name="csrf-token"]').content`
+- Экранирование HTML при динамическом рендеринге
+
+CSS:
+
+- CSS-переменные для тем (`--bg`, `--text`, `--primary`, ...)
+- `.dark` класс на `<html>` для темной темы
+- Mobile-first с media queries
+- BEM-подобное именование (`svc-drawer`, `log-entry`)
+
+HTML (шаблоны):
+
+- Каждый шаблон начинается с `{{ define "name.html" }}`
+- Навигация дублируется в каждом шаблоне (нет общего layout)
+- `class="active"` на текущей ссылке в `<nav class="bar">`
+- Подключение скриптов в конце body: `theme.js` → страницовый `.js` → `app.js`
+
+### 7.5 Общие компоненты
+
+- `theme.js` — переключение тем (localStorage `mrs-theme`), live-индикатор состояния роутера (поллинг `/api/v1/status` каждые 15 с, кэш в `localStorage["mrs_mt"]`), бейдж проблем в title вкладки
+- `app.js` — CSRF для HTMX, toast-уведомления, логи, secret-field toggle, fetch-interceptor для ошибок
+- Навигация `<nav class="bar">` + `<button class="theme-toggle">🌙`
+- Toast: `#mrs-toast.toast` (один глобальный контейнер)
+- KPI-карточки: `.svc-kpi-grid` с `.svc-kpi-card`
+
+### 7.6 Правила при добавлении нового функционала
+
+1. Новая страница → создать template + `.css` + `.js`, добавить роут в `server.go`
+2. Новая кнопка → `data-action` + делегирование в `.js`, НЕ `onclick`
+3. Новый API endpoint → `/api/v1/*` + `apiEnvelope{OK, Data, Error}`
+4. Новый стиль → через CSS-переменные (автоматическая поддержка dark-темы)
+5. Любое изменение → проверить работу с `security_headers: true`
+6. Тестировать на: CSP-валидация (Chrome DevTools → Console → CSP errors)
+7. Документировать endpoint в `docs/openapi.yaml`
 
 ---
 
@@ -813,6 +894,7 @@ Endpoints:
 | GET | `/healthz` | liveness |
 | GET | `/readyz` | readiness: RouterOS address-list API + bbolt |
 | GET | `/api/v1/status` | общий статус |
+| GET | `/api/v1/progress` | активные синхронизации: фаза и процент |
 | GET | `/api/v1/services` | список сервисов |
 | POST | `/api/v1/services` | добавить сервис |
 | DELETE | `/api/v1/services/{name}` | удалить сервис |

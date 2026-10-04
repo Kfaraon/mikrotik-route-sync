@@ -243,6 +243,39 @@ func TestSaveFallsBackWhenRenameUnavailable(t *testing.T) {
 	}
 }
 
+func TestSaveFallsBackWhenTempCreationDenied(t *testing.T) {
+	// Эмуляция bind-mount в Docker Desktop: в каталоге нельзя создавать
+	// новые файлы ("open config.yaml.tmp: permission denied"), а сам
+	// файл конфигурации перезаписываемый.
+	path := writeTempConfig(t, minimalYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Каталог на месте temp-файла: os.WriteFile(path.tmp) всегда падает.
+	tmpBlock := path + ".tmp"
+	if err := os.Mkdir(tmpBlock, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tmpBlock) })
+
+	if err := cfg.Set("mikrotik.rate_limit", "7"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("save with in-place fallback: %v", err)
+	}
+
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.MikroTik.RateLimit; got != 7 {
+		t.Fatalf("persisted rate_limit = %d, want 7", got)
+	}
+}
+
 func TestEffectiveSchedulePriority(t *testing.T) {
 	cfg := &Config{Schedules: SchedulesConfig{
 		Global: "every 6h",

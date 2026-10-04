@@ -84,6 +84,8 @@ func newRoot() *cobra.Command {
 		infoCmd(),
 		addServiceCmd(),
 		removeServiceCmd(),
+		auditAddressListCmd(),
+		cleanupAutoEntriesCmd(),
 		backupCmd(),
 		restoreCmd(),
 		snapshotsCmd(),
@@ -198,7 +200,7 @@ func listCmd() *cobra.Command {
 				for _, name := range services {
 					routes := 0
 					if rs, err := s.Backup(ctx, name); err == nil {
-    					routes = len(rs.Entries)
+						routes = len(rs.Entries)
 					}
 					fmt.Fprintf(w, "%s\t%s\t%d\n", name, cfg.EffectiveSchedule(name), routes)
 				}
@@ -308,6 +310,56 @@ func removeServiceCmd() *cobra.Command {
 }
 
 // ============================================================================
+// audit-address-list / cleanup-auto-entries
+// ============================================================================
+
+func auditAddressListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "audit-address-list",
+		Short: "Показать осиротевшие AUTO-записи (сервиса нет в конфигурации)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				orphans, err := s.AuditAddressList(ctx)
+				if err != nil {
+					return err
+				}
+				if len(orphans) == 0 {
+					fmt.Println("Orphan AUTO entries not found")
+					return nil
+				}
+				w := tabWriter()
+				fmt.Fprintln(w, "SERVICE\tADDRESS\tID")
+				for _, o := range orphans {
+					fmt.Fprintf(w, "%s\t%s\t%s\n", o.Service, o.Addresslist.Address, o.Addresslist.ID)
+				}
+				w.Flush()
+				fmt.Printf("Total: %d\n", len(orphans))
+				return nil
+			})
+		},
+	}
+}
+
+func cleanupAutoEntriesCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cleanup-auto-entries",
+		Short: "Удалить осиротевшие AUTO-записи (требует --force)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				n, err := s.CleanupAutoEntries(ctx, forceOp)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Deleted orphan AUTO entries: %d\n", n)
+				return nil
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&forceOp, "force", false, "подтвердить удаление записей")
+	return cmd
+}
+
+// ============================================================================
 // backup / restore / snapshots
 // ============================================================================
 
@@ -361,22 +413,22 @@ func restoreCmd() *cobra.Command {
 				}
 				var entries []addresslist.Entry
 				if fromSnapshot != "" {
-				    if err := s.GetSnapshot(ctx, name, fromSnapshot, &entries); err != nil {
-				        return fmt.Errorf("get snapshot: %w", err)
-				    }
+					if err := s.GetSnapshot(ctx, name, fromSnapshot, &entries); err != nil {
+						return fmt.Errorf("get snapshot: %w", err)
+					}
 				} else {
-				    var backup core.BackupFile
-				    data, err := os.ReadFile(args[1])
-				    if err != nil {
-				        return fmt.Errorf("read backup file: %w", err)
-				    }
-				    if err := json.Unmarshal(data, &backup); err != nil {
-				        return fmt.Errorf("parse backup file: %w", err)
-				    }
-				    entries = backup.Entries
+					var backup core.BackupFile
+					data, err := os.ReadFile(args[1])
+					if err != nil {
+						return fmt.Errorf("read backup file: %w", err)
+					}
+					if err := json.Unmarshal(data, &backup); err != nil {
+						return fmt.Errorf("parse backup file: %w", err)
+					}
+					entries = backup.Entries
 				}
 				if err := s.Restore(ctx, name, entries); err != nil {
-				    return err
+					return err
 				}
 				fmt.Printf("Restored '%s' from %d entries\n", name, len(entries))
 				return nil
@@ -438,18 +490,18 @@ func snapshotsCmd() *cobra.Command {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
 				backup, err := s.Backup(ctx, args[0])
 				if err != nil {
-				    return err
+					return err
 				}
 				addresses := make([]string, 0, len(backup.Entries))
 				for _, e := range backup.Entries {
-				    norm, err := addresslist.NormalizeAddress(e.Address)
-				    if err == nil {
-				        addresses = append(addresses, norm)
-				    }
+					norm, err := addresslist.NormalizeAddress(e.Address)
+					if err == nil {
+						addresses = append(addresses, norm)
+					}
 				}
 				id, err := s.CreateSnapshot(ctx, args[0], addresses)
 				if err != nil {
-				    return err
+					return err
 				}
 				fmt.Printf("Snapshot created: %s (entries: %d)\n", id, len(addresses))
 				return nil
@@ -566,7 +618,7 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 		botCancel()
 		botCancel = nil
 	}
-	
+
 	// Ждём завершения текущей горутины бота
 	if telegramBot != nil {
 		telegramBot = nil
@@ -612,7 +664,7 @@ func daemonCmd() *cobra.Command {
 				return err
 			}
 
-			notify := notifier.FromConfig(cfg.Telegram, log)
+			notify := notifier.FromConfig(cfg.Telegram, cfg.Timezone, log)
 			s, err := core.NewSyncer(cfg, log, cache, notify)
 			if err != nil {
 				return err
@@ -943,7 +995,7 @@ func testTelegramCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n, err := notifier.NewTelegram(cfg.Telegram, slogLogger())
+			n, err := notifier.NewTelegram(cfg.Telegram, cfg.Timezone, slogLogger())
 			if err != nil {
 				return err
 			}
@@ -1045,7 +1097,7 @@ func withSyncer(fn func(context.Context, *config.Config, *core.Syncer) error) er
 		return err
 	}
 
-	notify := notifier.FromConfig(cfg.Telegram, log)
+	notify := notifier.FromConfig(cfg.Telegram, cfg.Timezone, log)
 	s, err := core.NewSyncer(cfg, log, cache, notify)
 	if err != nil {
 		return err

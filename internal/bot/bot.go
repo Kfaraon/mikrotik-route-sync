@@ -14,6 +14,7 @@ import (
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"golang.org/x/time/rate"
 )
@@ -83,8 +84,8 @@ func (b *Bot) send(id int64, text string) {
 func (b *Bot) menu(id int64) {
 	rows := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📊 Status", "cmd:status"),
-			tgbotapi.NewInlineKeyboardButtonData("🔄 Sync все", "sync:all"),
+			tgbotapi.NewInlineKeyboardButtonData("📊 Статус", "cmd:status"),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Синхр. все", "sync:all"),
 		),
 	}
 	for _, svc := range b.syncer.ListServices() {
@@ -102,12 +103,14 @@ func (b *Bot) statusText(ctx context.Context) string {
 	var sb strings.Builder
 	sb.WriteString("Статус (Firewall Address List):\n")
 	sb.WriteString(fmt.Sprintf("  список: %s\n", b.syncer.Config().Firewall.AddressList))
-	sb.WriteString(fmt.Sprintf("  аптайм: %s\n", time.Since(b.syncer.StartTime()).Truncate(time.Second)))
+	sb.WriteString(fmt.Sprintf("  аптайм: %s\n", notifier.FormatDur(time.Since(b.syncer.StartTime()))))
 	last := b.syncer.LastSync()
 	if last.IsZero() {
 		sb.WriteString("  последняя синхронизация: ещё не выполнялась\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("  последняя синхронизация: %s\n", last.Format(time.RFC3339)))
+		loc := notifier.LoadLocation(b.syncer.Config().Timezone)
+		sb.WriteString(fmt.Sprintf("  последняя синхронизация: %s\n",
+			last.In(loc).Format("02.01.2006 15:04:05")))
 	}
 	sb.WriteString(fmt.Sprintf("  версия: %s\n", b.syncer.Version()))
 	if dg := b.syncer.DegradedServices(); len(dg) > 0 {
@@ -117,7 +120,7 @@ func (b *Bot) statusText(ctx context.Context) string {
 	for _, svc := range b.syncer.ListServices() {
 		info, err := b.syncer.InfoService(ctx, svc)
 		if err != nil {
-			sb.WriteString(fmt.Sprintf("  - %s: ошибка (%v)\n", svc, err))
+			sb.WriteString(fmt.Sprintf("  - %s: ошибка (%s)\n", svc, notifier.LocalizeError(err.Error())))
 			continue
 		}
 		sb.WriteString(fmt.Sprintf("  - %s: записей=%d (comment=%s), расписание=%s\n",
@@ -203,7 +206,7 @@ func (b *Bot) handleCallback(ctx context.Context, id int64, data string) {
 	switch action {
 	case "cmd":
 		if arg == "status" {
-			b.menu(id)
+			b.send(id, b.statusText(ctx))
 		}
 	case "sync":
 		if arg == "all" {

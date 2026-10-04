@@ -29,18 +29,32 @@ type mockRouter struct {
 
 func (m *mockRouter) serve(list []addresslist.Entry, failDelete bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodDelete:
-			id := r.URL.Query().Get(".id")
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/remove"):
+			var body struct {
+				Numbers string `json:"numbers"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
 			if failDelete {
-				http.Error(w, "boom", http.StatusInternalServerError)
+				http.Error(w, `{"detail":"boom","error":400,"message":"Bad Request"}`, http.StatusBadRequest)
 				return
 			}
+			m.mu.Lock()
+			m.deleted = append(m.deleted, body.Numbers)
+			m.mu.Unlock()
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodDelete:
+			// legacy fallback — при failDelete он тоже должен отказать
+			if failDelete {
+				http.Error(w, `{"detail":"boom","error":400,"message":"Bad Request"}`, http.StatusBadRequest)
+				return
+			}
+			id := r.URL.Query().Get(".id")
 			m.mu.Lock()
 			m.deleted = append(m.deleted, id)
 			m.mu.Unlock()
 			_, _ = w.Write([]byte(`[]`))
-		case http.MethodPut:
+		case r.Method == http.MethodPut:
 			_, _ = w.Write([]byte(`{"id":"*new"}`))
 		default:
 			_ = json.NewEncoder(w).Encode(list)

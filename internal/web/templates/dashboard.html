@@ -1,197 +1,63 @@
-{{ define "services.html" }}
+{{ define "dashboard.html" }}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ .CSRF }}">
-    <title>Сервисы</title>
+    <title>Дашборд — MikroTik Route Sync</title>
     <link rel="stylesheet" href="/static/app.css">
-    <link rel="stylesheet" href="/static/services.css">
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <script src="/static/theme.js"></script>
 </head>
 <body>
     <!-- Навигационная панель -->
     <nav class="bar">
         <span class="brand">MikroTik Route Sync</span>
-        <a href="/">Дашборд</a>
-        <a href="/services" class="active">Сервисы</a>
+        <a href="/" class="active">Дашборд</a>
+        <a href="/services">Сервисы</a>
         <a href="/address-list">Списки адресов</a>
         <a href="/schedules">Расписания</a>
         <a href="/settings">Настройки</a>
         <a href="/logs">Логи</a>
         <span class="bar-right">
-            <span id="live-dot" class="live-dot" title="Live: нет подключения"></span>
-            <span class="ver">v{{ .Version }}</span>
+            <span id="live-dot" class="{{ .DotClass }}" title="{{ .DotTitle }}"></span>
             <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
         </span>
     </nav>
 
-    <div id="services-page" class="container services-page">
-        <div class="svc-header">
-            <div>
-                <h1>Сервисы</h1>
-                <p class="svc-muted">Глобальный список: <strong>{{ .GlobalList }}</strong></p>
-            </div>
-            <div class="svc-header-actions">
-                <label class="svc-switch">
-                    <input type="checkbox" id="svc-auto-refresh">
+    <div id="dashboard-page" class="container dashboard-page">
+        <div class="dash-header">
+            <div class="dash-header-actions">
+                <label class="switch">
+                    <input type="checkbox" id="dash-auto-refresh">
                     <span>Автообновление</span>
                 </label>
-                <button type="button" id="svc-refresh" class="btn btn-primary">⟳ Обновить</button>
+                <button type="button" id="dash-refresh" class="btn btn-primary"><span class="btn-ico" aria-hidden="true">⟳</span> Обновить</button>
             </div>
         </div>
 
-        <div id="svc-alert" class="svc-alert" hidden></div>
+        <div id="dash-alert" class="dash-alert" hidden></div>
 
-        <!-- KPI Карточки -->
-        <div class="svc-kpi-grid">
-            <div class="svc-kpi-card">
-                <span class="svc-kpi-label">Всего сервисов</span>
-                <span class="svc-kpi-value" id="svc-total-value">—</span>
-                <span class="svc-kpi-note" id="svc-total-note">загрузка…</span>
-            </div>
-            <div class="svc-kpi-card">
-                <span class="svc-kpi-label">Проблемы</span>
-                <span class="svc-kpi-value" id="svc-problems-value">—</span>
-                <span class="svc-kpi-note" id="svc-problems-note">загрузка…</span>
-            </div>
-            <div class="svc-kpi-card">
-                <span class="svc-kpi-label">Последняя синхр.</span>
-                <span class="svc-kpi-value" id="svc-last-value">—</span>
-                <span class="svc-kpi-note" id="svc-last-note">загрузка…</span>
-            </div>
-            <div class="svc-kpi-card">
-                <span class="svc-kpi-label">Выбрано</span>
-                <span class="svc-kpi-value" id="svc-selected-value">0</span>
-                <span class="svc-kpi-note" id="svc-selected-note">отметьте сервисы для действий</span>
-            </div>
-        </div>
-
-        <!-- Панель инструментов -->
-        <div class="svc-toolbar">
-            <div class="svc-toolbar-main">
-                <input type="search" id="svc-search" placeholder="Поиск по имени, статусу или группе…">
-                <select id="svc-filter">
-                    <option value="all">Все сервисы</option>
-                    <option value="auto">Автоматические</option>
-                    <option value="manual">Ручные</option>
-                    <option value="disabled">Отключенные</option>
-                    <option value="routes">С маршрутами</option>
-                    <option value="problems">С проблемами</option>
-                    <option value="override">С переопределениями</option>
-                </select>
-                <select id="svc-sort">
-                    <option value="name">Сортировка: По имени</option>
-                    <option value="status">Сортировка: По статусу</option>
-                    <option value="routes">Сортировка: По маршрутам</option>
-                    <option value="next">Сортировка: По следующему запуску</option>
-                    <option value="last">Сортировка: По последней синхр.</option>
-                </select>
-            </div>
-            <div class="svc-toolbar-actions">
-                <label class="svc-switch">
-                    <input type="checkbox" id="svc-select-all">
-                    <span>Выбрать все на странице</span>
-                </label>
-                <span id="svc-selected-info" class="svc-muted">выбрано: 0</span>
-                <button type="button" id="svc-bulk-dry" class="btn btn-small btn-secondary" disabled>Тест выбранных</button>
-                <button type="button" id="svc-bulk-sync" class="btn btn-small btn-primary" disabled>Синхр. выбранных</button>
-                <button type="button" id="svc-bulk-clear" class="btn btn-small btn-outline">Сбросить выбор</button>
-            </div>
-        </div>
-
-        <!-- Форма добавления -->
-        <div class="svc-add-card">
-            <form id="svc-add-form" class="svc-add-form">
-                <input type="text" id="svc-add-name" placeholder="Имя сервиса, домен, IP или ASN" required>
-                <button type="submit" id="svc-add-btn" class="btn btn-primary">Добавить сервис</button>
-            </form>
-        </div>
-
-        <!-- Таблица сервисов -->
-        <div class="svc-table-wrap">
-            <table class="svc-table">
-                <thead>
-                    <tr>
-                        <th class="svc-col-check"><input type="checkbox" id="svc-select-all-header"></th>
-                        <th>Сервис</th>
-                        <th>Состояние</th>
-                        <th>Расписание</th>
-                        <th>Ближайший запуск</th>
-                        <th>Маршрутов</th>
-                        <th>Последняя синхр.</th>
-                        <th>Действия</th>
-                    </tr>
-                </thead>
-                <tbody id="services-body"></tbody>
-            </table>
-            <div id="services-empty" class="svc-empty" hidden>Нет сервисов. Добавьте первый сервис выше.</div>
-        </div>
-    </div>
-
-    <!-- Drawer (выезжающая панель) деталей -->
-    <div id="svc-drawer" class="svc-drawer" hidden aria-hidden="true">
-        <div class="svc-drawer-backdrop" data-svc-close></div>
-        <div class="svc-drawer-panel">
-            <div class="svc-drawer-header">
-                <div class="svc-drawer-title-wrap">
-                    <h2 id="svc-drawer-title">Детали сервиса</h2>
-                    <span id="svc-drawer-subtitle" class="svc-muted svc-small"></span>
+        <div class="dash-grid dash-grid-3">
+            <!-- Состояние системы -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Состояние</h2>
                 </div>
-                <button type="button" class="svc-icon-btn" data-svc-close aria-label="Закрыть">&times;</button>
-            </div>
-            <div class="svc-tabs">
-                <button type="button" class="svc-tab active" data-svc-tab="overview">Обзор</button>
-                <button type="button" class="svc-tab" data-svc-tab="routes">Маршруты</button>
-                <button type="button" class="svc-tab" data-svc-tab="history">История</button>
-                <button type="button" class="svc-tab" data-svc-tab="logs">Логи</button>
-            </div>
-            <div id="svc-drawer-body" class="svc-drawer-body">
-                <div class="svc-empty">Загрузка деталей…</div>
-            </div>
-            <div class="svc-drawer-footer">
-                <button type="button" id="svc-drawer-sync" class="btn btn-primary">Синхронизировать</button>
-                <button type="button" id="svc-drawer-dry" class="btn btn-secondary">Тест (dry-run)</button>
-                <button type="button" id="svc-drawer-diff" class="btn btn-outline">Показать Diff</button>
-                <button type="button" id="svc-drawer-delete" class="btn btn-danger">Удалить</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Модальное окно подтверждения удаления -->
-    <div id="svc-delete-modal" class="svc-modal" hidden>
-        <div class="svc-modal-backdrop" data-svc-delete-cancel></div>
-        <div class="svc-modal-panel">
-            <h3>Удалить сервис <span id="svc-delete-name" style="color: var(--danger);"></span>?</h3>
-            <p class="svc-muted">Это действие повлияет только на управляемые записи этого сервиса.</p>
-            <div class="svc-modal-actions">
-                <button type="button" id="svc-delete-keep" class="btn btn-secondary">Удалить только сервис</button>
-                <button type="button" id="svc-delete-purge" class="btn btn-danger">Удалить сервис и маршруты</button>
-                <button type="button" id="svc-delete-cancel" class="btn btn-outline" data-svc-delete-cancel>Отмена</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Модальное окно Diff -->
-    <div id="svc-diff-modal" class="svc-modal" hidden>
-        <div class="svc-modal-backdrop" data-diff-close></div>
-        <div class="svc-modal-panel svc-modal-wide">
-            <div class="svc-drawer-header">
-                <div class="svc-drawer-title-wrap">
-                    <h2>Изменения маршрутов</h2>
-                    <span id="svc-diff-subtitle" class="svc-muted svc-small"></span>
+                <div class="panel-body health-list" id="health-list">
+                    <div class="empty-state">Загрузка…</div>
                 </div>
-                <button type="button" class="svc-icon-btn" id="svc-diff-close" data-diff-close aria-label="Закрыть">&times;</button>
             </div>
-            <div class="svc-toolbar" style="margin-top: 1rem;">
-                <input type="search" id="svc-diff-search" placeholder="Поиск префикса…" style="flex: 2;">
-                <label class="svc-switch" style="flex: 1; justify-content: flex-end;">
-                    <input type="checkbox" id="svc-diff-only" checked>
-                    <span>Только изменения (+/-)</span>
-                </label>
-            </div>
-            <div id="svc-diff-list" class="svc-diff-list" style="max-height: 60vh; overflow-y: auto; margin-top: 1rem;">
-                <div class="svc-empty">Нет данных. Запустите синхронизацию из интерфейса, чтобы увидеть diff.</div>
+
+            <!-- Следующие запуски -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Следующие запуски</h2>
+                </div>
+                <div class="panel-body list" id="next-list">
+                    <div class="empty-state">Загрузка…</div>
+                </div>
             </div>
         </div>
     </div>
@@ -200,8 +66,8 @@
     <div id="mrs-toast" class="toast"></div>
 
     <!-- Скрипты -->
-    <script src="/static/theme.js"></script>
-    <script src="/static/services.js"></script>
+    <script src="/static/dashboard.js"></script>
+    <script src="/static/app.js"></script>
 </body>
 </html>
 {{ end }}

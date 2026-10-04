@@ -103,3 +103,70 @@ func TestIPv6IsRejected(t *testing.T) {
 		t.Fatalf("aggregate must drop IPv6, got %v", out)
 	}
 }
+
+func TestSubtractPrefixDisjointAndEqual(t *testing.T) {
+	// Разрыв CIDR-блоков: вычитание нечего.
+	got := SubtractPrefix(netip.MustParsePrefix("1.2.3.0/24"), netip.MustParsePrefix("5.6.7.0/24"))
+	if len(got) != 1 || got[0].String() != "1.2.3.0/24" {
+		t.Fatalf("disjoint: expected [1.2.3.0/24], got %v", got)
+	}
+	// Выключаемое содержится целиком (равенство): p исчезает.
+	if got := SubtractPrefix(netip.MustParsePrefix("1.2.3.0/24"), netip.MustParsePrefix("1.2.3.0/24")); got != nil {
+		t.Fatalf("equal: expected nil, got %v", got)
+	}
+	// x шире p: p полностью внутри x.
+	if got := SubtractPrefix(netip.MustParsePrefix("1.2.3.0/24"), netip.MustParsePrefix("1.2.0.0/16")); got != nil {
+		t.Fatalf("superset: expected nil, got %v", got)
+	}
+	// Не-IPv4 не поддерживается.
+	if got := SubtractPrefix(netip.MustParsePrefix("2001:db8::/32"), netip.MustParsePrefix("2001:db8::/48")); got != nil {
+		t.Fatalf("IPv6: expected nil, got %v", got)
+	}
+}
+
+func TestSubtractPrefixLargerBlock(t *testing.T) {
+	got := SubtractPrefix(netip.MustParsePrefix("1.2.0.0/23"), netip.MustParsePrefix("1.2.1.0/24"))
+	if len(got) != 1 || got[0].String() != "1.2.0.0/24" {
+		t.Fatalf("/23 minus second /24 must be [1.2.0.0/24], got %v", got)
+	}
+}
+
+func TestSubtractPrefixHostFromNetwork(t *testing.T) {
+	p := netip.MustParsePrefix("1.2.3.0/24")
+	x := netip.MustParsePrefix("1.2.3.4/32")
+	got := SubtractPrefix(p, x)
+	if len(got) == 0 {
+		t.Fatal("expected remainder pieces")
+	}
+
+	// Сумма адресов: 256 - 1 = 255 (PROMPT III.4 — вычитание не меняет
+	// множество молча: union(результат) ∪ x == p).
+	if sum := sumAddresses(got); sum.Int64() != 255 {
+		t.Fatalf("expected 255 addresses, got %s", sum)
+	}
+	// Исключённый хост не покрыт ни одним куском.
+	excluded := netip.MustParseAddr("1.2.3.4")
+	for _, piece := range got {
+		if piece.Contains(excluded) {
+			t.Fatalf("excluded host covered by %s", piece)
+		}
+		// Каждый кусок лежит внутри исходного блока.
+		if !p.Contains(piece.Addr()) || piece.Bits() < p.Bits() {
+			t.Fatalf("piece %s escapes %s", piece, p)
+		}
+	}
+	// Результат + исключённое покрывают исходный блок целиком.
+	full := append(append([]netip.Prefix{}, got...), x)
+	covered := sumAddresses(full)
+	if covered.Int64() != 256 {
+		t.Fatalf("union(result, x) must equal p: got %s addresses", covered)
+	}
+	// Повторное вычитание того же хоста идемпотентно.
+	again := make([]netip.Prefix, 0, len(got))
+	for _, piece := range got {
+		again = append(again, SubtractPrefix(piece, x)...)
+	}
+	if sumAddresses(again).Int64() != 255 {
+		t.Fatalf("re-subtract must be idempotent: %s", sumAddresses(again))
+	}
+}

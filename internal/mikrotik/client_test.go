@@ -80,12 +80,12 @@ func TestAddEntryObjectReply(t *testing.T) {
 	})
 	defer srv.Close()
 
-	id, err := c.AddEntry(context.Background(), addresslist.Entry{Address: "8.8.8.0/24", List: "TO-VPN", Comment: "AUTO:x"})
+	entry, err := c.AddEntry(context.Background(), addresslist.Entry{Address: "8.8.8.0/24", List: "TO-VPN", Comment: "AUTO:x"})
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if id != "*1A" {
-		t.Fatalf("expected *1A, got %q", id)
+	if entry.ID != "*1A" {
+		t.Fatalf("expected *1A, got %q", entry.ID)
 	}
 }
 
@@ -95,9 +95,9 @@ func TestAddEntryArrayAndDotID(t *testing.T) {
 	})
 	defer srv.Close()
 
-	id, err := c.AddEntry(context.Background(), addresslist.Entry{Address: "8.8.8.0/24"})
-	if err != nil || id != "*2B" {
-		t.Fatalf("expected *2B/nil, got %q/%v", id, err)
+	entry, err := c.AddEntry(context.Background(), addresslist.Entry{Address: "8.8.8.0/24"})
+	if err != nil || entry.ID != "*2B" {
+		t.Fatalf("expected *2B/nil, got %q/%v", entry.ID, err)
 	}
 }
 
@@ -162,6 +162,51 @@ func TestDeleteEntryRejectsBadID(t *testing.T) {
 	}
 }
 
+func TestDeleteEntryUsesRemoveEndpoint(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`[]`))
+	})
+	defer srv.Close()
+
+	if err := c.DeleteEntry(context.Background(), "*A82"); err != nil {
+		t.Fatal(err)
+	}
+	// RouterOS v7 НЕ принимает DELETE ?.id=*XX (400) — нужен POST /remove.
+	if gotMethod != http.MethodPost || !strings.HasSuffix(gotPath, "/ip/firewall/address-list/remove") {
+		t.Fatalf("expected POST .../address-list/remove, got %s %s", gotMethod, gotPath)
+	}
+	if !strings.Contains(gotBody, `"numbers":"*A82"`) {
+		t.Fatalf("expected {\"numbers\":\"*A82\"} body, got %s", gotBody)
+	}
+}
+
+func TestDeleteEntryFallsBackToLegacyQuery(t *testing.T) {
+	var legacyCalls int
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/remove"):
+			http.Error(w, `{"detail":"not found","error":404,"message":"Not Found"}`, http.StatusNotFound)
+		case r.Method == http.MethodDelete && r.URL.Query().Get(".id") == "*1":
+			legacyCalls++
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.Error(w, "unexpected", http.StatusBadRequest)
+		}
+	})
+	defer srv.Close()
+
+	if err := c.DeleteEntry(context.Background(), "*1"); err != nil {
+		t.Fatal(err)
+	}
+	if legacyCalls != 1 {
+		t.Fatalf("expected 1 legacy delete call, got %d", legacyCalls)
+	}
+}
+
 func TestRedactHidesSecrets(t *testing.T) {
 	out := redact(`{"password":"hunter2","token":"abcdef","note":"keep"}`)
 	if strings.Contains(out, "hunter2") || strings.Contains(out, "abcdef") {
@@ -178,10 +223,27 @@ func TestTransactionRollbackOnFailure(t *testing.T) {
 		switch r.Method {
 		case http.MethodPut:
 			_, _ = w.Write([]byte(`{"id":"*new1"}`))
+		case http.MethodPost:
+			// основной синтаксис удаления: POST /remove {"numbers":...}
+			if !strings.HasSuffix(r.URL.Path, "/remove") {
+				http.Error(w, "bad path", http.StatusNotFound)
+				return
+			}
+			var body struct {
+				Numbers string `json:"numbers"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.Numbers == "*old1" {
+				http.Error(w, `{"detail":"no such item","error":400,"message":"Bad Request"}`, http.StatusBadRequest)
+				return
+			}
+			deleted = append(deleted, body.Numbers)
+			_, _ = w.Write([]byte(`[]`))
 		case http.MethodDelete:
+			// legacy fallback
 			id := r.URL.Query().Get(".id")
 			if id == "*old1" {
-				http.Error(w, "boom", http.StatusInternalServerError)
+				http.Error(w, `{"detail":"no such item","error":400,"message":"Bad Request"}`, http.StatusBadRequest)
 				return
 			}
 			deleted = append(deleted, id)
@@ -199,6 +261,7 @@ func TestTransactionRollbackOnFailure(t *testing.T) {
 
 	err := tx.Apply(context.Background(),
 		[]addresslist.Entry{{Address: "8.8.8.0/24"}},
+		nil,
 		[]addresslist.Entry{{ID: "*old1", Address: "1.1.1.0/24"}},
 	)
 	if err == nil {
@@ -210,5 +273,220 @@ func TestTransactionRollbackOnFailure(t *testing.T) {
 	// rollback должен удалить добавленную запись
 	if len(deleted) != 1 || deleted[0] != "*new1" {
 		t.Fatalf("rollback did not delete added entry: %v", deleted)
+	}
+}
+
+// PROMPT II.4.4: порядок применения — сначала POST новых записей, затем
+// re-enable (update), затем DELETE устаревших.
+func TestTransactionApplyOrderAddUpdateRemove(t *testing.T) {
+	var ops []string
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			ops = append(ops, "add")
+			_, _ = w.Write([]byte(`{"id":"*n1"}`))
+		case http.MethodPatch:
+			ops = append(ops, "update")
+			b, _ := io.ReadAll(r.Body)
+			// цель обновления — всегда включение записи
+			if !strings.Contains(string(b), `"disabled":"false"`) {
+				t.Errorf("PATCH must re-enable (disabled=false), got %s", b)
+			}
+			_, _ = w.Write([]byte(`[]`))
+		case http.MethodPost:
+			if !strings.HasSuffix(r.URL.Path, "/remove") {
+				http.Error(w, "bad path", http.StatusNotFound)
+				return
+			}
+			ops = append(ops, "remove")
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.Error(w, "unexpected "+r.Method, http.StatusMethodNotAllowed)
+		}
+	})
+	defer srv.Close()
+
+	cfg := &config.Config{}
+	cfg.Firewall.AddressList = "TO-VPN"
+	cfg.Firewall.CommentPrefix = "AUTO"
+	tx := NewTransaction(c, cfg, nil, "demo", testLogger())
+
+	err := tx.Apply(context.Background(),
+		[]addresslist.Entry{{Address: "8.8.8.0/24"}},
+		[]addresslist.Entry{{ID: "*u1", Address: "1.1.1.0/24", Disabled: "true"}},
+		[]addresslist.Entry{{ID: "*o1", Address: "9.9.9.0/24"}},
+	)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if tx.State() != StateApplied {
+		t.Fatalf("expected applied, got %s", tx.State())
+	}
+	want := []string{"add", "update", "remove"}
+	if len(ops) != len(want) || ops[0] != want[0] || ops[1] != want[1] || ops[2] != want[2] {
+		t.Fatalf("wrong operation order: %v (want %v)", ops, want)
+	}
+}
+
+// Сбой обновления (PATCH) откатывает уже созданные записи и не доходит до удаления.
+func TestTransactionUpdateFailureRollsBack(t *testing.T) {
+	var removed []string
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			_, _ = w.Write([]byte(`{"id":"*n1"}`))
+		case http.MethodPatch:
+			http.Error(w, `{"detail":"failure","error":400,"message":"Bad Request"}`, http.StatusBadRequest)
+		case http.MethodPost:
+			var body struct {
+				Numbers string `json:"numbers"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			removed = append(removed, body.Numbers)
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.Error(w, "unexpected", http.StatusMethodNotAllowed)
+		}
+	})
+	defer srv.Close()
+
+	cfg := &config.Config{}
+	cfg.Firewall.AddressList = "TO-VPN"
+	cfg.Firewall.CommentPrefix = "AUTO"
+	tx := NewTransaction(c, cfg, nil, "demo", testLogger())
+
+	err := tx.Apply(context.Background(),
+		[]addresslist.Entry{{Address: "8.8.8.0/24"}},
+		[]addresslist.Entry{{ID: "*u1", Address: "1.1.1.0/24"}},
+		[]addresslist.Entry{{ID: "*o1", Address: "9.9.9.0/24"}},
+	)
+	if err == nil {
+		t.Fatal("expected update failure")
+	}
+	if tx.State() != StateRolledBack {
+		t.Fatalf("expected rolled_back, got %s", tx.State())
+	}
+	// rollback удаляет созданную запись, запланированное удаление не выполнялось
+	if len(removed) != 1 || removed[0] != "*n1" {
+		t.Fatalf("rollback must delete only created entry: %v", removed)
+	}
+}
+
+// Rollback после успешного re-enable: запись возвращается в disabled=true.
+func TestTransactionRollbackRestoresDisabled(t *testing.T) {
+	var removed []string
+	var patches []string
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			_, _ = w.Write([]byte(`{"id":"*n1"}`))
+		case http.MethodPatch:
+			b, _ := io.ReadAll(r.Body)
+			patches = append(patches, string(b))
+			_, _ = w.Write([]byte(`[]`))
+		case http.MethodPost:
+			var body struct {
+				Numbers string `json:"numbers"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.Numbers == "*o1" {
+				// удаление не удаётся → откат
+				http.Error(w, `{"detail":"failure","error":400,"message":"Bad Request"}`, http.StatusBadRequest)
+				return
+			}
+			removed = append(removed, body.Numbers)
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.Error(w, "unexpected", http.StatusMethodNotAllowed)
+		}
+	})
+	defer srv.Close()
+
+	cfg := &config.Config{}
+	cfg.Firewall.AddressList = "TO-VPN"
+	cfg.Firewall.CommentPrefix = "AUTO"
+	tx := NewTransaction(c, cfg, nil, "demo", testLogger())
+
+	err := tx.Apply(context.Background(),
+		[]addresslist.Entry{{Address: "8.8.8.0/24"}},
+		[]addresslist.Entry{{ID: "*u1", Address: "1.1.1.0/24", Disabled: "true"}},
+		[]addresslist.Entry{{ID: "*o1", Address: "9.9.9.0/24"}},
+	)
+	if err == nil {
+		t.Fatal("expected delete failure")
+	}
+	if tx.State() != StateRolledBack {
+		t.Fatalf("expected rolled_back, got %s", tx.State())
+	}
+	if len(removed) != 1 || removed[0] != "*n1" {
+		t.Fatalf("rollback must delete created entry: %v", removed)
+	}
+	// сначала re-enable (disabled=false), затем откат (disabled=true)
+	if len(patches) != 2 {
+		t.Fatalf("expected update + rollback re-disable patches, got %v", patches)
+	}
+	if !strings.Contains(patches[0], `"disabled":"false"`) {
+		t.Fatalf("first patch must re-enable: %s", patches[0])
+	}
+	if !strings.Contains(patches[1], `"disabled":"true"`) {
+		t.Fatalf("rollback must re-disable: %s", patches[1])
+	}
+}
+
+// PATCH {path}/{.id} — рабочая схема обновления на живом RouterOS v7.
+func TestUpdateEntryUsesPatchResourcePath(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{".id":"*42","disabled":"false"}`))
+	})
+	defer srv.Close()
+
+	err := c.UpdateEntry(context.Background(), addresslist.Entry{
+		ID: "*42", Address: "8.8.8.0/24", List: "TO-VPN", Comment: "AUTO:x", Disabled: "false",
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if gotMethod != http.MethodPatch {
+		t.Fatalf("expected PATCH, got %s", gotMethod)
+	}
+	if !strings.HasSuffix(gotPath, "/rest/ip/firewall/address-list/*42") {
+		t.Fatalf("expected resource path with .id, got %s", gotPath)
+	}
+	if gotBody != `{"disabled":"false"}` {
+		t.Fatalf("expected disabled-only body, got %s", gotBody)
+	}
+}
+
+func TestUpdateEntryRejectsBadInput(t *testing.T) {
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request expected, got %s %s", r.Method, r.URL.Path)
+	})
+	defer srv.Close()
+
+	for _, bad := range []string{"", "*1/../2", "*1?x", "*1#y"} {
+		err := c.UpdateEntry(context.Background(), addresslist.Entry{ID: bad, Disabled: "false"})
+		if err == nil {
+			t.Fatalf("expected rejection of id %q", bad)
+		}
+	}
+	// Без цели обновления — ошибка, без запроса.
+	if err := c.UpdateEntry(context.Background(), addresslist.Entry{ID: "*1"}); err == nil {
+		t.Fatal("expected error when disabled is empty")
+	}
+}
+
+func TestUpdateEntryErrorStatus(t *testing.T) {
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"detail":"no such item","error":400,"message":"Bad Request"}`, http.StatusBadRequest)
+	})
+	defer srv.Close()
+
+	err := c.UpdateEntry(context.Background(), addresslist.Entry{ID: "*404", Disabled: "false"})
+	if err == nil {
+		t.Fatal("expected error on 400")
 	}
 }

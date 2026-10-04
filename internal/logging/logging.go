@@ -24,6 +24,7 @@ type SyncResult struct {
 	Added      int       `json:"added"`
 	Removed    int       `json:"removed"`
 	Unchanged  int       `json:"unchanged"`
+	Updated    int       `json:"updated"` // re-enable выключенных записей
 	Error      string    `json:"error,omitempty"`
 	DryRun     bool      `json:"dry_run"`
 	StartedAt  time.Time `json:"started_at"`
@@ -183,6 +184,7 @@ func LogSyncResult(logger *slog.Logger, result SyncResult, elapsed time.Duration
 		"added", result.Added,
 		"removed", result.Removed,
 		"unchanged", result.Unchanged,
+		"updated", result.Updated,
 		"dry_run", result.DryRun,
 		"duration", elapsed.String(),
 		"error", result.Error,

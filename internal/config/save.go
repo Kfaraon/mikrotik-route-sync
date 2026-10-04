@@ -358,7 +358,17 @@ func AtomicWrite(path string, c *Config) error {
 
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, buf.Bytes(), 0o600); err != nil {
-		return fmt.Errorf("write temp: %w", err)
+		// Fallback: bind-mount без права создания файлов в каталоге
+		// (Docker Desktop: /data root:root 0755, а сам файл конфига 0777 —
+		// проверено на живом контейнере: "open config.yaml.tmp: permission
+		// denied"). Пишем прямо в оригинал: truncate + запись.
+		if copyErr := os.WriteFile(path, buf.Bytes(), 0o600); copyErr != nil {
+			return fmt.Errorf("write temp: %v; in-place write: %w", err, copyErr)
+		}
+		if runtime.GOOS != "windows" {
+			_ = os.Chmod(path, 0o600)
+		}
+		return nil
 	}
 
 	// Fsync перед rename

@@ -305,6 +305,14 @@ type Server struct {
 	limiter  *ipLimiter
 	sessions *sessionStore
 	httpSrv  *http.Server
+
+	// Кэш состояния MikroTik для live-индикатора в шапке страниц.
+	mtMu         sync.Mutex
+	mtOK         bool
+	mtKnown      bool
+	mtAt         time.Time
+	mtRefreshing bool
+	pingFn       func(context.Context) error // подмена в тестах
 }
 
 func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Server, error) {
@@ -373,6 +381,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Use(s.csrfMiddleware)
 
 		r.Get("/status", s.apiStatus)
+		r.Get("/progress", s.apiProgress)
 		r.Get("/services", s.apiServices)
 		r.Post("/services", s.apiAddService)
 		r.Delete("/services/{name}", s.apiDeleteService)
@@ -388,7 +397,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Get("/ws", s.hub.handleWS)
 	})
 
-	pages := router.With(s.authMiddleware)
+	pages := router.With(s.authMiddleware, noCache)
 	pages.Get("/", s.pageDashboard)
 	pages.Get("/services", s.pageServices)
 	pages.Get("/address-list", s.pageAddressList)
@@ -409,7 +418,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	})
 
 	static, _ := fs.Sub(webFS, "static")
-	router.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
+	router.Handle("/static/*", noCache(http.StripPrefix("/static/", http.FileServer(http.FS(static)))))
 
 	s.httpSrv = &http.Server{
 		Addr:              cfg.Web.Listen,
@@ -609,8 +618,86 @@ func writeOK(w http.ResponseWriter, data any) {
 	writeJSON(w, http.StatusOK, apiEnvelope{OK: true, Data: data})
 }
 
+// noCache запрещает кэширование страниц и статики в браузере: go:embed-ассеты
+// меняются только при пересборке, и устаревший в кэше JS приводит к рассинхрону
+// интерфейса (браузер показывает старую версию при новом бэкенде).
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, apiEnvelope{OK: false, Error: msg})
+}
+
+// ============================================================================
+// Статус MikroTik для live-индикатора
+// ============================================================================
+
+const mtHealthTTL = 5 * time.Second
+
+// mikrotikHealth возвращает последнее известное состояние роутера и, если
+// кэш устарел, запускает обновление: устаревший кэш обновляется в фоне
+// (рендер не блокируется), холодный — синхронно, чтобы первый рендер сразу
+// получил честный цвет, а не серый «неизвестен».
+func (s *Server) mikrotikHealth(ctx context.Context) (ok, known bool) {
+	s.mtMu.Lock()
+	ok, known = s.mtOK, s.mtKnown
+	switch {
+	case known && time.Since(s.mtAt) < mtHealthTTL:
+		s.mtMu.Unlock()
+		return ok, known
+	case s.mtRefreshing:
+		s.mtMu.Unlock()
+		return ok, known
+	case known:
+		s.mtRefreshing = true
+		s.mtMu.Unlock()
+		go s.mtRefresh(context.WithoutCancel(ctx))
+		return ok, known
+	}
+	s.mtRefreshing = true
+	s.mtMu.Unlock()
+	s.mtRefresh(ctx)
+	s.mtMu.Lock()
+	ok, known = s.mtOK, s.mtKnown
+	s.mtMu.Unlock()
+	return ok, known
+}
+
+// mtRefresh выполняет ping и сохраняет результат в кэш.
+func (s *Server) mtRefresh(ctx context.Context) {
+	var err error
+	if s.pingFn != nil {
+		err = s.pingFn(ctx)
+	} else {
+		cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err = s.syncer.PingMikroTik(cctx)
+		cancel()
+	}
+	now := time.Now()
+	s.mtMu.Lock()
+	s.mtOK = err == nil
+	s.mtKnown = true
+	s.mtAt = now
+	s.mtRefreshing = false
+	s.mtMu.Unlock()
+}
+
+// dotState — класс и подсказка для точки статуса в шапке (рендерится в HTML,
+// чтобы при переходе между страницами индикатор не мигал серым).
+func (s *Server) dotState(r *http.Request) (class, title string) {
+	ok, known := s.mikrotikHealth(r.Context())
+	switch {
+	case !known:
+		return "live-dot", "MikroTik: статус неизвестен"
+	case ok:
+		return "live-dot live-on", "MikroTik: подключение есть"
+	default:
+		return "live-dot live-off", "MikroTik: нет подключения"
+	}
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
@@ -624,6 +711,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	data["CSRF"] = csrf
 	data["Version"] = version.Version
 	data["Timezone"] = s.cfg.Timezone
+	data["DotClass"], data["DotTitle"] = s.dotState(r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		s.log.Error("template render error", "template", name, "err", err)
@@ -690,8 +778,7 @@ type serviceRow struct {
 
 func (s *Server) pageServices(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "services.html", map[string]any{
-		"Services":   s.serviceRows(r),
-		"GlobalList": s.cfg.Firewall.AddressList,
+		"Services": s.serviceRows(r),
 	})
 }
 
@@ -823,6 +910,14 @@ var settingsSpec = []settingSpec{
 		"Список через запятую. Только эти chat_id могут управлять ботом; остальным бот не отвечает."},
 	{"Telegram", "telegram.rate_limit", "Сообщений/сек на чат", "number",
 		"Антифлуд бота (по умолчанию 1)."},
+	{"Telegram", "telegram.weekly_report.enabled", "Еженедельный отчёт", "bool",
+		"Сводка по синхронизациям за неделю в chat_id. Поле резервируется в конфиге — отчёт пока не отправляется."},
+	{"Telegram", "telegram.weekly_report.schedule", "Расписание отчёта", "text",
+		"Cron в часовом поясе timezone, например '0 9 * * 1' — понедельник в 09:00. Работает вместе с enabled; отчёт пока не отправляется."},
+	{"Telegram", "telegram.buttons.enabled", "Inline-кнопки бота", "bool",
+		"Набор кнопок под командами бота (заготовка конфига: сейчас кнопки показываются всегда)."},
+	{"Telegram", "telegram.buttons.max_selected_services", "Кнопок в групповой операции", "number",
+		"Максимум сервисов в одной групповой операции бота (заготовка конфига, ограничение пока не применяется)."},
 	{"Веб-интерфейс", "web.enabled", "Включить Web UI", "bool",
 		"Включение/выключение сервера интерфейса. Изменение требует перезапуска процесса."},
 	{"Веб-интерфейс", "web.listen", "Адрес и порт", "text",
@@ -952,7 +1047,7 @@ func (s *Server) pageSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pageLogs(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "logs.html", map[string]any{"LogFile": s.cfg.Logging.File})
+	s.render(w, r, "logs.html", map[string]any{})
 }
 
 // ============================================================================
@@ -962,11 +1057,15 @@ func (s *Server) pageLogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
+	s.mtRefresh(ctx)
+	s.mtMu.Lock()
+	mtOK, mtKnown := s.mtOK, s.mtKnown
+	s.mtMu.Unlock()
 	writeOK(w, map[string]any{
 		"version":     version.Version,
 		"uptime":      time.Since(s.syncer.StartTime()).String(),
 		"last_sync":   s.syncer.LastSync(),
-		"mikrotik_ok": s.syncer.PingMikroTik(ctx) == nil,
+		"mikrotik_ok": mtKnown && mtOK,
 		"services":    s.cfg.Services,
 		"degraded":    s.syncer.DegradedServices(),
 		"schedules":   s.cfg.Schedules,
@@ -978,6 +1077,12 @@ func (s *Server) apiServices(w http.ResponseWriter, r *http.Request) {
 		"services": s.serviceRows(r),
 		"count":    len(s.cfg.Services),
 	})
+}
+
+// apiProgress — активные синхронизации с фазой и процентом (in-memory,
+// без обращений к MikroTik); поллится страницей «Сервисы».
+func (s *Server) apiProgress(w http.ResponseWriter, r *http.Request) {
+	writeOK(w, s.syncer.ProgressSnapshot())
 }
 
 func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
@@ -1226,10 +1331,7 @@ func (s *Server) pageAddressList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	data := map[string]any{
-		"GlobalList": s.cfg.Firewall.AddressList,
-		"Prefix":     s.cfg.Firewall.CommentPrefix,
-	}
+	data := map[string]any{}
 	entries, err := s.syncer.ListGlobalEntries(ctx)
 	if err != nil {
 		s.log.Debug("failed to list global address entries (MikroTik unavailable)", "err", err)
@@ -1438,7 +1540,7 @@ func (s *Server) applyRuntimeChanges() {
 	}
 
 	// Нотификатор пересоздаётся, если менялись telegram.* настройки.
-	s.syncer.SetNotifier(notifier.FromConfig(s.cfg.Telegram, s.log))
+	s.syncer.SetNotifier(notifier.FromConfig(s.cfg.Telegram, s.cfg.Timezone, s.log))
 
 	// Перезапуск Telegram-бота при изменении настроек telegram.*
 	if err := s.syncer.RestartTelegramBot(); err != nil {

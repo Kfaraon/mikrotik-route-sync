@@ -55,6 +55,21 @@
     return trim(value).toLowerCase();
   }
 
+  // Флаги MikroTik приходят строками "true"/"false" (а не булевыми):
+  // только явное "true"/true считается включённым.
+  function flag(value) {
+    return value === true || lower(value) === "true";
+  }
+
+  function pluralRu(n, one, few, many) {
+    var abs = Math.abs(n) % 100;
+    var n1 = abs % 10;
+    if (abs > 10 && abs < 20) return many;
+    if (n1 > 1 && n1 < 5) return few;
+    if (n1 === 1) return one;
+    return many;
+  }
+
   function pad(n) {
     return n < 10 ? "0" + n : String(n);
   }
@@ -179,6 +194,7 @@
     warnCountByService: {},
     degraded: {},
     selection: {},
+    progress: {},
     loading: false,
     autoTimer: null,
     lastDiff: {},
@@ -191,6 +207,7 @@
       history: [],
       logs: [],
       routes: [],
+      routesMeta: null,
       routesQuery: ""
     },
     delete: {
@@ -253,13 +270,9 @@
     if (!els.refresh) return;
 
     els.refresh.disabled = loading;
-    els.refresh.textContent = loading ? "Загрузка…" : "⟳ Обновить";
-
-    if (loading) {
-      els.refresh.classList.add("loading");
-    } else {
-      els.refresh.classList.remove("loading");
-    }
+    // Подпись не меняем — иначе кнопка меняет ширину («Загрузка…» шире
+    // «⟳ Обновить»); грузит состояние btn-loading, крутится иконка.
+    els.refresh.classList.toggle("btn-loading", loading);
   }
 
   function setKpi(valueId, noteId, value, note, stateName) {
@@ -276,15 +289,35 @@
   }
 
   function parseTime(value) {
-    if (!value) return null;
+    if (value === null || value === undefined || value === "") return null;
 
     if (typeof value === "number") {
       var d = new Date(value > 1000000000000 ? value : value * 1000);
       return isNaN(d.getTime()) ? null : d;
     }
 
-    var parsed = new Date(value);
-    return isNaN(parsed.getTime()) ? null : parsed;
+    var s = String(value).trim();
+    var m = /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|z|[+-]\d{2}:?\d{2})?$/.exec(s);
+    if (!m) {
+      var parsed = new Date(s);
+      return isNaN(parsed.getTime()) ? null : parsed;
+    }
+    // Go отдаёт RFC3339 с наносекундами — собираем дату из компонент,
+    // часть движков не парсит дробную часть длиннее миллисекунд (иначе NaN
+    // ломает всю витрину: даты превращаются в «—»).
+    var ms = parseInt(((m[7] || "0") + "000").slice(0, 3), 10);
+    if (!m[8]) {
+      return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms);
+    }
+    var utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms);
+    var tz = m[8];
+    if (tz !== "Z" && tz !== "z") {
+      var digits = tz.slice(1).replace(":", "");
+      var off = (+digits.slice(0, 2)) * 60 + (+digits.slice(2, 4));
+      utc += (tz[0] === "-" ? 1 : -1) * off * 60000;
+    }
+    var t = new Date(utc);
+    return isNaN(t.getTime()) ? null : t;
   }
 
   function formatClock(value) {
@@ -849,7 +882,9 @@
 
     if (errorCount > 0 || lastStatus === "error") {
       return {
-        label: errorCount > 1 ? errorCount + " ошибки" : "ошибка",
+        label: errorCount > 1
+          ? errorCount + " " + pluralRu(errorCount, "ошибка", "ошибки", "ошибок")
+          : "ошибка",
         cls: "svc-badge-err",
         priority: 0
       };
@@ -857,7 +892,7 @@
 
     if (warnCount > 0 || lastStatus === "warning") {
       return {
-        label: warnCount > 1 ? warnCount + " warn" : "предупреждение",
+        label: warnCount > 1 ? warnCount + " предупр." : "предупреждение",
         cls: "svc-badge-warn",
         priority: 1
       };
@@ -958,7 +993,7 @@
       "svc-total-value",
       "svc-total-note",
       String(total),
-      withRoutes + " с маршрутами",
+      withRoutes + " с записями",
       total ? "muted" : "muted"
     );
 
@@ -966,7 +1001,7 @@
       "svc-routes-value",
       "svc-routes-note",
       String(totalRoutes()),
-      totalRoutes() ? "управляемых IPv4" : "маршрутов пока нет",
+      totalRoutes() ? "управляемых адресов" : "записей пока нет",
       totalRoutes() ? "ok" : "muted"
     );
 
@@ -1021,22 +1056,25 @@
       : '<span class="svc-muted">—</span>';
 
     var badges = "";
-    if (item.configOverride) badges += '<span class="svc-badge svc-badge-override">переопределение</span>';
     if (item.group) badges += '<span class="svc-badge svc-badge-group">' + esc(item.group) + "</span>";
-    if (item.errorCount) badges += '<span class="svc-badge svc-badge-err">' + esc(item.errorCount) + " err</span>";
-    if (item.warnCount) badges += '<span class="svc-badge svc-badge-warn">' + esc(item.warnCount) + " warn</span>";
+    if (item.errorCount) badges += '<span class="svc-badge svc-badge-err">' + esc(item.errorCount) + " ошиб.</span>";
+    if (item.warnCount) badges += '<span class="svc-badge svc-badge-warn">' + esc(item.warnCount) + " предупр.</span>";
 
     return '<tr class="' + selectedClass + '" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '">' +
       '<td data-label="Выбор"><input type="checkbox" class="svc-row-check" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '"' + checked + "></td>" +
       '<td data-label="Сервис">' +
         '<div class="svc-name"><strong>' + esc(item.name) + "</strong>" + badges + "</div>" +
+        '<div class="svc-progress" hidden>' +
+          '<div class="svc-progress-track"><div class="svc-progress-fill"></div></div>' +
+          '<div class="svc-progress-label"></div>' +
+        "</div>" +
       "</td>" +
       '<td data-label="Состояние"><span class="svc-badge ' + esc(item.health.cls) + '">' + esc(item.health.label) + "</span></td>" +
       '<td data-label="Расписание">' +
         "<div>" + esc(humanSchedule(item.effective)) + "</div>" +
       "</td>" +
       '<td data-label="Ближайший запуск">' + nextHtml + "</td>" +
-      '<td data-label="Маршрутов">' + esc(String(item.routes)) + "</td>" +
+      '<td data-label="Записей">' + esc(String(item.routes)) + "</td>" +
       '<td data-label="Последняя синхр.">' + lastHtml + "</td>" +
       '<td data-label="Действия">' +
         '<div class="svc-actions">' +
@@ -1152,6 +1190,80 @@
 
     els.body.innerHTML = html;
     updateSelectionUI();
+    updateProgressRows();
+  }
+
+  // ---------- Прогресс синхронизации (поллинг /api/v1/progress) ----------
+  var progressPoll = { timer: null, empty: 0, sawActive: false };
+
+  function startProgressPoll() {
+    progressPoll.empty = 0;
+    progressPoll.sawActive = false;
+    if (progressPoll.timer) return;
+    progressPoll.timer = setInterval(pollProgressOnce, 900);
+    pollProgressOnce();
+  }
+
+  function stopProgressPoll() {
+    if (progressPoll.timer) {
+      clearInterval(progressPoll.timer);
+      progressPoll.timer = null;
+    }
+    progressPoll.empty = 0;
+    progressPoll.sawActive = false;
+    state.progress = {};
+    updateProgressRows();
+  }
+
+  function pollProgressOnce() {
+    return api("/api/v1/progress").then(function (map) {
+      var active = map && typeof map === "object" ? map : {};
+
+      if (Object.keys(active).length) {
+        progressPoll.empty = 0;
+        progressPoll.sawActive = true;
+        state.progress = active;
+      } else {
+        progressPoll.empty++;
+        // Активность была — 2 пустых подряд, её уже нет: стоп.
+        // Не было вовсе (POST не стартанул) — ~11 с и стоп.
+        if ((progressPoll.sawActive && progressPoll.empty >= 2) ||
+            (!progressPoll.sawActive && progressPoll.empty >= 12)) {
+          stopProgressPoll();
+          return;
+        }
+      }
+      updateProgressRows();
+    }).catch(function () {
+      // Сеть моргнула — оставляем последнее известное состояние.
+    });
+  }
+
+  function updateProgressRows() {
+    if (!els.body) return;
+
+    each(els.body.querySelectorAll("tr[data-service]"), function (tr) {
+      var name = tr.getAttribute("data-service");
+      var p = state.progress[name] || state.progress[lower(name)];
+      var box = tr.querySelector(".svc-progress");
+      if (!box) return;
+
+      if (!p) {
+        box.hidden = true;
+        return;
+      }
+
+      var pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
+      box.hidden = false;
+
+      var fill = box.querySelector(".svc-progress-fill");
+      if (fill) fill.style.width = pct + "%";
+
+      var label = box.querySelector(".svc-progress-label");
+      if (label) {
+        label.textContent = (p.dry_run ? "Тест: " : "") + text(p.phase) + " · " + pct + "%";
+      }
+    });
   }
 
   function selectedNames() {
@@ -1317,8 +1429,14 @@
       renderKpis();
       renderTable();
 
+      // Страница могла быть открыта в момент чужой синхронизации.
+      pollProgressOnce();
+
       if (state.details.open) {
         renderDetails();
+        if (state.details.tab === "routes") {
+          loadRoutes();
+        }
       }
     }).catch(function (err) {
       setAlert("error", "Ошибка загрузки страницы: " + text(err && err.message));
@@ -1360,6 +1478,8 @@
     var body = dry ? "{}" : JSON.stringify({ dry_run: false, force: false });
 
     return withButton(btn, function () {
+      startProgressPoll();
+
       var beforeP = dry ? Promise.resolve(null) : fetchAddrs(name);
 
       return beforeP.then(function (before) {
@@ -1394,7 +1514,8 @@
 
               var diff = { service: name, added: added, removed: removed, same: same };
               state.lastDiff[name] = diff;
-              openDiff(diff);
+              // Модалку изменений не открываем — она доступна из drawer
+              // («Показать изменения»); после «Синхр.» хватает toast.
             });
           }
 
@@ -1410,6 +1531,8 @@
     if (!names.length) return Promise.resolve();
 
     return withButton(btn, function () {
+      startProgressPoll();
+
       return api("/api/v1/services/sync", {
         method: "POST",
         body: JSON.stringify({
@@ -1430,7 +1553,7 @@
     return api("/api/v1/services/" + encodeURIComponent(name) + "?purge=" + (purge ? "true" : "false"), {
       method: "DELETE"
     }).then(function () {
-      showToast("Сервис удалён: " + name + (purge ? " вместе с маршрутами" : ""));
+      showToast("Сервис удалён: " + name + (purge ? " вместе с записями" : ""));
       delete state.selection[lower(name)];
       closeDelete();
       closeDrawer();
@@ -1497,12 +1620,14 @@
 
   // ---------- Drawer ----------
   function openDrawer(name) {
+    state.details.open = true;
     state.details.name = name;
     state.details.tab = "overview";
     state.details.loading = true;
     state.details.history = [];
     state.details.logs = [];
     state.details.routes = [];
+    state.details.routesMeta = null;
     state.details.routesQuery = "";
 
     if (els.drawer) {
@@ -1588,14 +1713,18 @@
     html += detailItem(
       "Состояние",
       '<span class="svc-badge ' + esc(item.health.cls) + '">' + esc(item.health.label) + "</span>",
-      item.errorCount ? item.errorCount + " ошибок в логах" : item.warnCount ? item.warnCount + " предупреждений" : "по истории и логам",
+      item.errorCount
+        ? item.errorCount + " " + pluralRu(item.errorCount, "ошибка", "ошибки", "ошибок") + " в логах"
+        : item.warnCount
+          ? item.warnCount + " " + pluralRu(item.warnCount, "предупреждение", "предупреждения", "предупреждений") + " в логах"
+          : "по истории и логам",
       item.health.priority === 0 ? "err" : item.health.priority === 1 ? "warn" : item.health.priority === 2 ? "ok" : "muted"
     );
 
     html += detailItem(
-      "Маршруты",
+      "Записи",
       esc(String(item.routes)),
-      item.routes ? "управляемые IPv4" : "нет активных маршрутов",
+      item.routes ? "управляемые адреса" : "нет активных записей",
       item.routes ? "ok" : "muted"
     );
 
@@ -1712,11 +1841,29 @@
       });
     }
 
+    // Область видимости: только записи ЭТОГО сервиса (list + AUTO:комментарий).
+    var meta = state.details.routesMeta;
+    var down = Boolean(meta && meta.down);
+    var total = meta && typeof meta.count === "number" ? meta.count : (list || []).length;
+    var scope = meta && (meta.list || meta.comment)
+      ? (meta.list || "—") + " · " + (meta.comment || "—")
+      : "";
+    var summary = down
+      ? ""
+      : q
+        ? "найдено " + entries.length + " из " + total + " " + pluralRu(total, "запись", "записи", "записей")
+        : total + " " + pluralRu(total, "запись", "записи", "записей");
+
     var head =
+      '<div class="svc-routes-meta">' + esc(scope && summary ? scope + " · " + summary : scope || summary) + "</div>" +
       '<div class="svc-routes-search">' +
       '<input type="search" id="svc-routes-search" placeholder="Поиск префикса" value="' +
       esc(state.details.routesQuery || "") + '">' +
       "</div>";
+
+    if (down) {
+      return head + '<div class="svc-empty">MikroTik недоступен: записи получить не удалось.</div>';
+    }
 
     if (!entries.length) {
       return head + '<div class="svc-empty">Управляемых записей нет.</div>';
@@ -1726,8 +1873,10 @@
     each(entries, function (e) {
       var a = routeAddr(e);
       var badges = "";
-      if (e.Dynamic || e.dynamic) badges += '<span class="svc-badge svc-badge-muted">динамическая</span>';
-      if (e.Disabled || e.disabled) badges += '<span class="svc-badge svc-badge-disabled">отключено</span>';
+      // RouterOS отдаёт строки "true"/"false": непустая "false" — truthy,
+      // поэтому сравниваем явно, иначе бейджи светятся на каждой записи.
+      if (flag(e.Dynamic) || flag(e.dynamic)) badges += '<span class="svc-badge svc-badge-muted">динамическая</span>';
+      if (flag(e.Disabled) || flag(e.disabled)) badges += '<span class="svc-badge svc-badge-disabled">отключено</span>';
 
       rows += '<div class="svc-route-row">' +
         "<span>" + esc(a) + " " + badges + "</span>" +
@@ -1784,8 +1933,7 @@
 
     Promise.allSettled([
       api("/api/v1/history?service=" + encodeURIComponent(name) + "&limit=30"),
-      api("/api/v1/logs?service=" + encodeURIComponent(name) + "&limit=80"),
-      api("/api/v1/address-list/" + encodeURIComponent(name))
+      api("/api/v1/logs?service=" + encodeURIComponent(name) + "&limit=80")
     ]).then(function (results) {
       if (state.details.name !== name) return;
 
@@ -1797,11 +1945,42 @@
         ? results[1].value
         : [];
 
-      var rd = results[2].status === "fulfilled" ? results[2].value : null;
-      state.details.routes = (rd && (rd.entries || rd.Entries)) || [];
-
       state.details.loading = false;
       renderDetails();
+    });
+  }
+
+  // Записи ТОЛЬКО этого сервиса (API фильтрует по AUTO:<service>); загружаются
+  // лениво при открытии вкладки «Записи» и обновляются после синхронизации.
+  function loadRoutes() {
+    var name = state.details.name;
+    if (!name) return Promise.resolve();
+
+    function done(rd) {
+      if (state.details.name !== name) return;
+
+      state.details.routes = (rd && (rd.entries || rd.Entries)) || [];
+      state.details.routesMeta = rd
+        ? {
+            list: text(rd.list),
+            comment: text(rd.comment),
+            count: typeof rd.count === "number" ? rd.count : state.details.routes.length,
+            down: Boolean(rd.mikrotik_down)
+          }
+        : null;
+
+      if (!state.details.loading && state.details.tab === "routes" && els.drawerBody) {
+        els.drawerBody.innerHTML = renderRoutesList(state.details.routes);
+      }
+    }
+
+    return api("/api/v1/address-list/" + encodeURIComponent(name)).then(done, function () {
+      if (state.details.name !== name) return;
+      state.details.routes = [];
+      state.details.routesMeta = { list: "", comment: "", count: 0, down: true };
+      if (!state.details.loading && state.details.tab === "routes" && els.drawerBody) {
+        els.drawerBody.innerHTML = renderRoutesList(state.details.routes);
+      }
     });
   }
 
@@ -1952,10 +2131,13 @@
       tab.addEventListener("click", function () {
         state.details.tab = tab.getAttribute("data-svc-tab") || "overview";
         renderDetails();
+        if (state.details.tab === "routes") {
+          loadRoutes();
+        }
       });
     });
 
-    // Поиск и копирование во вкладке «Маршруты» (делегирование)
+    // Поиск и копирование во вкладке «Записи» (делегирование)
     if (els.drawerBody) {
       els.drawerBody.addEventListener("input", function (e) {
         if (!e.target || e.target.id !== "svc-routes-search") return;
@@ -1998,7 +2180,7 @@
         if (d) {
           openDiff(d);
         } else {
-          showToast("Diff появится после синхронизации, запущенной из интерфейса");
+          showToast("Изменения появятся после синхронизации, запущенной из интерфейса");
         }
       });
     }
@@ -2030,7 +2212,7 @@
         if (!state.delete.name) return;
 
         var ok = window.confirm(
-          "Удалить сервис " + state.delete.name + " и все маршруты AUTO:" + state.delete.name + "?"
+          "Удалить сервис " + state.delete.name + " и все записи AUTO:" + state.delete.name + "?"
         );
 
         if (!ok) return;

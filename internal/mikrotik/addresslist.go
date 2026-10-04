@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
 )
@@ -78,6 +79,29 @@ func (c *Client) AddEntry(ctx context.Context, e addresslist.Entry) (addresslist
 // DeleteEntry удаляет запись по .id.
 func (c *Client) DeleteEntry(ctx context.Context, id string) error {
 	return c.deleteByID(ctx, addressListPath, id)
+}
+
+// UpdateEntry изменяет поле disabled существующей записи через
+// PATCH {path}/{.id} (PROMPT II.7 — сравнение учитывает disabled;
+// re-enable выключенных управляемых записей).
+//
+// Проверено на живом RouterOS v7 (192.168.88.1):
+//   - PATCH /rest/ip/firewall/address-list/*XX {"disabled":"false"} → 200,
+//     в ответе возвращается обновлённый объект;
+//   - PATCH по коллекции с ".id" в теле → 400 "missing or invalid resource
+//     identifier" — поэтому путь обязательно содержит .id;
+//   - остальные поля (address/list/comment) управляются через add/remove:
+//     изменение адреса = новая запись + удаление старой (PROMPT IV.4).
+func (c *Client) UpdateEntry(ctx context.Context, e addresslist.Entry) error {
+	if e.ID == "" || strings.ContainsAny(e.ID, "/?#") {
+		return fmt.Errorf("invalid entry id %q", e.ID)
+	}
+	if e.Disabled == "" {
+		return fmt.Errorf("update entry %s: nothing to update (disabled is empty)", e.ID)
+	}
+	_, err := c.doRaw(ctx, http.MethodPatch,
+		addressListPath+"/"+e.ID, map[string]string{"disabled": e.Disabled})
+	return err
 }
 
 // ListServiceEntries — управляемые записи сервиса:

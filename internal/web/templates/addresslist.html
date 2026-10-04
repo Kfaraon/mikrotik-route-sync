@@ -5,12 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ .CSRF }}">
-    <title>Списки адресов</title>
+    <title>Списки адресов — MikroTik Route Sync</title>
     <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="/static/addresslist.css">
     <script src="/static/theme.js"></script>
-    <script src="/static/addresslist.js" defer></script>
-    <script src="/static/app.js" defer></script>
 </head>
 <body>
     <nav class="bar">
@@ -22,16 +20,12 @@
         <a href="/settings">Настройки</a>
         <a href="/logs">Логи</a>
         <span class="bar-right">
-            <span id="live-dot" class="live-dot" title="Live: нет подключения"></span>
-            <span class="ver">v{{ .Version }}</span>
+            <span id="live-dot" class="{{ .DotClass }}" title="{{ .DotTitle }}"></span>
             <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
         </span>
     </nav>
 
-    <div class="container">
-        <h1>Списки адресов</h1>
-        <p>Глобальный список: <strong>{{ .GlobalList }}</strong> | Префикс: <code>{{ .Prefix }}</code></p>
-
+    <div id="addresslist-page" class="container">
         {{ if .Error }}
         <div class="alert alert-error">{{ .Error }}</div>
         {{ else }}
@@ -66,7 +60,7 @@
                     <option value="no">Нет</option>
                 </select>
             </div>
-            <div class="filter-group" style="justify-content: flex-end;">
+            <div class="filter-group filter-group-end">
                 <button class="btn btn-secondary" id="btnClearFilters">Сбросить</button>
             </div>
         </div>
@@ -127,6 +121,10 @@
 
     <!-- Контейнер для уведомлений -->
     <div id="mrs-toast" class="toast"></div>
+
+    <!-- Скрипты -->
+    <script src="/static/addresslist.js"></script>
+    <script src="/static/app.js"></script>
 </body>
 </html>
 {{ end }}

@@ -34,7 +34,7 @@ func NewScheduler(cfg *config.Config, s *core.Syncer) *Scheduler {
 	return &Scheduler{
 		cfg:    cfg,
 		syncer: s,
-		notify: notifier.FromConfig(cfg.Telegram, log),
+		notify: notifier.FromConfig(cfg.Telegram, cfg.Timezone, log),
 		log:    log,
 	}
 }

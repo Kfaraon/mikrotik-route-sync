@@ -1,12 +1,4 @@
 /* Страница расписаний */
-.schedule-page {
-  max-width: 1600px;
-}
-
-.page-header {
-  margin-bottom: 2rem;
-}
-
 /* Сводка */
 .sched-summary {
   display: grid;
@@ -123,6 +115,11 @@
 
 .sched-help summary:hover {
   background: var(--border);
+}
+
+.sched-help .global-schedule {
+  padding: 1rem 1.5rem 0;
+  margin: 0;
 }
 
 .sched-help ul {
@@ -397,25 +394,7 @@
   color: var(--badge-ok-text);
 }
 
-/* Кнопки */
-.save-btn {
-  background: var(--primary);
-  color: white;
-}
-
-.save-btn:hover {
-  background: var(--primary-hover);
-}
-
-.reset-btn {
-  background: var(--bg-alt);
-  color: var(--text);
-  border: 1px solid var(--border);
-}
-
-.reset-btn:hover {
-  background: var(--border);
-}
+/* Кнопки редактирования: базовые .btn (app.css), компактный размер — .edit-buttons button */
 
 /* Пустое состояние */
 .empty-state {

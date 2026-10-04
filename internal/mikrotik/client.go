@@ -260,10 +260,24 @@ func (a addReply) pick() string {
 }
 
 // deleteByID удаляет запись по .id (формат *XX защищён от инъекций).
+//
+// На живом RouterOS v7 (192.168.88.1) синтаксис DELETE {path}?.id=*XX
+// НЕ работает: 400 "missing or invalid resource identifier" — из-за этого
+// purge сервиса массово падал и открывал circuit breaker
+// ("circuit breaker is open"). Рабочий вариант: POST {path}/remove
+// с телом {"numbers":"*XX"} (проверено на роутере: 200 []). Legacy-запрос
+// остаётся fallback'ом для других версий прошивки.
 func (c *Client) deleteByID(ctx context.Context, path, id string) error {
 	if id == "" || strings.ContainsAny(id, "/?#") {
 		return fmt.Errorf("invalid entry id %q", id)
 	}
-	p := fmt.Sprintf("%s?.id=%s", path, id)
-	return c.do(ctx, http.MethodDelete, p, nil, nil)
+	_, err := c.doRaw(ctx, http.MethodPost, path+"/remove", map[string]string{"numbers": id})
+	if err == nil {
+		return nil
+	}
+	_, legacyErr := c.doRaw(ctx, http.MethodDelete, fmt.Sprintf("%s?.id=%s", path, id), nil)
+	if legacyErr == nil {
+		return nil
+	}
+	return fmt.Errorf("remove endpoint: %w; legacy delete: %v", err, legacyErr)
 }

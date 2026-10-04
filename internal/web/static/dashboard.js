@@ -136,19 +136,40 @@
     if (!els.refresh) return;
 
     els.refresh.disabled = loading;
-    els.refresh.textContent = loading ? "Загрузка…" : "Обновить";
+    // Подпись не меняем — кнопка не должна менять размер; грузит
+    // состояние btn-loading (крутится иконка).
+    els.refresh.classList.toggle("btn-loading", loading);
   }
 
   function parseTime(value) {
-    if (!value) return null;
+    if (value === null || value === undefined || value === "") return null;
 
     if (typeof value === "number") {
       var d = new Date(value > 1000000000000 ? value : value * 1000);
       return isNaN(d.getTime()) ? null : d;
     }
 
-    var parsed = new Date(value);
-    return isNaN(parsed.getTime()) ? null : parsed;
+    var s = String(value).trim();
+    var m = /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|z|[+-]\d{2}:?\d{2})?$/.exec(s);
+    if (!m) {
+      var parsed = new Date(s);
+      return isNaN(parsed.getTime()) ? null : parsed;
+    }
+    // Go отдаёт RFC3339 с наносекундами — собираем дату из компонент,
+    // часть движков не парсит дольше миллисекунд.
+    var ms = parseInt(((m[7] || "0") + "000").slice(0, 3), 10);
+    if (!m[8]) {
+      return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms);
+    }
+    var utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms);
+    var tz = m[8];
+    if (tz !== "Z" && tz !== "z") {
+      var digits = tz.slice(1).replace(":", "");
+      var off = (+digits.slice(0, 2)) * 60 + (+digits.slice(2, 4));
+      utc += (tz[0] === "-" ? 1 : -1) * off * 60000;
+    }
+    var t = new Date(utc);
+    return isNaN(t.getTime()) ? null : t;
   }
 
   function sameDay(a, b) {
@@ -652,9 +673,9 @@
     if (total === 0) {
       servicesNote = "сервисы не добавлены";
     } else if (routes === 0) {
-      servicesNote = "маршрутов пока нет";
+      servicesNote = "записей пока нет";
     } else {
-      servicesNote = routes + " " + plural(routes, ["маршрут", "маршрута", "маршрутов"]);
+      servicesNote = routes + " " + plural(routes, ["запись", "записи", "записей"]);
     }
 
     var degradedCount = objKeys(degraded).length;

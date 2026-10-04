@@ -185,7 +185,7 @@ REST API клиент `/rest/ip/firewall/address-list`:
 - Inline-кнопки с состоянием сценария
 - Авторизация только по authorized_chat_ids
 - Rate limit (1 сообщение/сек на chat_id)
-- Уведомления: старт, прогресс, результат, ошибки, weekly report
+- Уведомления: старт синхронизации, итог, ошибки (HTML, время по `timezone`, секреты маскируются)
 
 ### Web UI
 
@@ -196,7 +196,7 @@ REST API клиент `/rest/ip/firewall/address-list`:
 - Шаблоны: html/template + go:embed
 - CSS: app.css, services.css, schedule.css, dashboard.css
 - JS: HTMX + vanilla JS
-- WebSocket для live-обновлений
+- Live-индикатор состояния роутера — REST `/api/v1/status` (каждые 15 с); WebSocket `/api/v1/ws` — события синхронизации (для интеграций)
 - Basic Auth + session cookie + CSRF
 
 ## Безопасность
@@ -336,7 +336,8 @@ REST API клиент `/rest/ip/firewall/address-list`:
 
 ### Live-события
 
-- WebSocket `/api/v1/ws` — события sync_start / sync_done / sync_error / skipped / service_added
+- WebSocket `/api/v1/ws` — события sync_start / sync_progress / sync_done / sync_error / skipped / service_added
+- Прогресс текущих синхронизаций — `GET /api/v1/progress` (карта «сервис → фаза + процент», in-memory)
 - Структурированные поля логов: `service`, `method`, `duration_ms`, `added`, `removed`, `unchanged`, `error`
 
 ## Масштабирование

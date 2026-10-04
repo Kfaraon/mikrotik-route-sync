@@ -94,6 +94,18 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/progress:
+    get:
+      summary: Активные синхронизации — фаза и процент
+      description: >-
+        In-memory карта «сервис → {service, phase, percent, dry_run}»: заполняется
+        по ходу SyncService (12 фаз, 5%…95%) и очищается при завершении.
+        Без обращений к RouterOS; поллится страницей «Сервисы» каждые ~900 мс.
+      tags: [Services]
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /api/v1/services:
     get:
       summary: Список сервисов с расписаниями и числом управляемых записей
@@ -187,7 +199,7 @@ paths:
                 force: { type: boolean, default: false }
       responses:
         '200':
-          description: Синхронизация запущена, результат придёт по WebSocket
+          description: Синхронизация запущена в фоне; прогресс — GET /api/v1/progress, результат — GET /api/v1/history
           content:
             application/json:
               schema:
@@ -348,7 +360,7 @@ paths:
 
   /api/v1/ws:
     get:
-      summary: WebSocket live-событий (sync_start, sync_done, sync_error, service_added, ...)
+      summary: WebSocket live-событий (sync_start, sync_progress, sync_done, sync_error, service_added, ...)
       tags: [Observability]
       responses:
         '101':

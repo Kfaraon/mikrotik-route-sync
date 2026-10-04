@@ -63,40 +63,44 @@
     initThemeButtons();
   }
 
-  // ---------- Live-индикатор (WebSocket) ----------
-  var dot = document.getElementById("live-dot");
+  // ---------- Live-индикатор MikroTik + бейдж проблем ----------
+  // theme.js грузится в <head> до разметки, поэтому элемент ищем только
+  // после DOMContentLoaded (раньше dot оставался null и индикатор молчал).
+  var dot = null;
+  var baseTitle = document.title;
 
   function setLive(on) {
     if (!dot) return;
     dot.className = "live-dot " + (on ? "live-on" : "live-off");
-    dot.title = on ? "Live: подключение активно" : "Live: нет подключения";
+    dot.title = on ? "MikroTik: подключение есть" : "MikroTik: нет подключения";
   }
 
-  function connectLive() {
-    if (!dot) return;
-    var proto = location.protocol === "https:" ? "wss:" : "ws:";
-    var ws;
+  function saveMt(ok, problems) {
     try {
-      ws = new WebSocket(proto + "//" + location.host + "/api/v1/ws");
+      localStorage.setItem("mrs_mt", JSON.stringify({ ok: ok, problems: problems | 0, ts: Date.now() }));
+    } catch (e) {}
+  }
+
+  function loadMt() {
+    try {
+      var v = JSON.parse(localStorage.getItem("mrs_mt") || "null");
+      return v && typeof v.ok === "boolean" ? v : null;
     } catch (e) {
-      setLive(false);
-      setTimeout(connectLive, 5000);
-      return;
+      return null;
     }
-    ws.onopen = function () { setLive(true); };
-    ws.onclose = function () { setLive(false); setTimeout(connectLive, 5000); };
-    ws.onerror = function () { try { ws.close(); } catch (e) {} };
   }
 
-  if (dot) {
-    setLive(false);
-    connectLive();
+  function applyTitle(ok, problems) {
+    var prefix = "";
+    if (ok === false) {
+      prefix = "(!) ";
+    } else if (problems > 0) {
+      prefix = "(" + problems + ") ";
+    }
+    document.title = prefix + baseTitle;
   }
 
-  // ---------- Бейдж проблем в заголовке вкладки ----------
-  var baseTitle = document.title;
-
-  function refreshTitleBadge() {
+  function refreshStatus() {
     fetch("/api/v1/status", {
       credentials: "same-origin",
       headers: { Accept: "application/json" }
@@ -105,18 +109,43 @@
       .then(function (j) {
         if (!j || j.ok !== true) return;
         var d = j.data || {};
-        var problems = (d.degraded && d.degraded.length) || 0;
-        var prefix = "";
-        if (d.mikrotik_ok === false) {
-          prefix = "(!) ";
-        } else if (problems > 0) {
-          prefix = "(" + problems + ") ";
+
+        // Точка горит зелёным, пока MikroTik отвечает, и красным — когда нет.
+        if (d.mikrotik_ok === true) {
+          setLive(true);
+        } else if (d.mikrotik_ok === false) {
+          setLive(false);
         }
-        document.title = prefix + baseTitle;
+
+        var problems = (d.degraded && d.degraded.length) || 0;
+        if (d.mikrotik_ok === true || d.mikrotik_ok === false) {
+          saveMt(d.mikrotik_ok, problems);
+        }
+        applyTitle(d.mikrotik_ok, problems);
       })
-      .catch(function () {});
+      .catch(function () {
+        setLive(false);
+        saveMt(false, 0);
+      });
   }
 
-  refreshTitleBadge();
-  setInterval(refreshTitleBadge, 60000);
+  function startLive() {
+    dot = document.getElementById("live-dot");
+    // Мгновенно восстанавливаем последнее известное состояние, пока не
+    // пришёл ответ /api/v1/status — иначе при переходе между страницами
+    // индикатор успевает показать серый.
+    var saved = loadMt();
+    if (saved) {
+      setLive(saved.ok);
+      applyTitle(saved.ok, saved.problems);
+    }
+    refreshStatus();
+    setInterval(refreshStatus, 15000);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startLive);
+  } else {
+    startLive();
+  }
 })();

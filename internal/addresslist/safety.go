@@ -14,11 +14,21 @@ type SafetyParams struct {
 //
 //	removed / existing > max_delete_ratio      → ошибка (нужен --force)
 //	removed > require_confirmation_over        → ошибка (нужен --force)
+//	removed >= existing                        → ошибка всегда (новый набор пуст)
 //
 // existing == 0 проверок не требует.
 func CheckDeletion(existing, remove int, p SafetyParams) error {
 	if existing <= 0 || remove <= 0 {
 		return nil
+	}
+	// PROMPT II.6: если existing > 0, а новый набор пуст — прерывать всегда,
+	// без исключений, даже если ratio-пороги это допускают. Полное удаление
+	// управляемых записей возможно только через remove-service или --force
+	// (обход выполняется на уровне вызова, а не здесь).
+	if remove >= existing {
+		return fmt.Errorf(
+			"deletion of all %d managed entries is blocked (new set would be empty; use --force or remove-service)",
+			existing)
 	}
 	ratio := float64(remove) / float64(existing)
 	if p.MaxDeleteRatio > 0 && ratio > p.MaxDeleteRatio {

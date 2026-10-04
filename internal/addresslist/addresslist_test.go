@@ -96,3 +96,109 @@ func TestCheckDeletion(t *testing.T) {
 		t.Fatal("absolute threshold must fail")
 	}
 }
+
+// PROMPT II.6: если новый набор пуст (remove >= existing) — блок всегда,
+// даже когда ratio-пороги это допускают.
+func TestCheckDeletionTotalWipeBlocked(t *testing.T) {
+	if err := CheckDeletion(5, 5, SafetyParams{MaxDeleteRatio: 1.0}); err == nil {
+		t.Fatal("total wipe must be blocked even with MaxDeleteRatio=1.0")
+	}
+	if err := CheckDeletion(5, 5, SafetyParams{}); err == nil {
+		t.Fatal("total wipe must be blocked with zero params")
+	}
+	if err := CheckDeletion(5, 4, SafetyParams{MaxDeleteRatio: 1.0}); err != nil {
+		t.Fatalf("4 of 5 under ratio 1.0 must pass: %v", err)
+	}
+	if err := CheckDeletion(5, 0, SafetyParams{}); err != nil {
+		t.Fatalf("no removals: no checks: %v", err)
+	}
+	if err := CheckDeletion(0, 0, SafetyParams{}); err != nil {
+		t.Fatalf("no existing: no checks: %v", err)
+	}
+}
+
+// PROMPT II.7: выключенная (disabled=true) управляемая запись не может быть
+// unchanged — она уходит в update (re-enable).
+func TestComputeDiffDisabledEntryGoesToUpdate(t *testing.T) {
+	managed := []Entry{
+		{ID: "*1", Address: "8.8.8.0/24", List: "TO-VPN", Comment: "AUTO:yt", Disabled: "true"},
+		{ID: "*2", Address: "9.9.9.0/24", List: "TO-VPN", Comment: "AUTO:yt"},
+	}
+	desired := []string{"8.8.8.0/24"}
+
+	d, err := ComputeDiff("yt", "TO-VPN", "AUTO:yt", desired, managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Update) != 1 || d.Update[0] != "8.8.8.0/24" {
+		t.Fatalf("disabled entry must go to update, got %v", d.Update)
+	}
+	if len(d.Unchanged) != 0 {
+		t.Fatalf("disabled entry must not be unchanged, got %v", d.Unchanged)
+	}
+	if len(d.Add) != 0 {
+		t.Fatalf("add must be empty, got %v", d.Add)
+	}
+	if len(d.Remove) != 1 || d.Remove[0] != "9.9.9.0/24" {
+		t.Fatalf("stale entry must be removed, got %v", d.Remove)
+	}
+
+	// UpdatePlan должен вернуть запись с .id для PATCH.
+	up := UpdatePlan(desired, managed)
+	if len(up) != 1 || up[0].ID != "*1" {
+		t.Fatalf("UpdatePlan: %+v", up)
+	}
+}
+
+// Из двух экземпляров одного адреса остаётся включённый: без PATCH, дубль
+// (выключенный) удаляется.
+func TestComputeDiffPrefersEnabledDuplicate(t *testing.T) {
+	managed := []Entry{
+		{ID: "*1", Address: "8.8.8.0/24", Disabled: "true"}, // выключенный идёт первым
+		{ID: "*2", Address: "8.8.8.0/24"},                   // включённый дубль
+	}
+	desired := []string{"8.8.8.0/24"}
+
+	d, err := ComputeDiff("yt", "TO-VPN", "AUTO:yt", desired, managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Unchanged) != 1 || d.Unchanged[0] != "8.8.8.0/24" {
+		t.Fatalf("enabled duplicate must be kept as unchanged, got %v", d.Unchanged)
+	}
+	if len(d.Update) != 0 {
+		t.Fatalf("no update needed when enabled duplicate exists, got %v", d.Update)
+	}
+	if len(d.Remove) != 1 || d.Remove[0] != "8.8.8.0/24" {
+		t.Fatalf("disabled duplicate must be removed, got %v", d.Remove)
+	}
+
+	// RemovalPlan обязан удалить именно выключенный экземпляр *1.
+	plan := RemovalPlan(desired, managed)
+	if len(plan) != 1 || plan[0].ID != "*1" {
+		t.Fatalf("removal plan must drop disabled duplicate *1: %+v", plan)
+	}
+}
+
+// Идемпотентность (PROMPT II.7): повторный diff с теми же входными данными
+// не порождает изменений.
+func TestComputeDiffIdempotentWhenAllMatch(t *testing.T) {
+	managed := []Entry{
+		{ID: "*1", Address: "8.8.8.0/24"},
+		{ID: "*2", Address: "1.1.1.0/24"},
+	}
+	desired := []string{"8.8.8.0/24", "1.1.1.0/24"}
+
+	for i := 0; i < 2; i++ {
+		d, err := ComputeDiff("yt", "TO-VPN", "AUTO:yt", desired, managed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(d.Add) != 0 || len(d.Remove) != 0 || len(d.Update) != 0 {
+			t.Fatalf("run %d produced changes: %+v", i+1, d)
+		}
+		if len(d.Unchanged) != 2 {
+			t.Fatalf("run %d unchanged: %v", i+1, d.Unchanged)
+		}
+	}
+}

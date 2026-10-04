@@ -3,13 +3,12 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>MikroTik Route Sync — Расписания</title>
+  <title>Расписания — MikroTik Route Sync</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/schedule.css">
   <script src="/static/theme.js"></script>
-  <script src="/static/schedule.js" defer></script>
 </head>
 <body>
   <nav class="bar">
@@ -21,22 +20,12 @@
     <a href="/settings">Настройки</a>
     <a href="/logs">Логи</a>
     <span class="bar-right">
-      <span id="live-dot" class="live-dot" title="Live: нет подключения"></span>
-      <span class="ver">v{{ .Version }}</span>
+      <span id="live-dot" class="{{ .DotClass }}" title="{{ .DotTitle }}"></span>
       <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
     </span>
   </nav>
 
   <main class="wrap schedule-page" id="schedule-page" data-global="{{ .Global }}">
-    <header class="page-header">
-      <div>
-        <p class="muted">
-          Глобальное расписание:
-          <code>{{ .Global }}</code>
-        </p>
-      </div>
-    </header>
-
     <section class="sched-summary" aria-label="Сводка по расписаниям">
       <div class="summary-card">
         <span>Сервисов</span>
@@ -96,13 +85,14 @@
       </div>
 
       <div class="toolbar-actions">
-        <button type="button" id="sched-copy">Скопировать JSON</button>
-        <button type="button" id="sched-reset-filters" class="secondary">Сбросить фильтры</button>
+        <button type="button" id="sched-copy" class="btn btn-outline">Скопировать JSON</button>
+        <button type="button" id="sched-reset-filters" class="btn btn-secondary">Сбросить фильтры</button>
       </div>
     </section>
 
     <details class="sched-help">
       <summary>Поддерживаемые форматы и подсказки</summary>
+      <p class="global-schedule">Глобальное расписание: <code>{{ .Global }}</code></p>
       <ul>
         <li><code>every 30m</code>, <code>every 6h</code>, <code>every 1d</code>, <code>every 1w</code> — интервал.</li>
         <li><code>daily at 03:00</code> — ежедневно в указанное время.</li>
@@ -196,8 +186,8 @@
                 >
 
                 <div class="edit-buttons">
-                  <button type="button" class="save-btn">Сохранить</button>
-                  <button type="button" class="reset-btn secondary">Сбросить</button>
+                  <button type="button" class="btn btn-primary save-btn">Сохранить</button>
+                  <button type="button" class="btn btn-secondary reset-btn">Сбросить</button>
                 </div>
 
                 <div class="row-status" aria-live="polite"></div>
@@ -213,6 +203,13 @@
       </div>
     </article>
   </main>
+
+  <!-- Контейнер для уведомлений -->
+  <div id="mrs-toast" class="toast"></div>
+
+  <!-- Скрипты -->
+  <script src="/static/schedule.js"></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>
 {{end}}

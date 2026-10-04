@@ -1,8 +1,4 @@
 /* Дашборд */
-.dashboard-page {
-  max-width: 1600px;
-}
-
 .dash-header {
   display: flex;
   justify-content: space-between;
@@ -12,16 +8,12 @@
   flex-wrap: wrap;
 }
 
-.dash-title {
-  flex: 1;
-  min-width: 250px;
-}
-
 .dash-header-actions {
   display: flex;
   gap: 1rem;
   align-items: center;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .switch {

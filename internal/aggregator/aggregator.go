@@ -111,6 +111,61 @@ func RemoveContained(in []netip.Prefix) []netip.Prefix {
 	return out
 }
 
+// SubtractPrefix вычитает CIDR-блок x из блока p (оба должны быть валидными
+// IPv4-префиксами). Возможные результаты:
+//
+//   - пересечения нет → [p] (блоки непересекающихся CIDR не могут «частично»
+//     пересекаться: либо вложение, либо разрыв);
+//   - x ⊇ p (включая равенство) → nil (p полностью исключён);
+//   - p строго содержит x → остаток p\x в виде минимального набора префиксов.
+//
+// Покрытие сохраняется точно: union(результат) ∪ x == p (PROMPT III.4 —
+// агрегация и вычитание не расширяют и не сужают множество молча).
+func SubtractPrefix(p, x netip.Prefix) []netip.Prefix {
+	if !p.IsValid() || !x.IsValid() || !p.Addr().Is4() || !x.Addr().Is4() {
+		return nil
+	}
+	p = p.Masked()
+	x = x.Masked()
+
+	if !ContainsPrefix(p, x) {
+		if ContainsPrefix(x, p) {
+			return nil // x покрывает p целиком (равенство тоже здесь)
+		}
+		return []netip.Prefix{p} // разрыв: вычитать нечего
+	}
+	if p == x {
+		return nil
+	}
+
+	// p строго содержит x: сплитуем p пополам, спускаясь только в ту половину,
+	// которая содержит x; вторая половина целиком остаётся в результате.
+	var out []netip.Prefix
+	cur := p
+	for cur != x {
+		next := cur.Bits() + 1
+		left := netip.PrefixFrom(cur.Addr(), next)
+		right := netip.PrefixFrom(addrAdd(cur.Addr(), uint32(1)<<(32-next)), next)
+		if ContainsPrefix(left, x) {
+			out = append(out, right)
+			cur = left
+		} else {
+			out = append(out, left)
+			cur = right
+		}
+	}
+	return out
+}
+
+// addrAdd прибавляет delta к IPv4-адресу (без проверки переполнения: вызывается
+// только внутри корректного сплита префикса).
+func addrAdd(a netip.Addr, delta uint32) netip.Addr {
+	b := a.As4()
+	v := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+	v += delta
+	return netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
+}
+
 // NormalizeAll нормализует список строк в список префиксов.
 //
 // Синтаксическая ошибка в любой строке — жёсткая ошибка (уровень 1 валидации).

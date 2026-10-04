@@ -3,13 +3,11 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>MikroTik Route Sync — Логи</title>
+  <title>Логи — MikroTik Route Sync</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/theme.js"></script>
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/app.js" defer></script>
 </head>
 <body>
   <nav class="bar">
@@ -21,15 +19,12 @@
     <a href="/settings">Настройки</a>
     <a href="/logs" class="active">Логи</a>
     <span class="bar-right">
-      <span id="live-dot" class="live-dot" title="Live: нет подключения"></span>
-      <span class="ver">v{{ .Version }}</span>
+      <span id="live-dot" class="{{ .DotClass }}" title="{{ .DotTitle }}"></span>
       <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
     </span>
   </nav>
 
-  <main class="wrap">
-    <p class="muted">Файл: <code>{{ .LogFile }}</code></p>
-
+  <main class="wrap" id="logs-page">
     <div class="log-stats" id="log-stats">
       <span class="stat-item">Всего: <strong id="stat-total">0</strong></span>
       <span class="stat-item debug">DEBUG: <strong id="stat-debug">0</strong></span>
@@ -73,10 +68,10 @@
       </div>
 
       <div class="log-actions">
-        <button type="button" id="log-refresh" class="primary log-refresh">⟳ Обновить</button>
-        <button type="button" id="log-pause" class="secondary log-pause">⏸ Пауза</button>
-        <button type="button" id="log-download">⬇ Скачать</button>
-        <button type="button" class="secondary" id="log-clear"
+        <button type="button" id="log-refresh" class="btn btn-primary log-refresh"><span class="btn-ico" aria-hidden="true">⟳</span> Обновить</button>
+        <button type="button" id="log-pause" class="btn btn-secondary log-pause">⏸ Пауза</button>
+        <button type="button" id="log-download" class="btn btn-outline">⬇ Скачать</button>
+        <button type="button" class="btn btn-secondary" id="log-clear"
                 hx-post="/actions/logs-clear"
                 hx-swap="none"
                 hx-confirm="Очистить лог-файл?">
@@ -91,6 +86,13 @@
       </div>
     </article>
   </main>
+
+  <!-- Контейнер для уведомлений -->
+  <div id="mrs-toast" class="toast"></div>
+
+  <!-- Скрипты -->
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>
 {{end}}

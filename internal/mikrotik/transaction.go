@@ -24,13 +24,17 @@ const (
 
 // Transaction — транзакция применения изменений в Firewall Address List.
 //
-// Порядок применения:
+// Порядок применения (PROMPT II.4.4 — сначала POST новых, затем DELETE
+// устаревших; re-enable выполняется между ними, чтобы выключенные записи
+// не оставались выключенными дольше необходимого):
 //  1. add
-//  2. remove
+//  2. update (re-enable выключенных управляемых записей, PROMPT II.7)
+//  3. remove
 //
 // При ошибке выполняется best-effort rollback:
 //   - удалённые созданные записи;
-//   - повторно добавленные已成功 удалённые записи.
+//   - повторно выключенные re-enable-записи (возврат к исходному состоянию);
+//   - повторно добавленные успешно удалённые записи.
 //
 // Если rollback прошёл частично, транзакция переходит в StateDegraded.
 type Transaction struct {
@@ -44,6 +48,7 @@ type Transaction struct {
 	state      TransactionState
 
 	created []addresslist.Entry
+	updated []addresslist.Entry
 	deleted []addresslist.Entry
 }
 
@@ -79,16 +84,25 @@ func (t *Transaction) State() TransactionState {
 	return t.state
 }
 
-// Apply применяет add/remove к RouterOS.
+// Apply применяет add/update/remove к RouterOS.
+//
+// Порядок: add → update → remove (PROMPT II.4.4: новые записи POST-ятся до
+// удаления устаревших, чтобы не терять покрытие).
 func (t *Transaction) Apply(
 	ctx context.Context,
 	add []addresslist.Entry,
+	update []addresslist.Entry,
 	remove []addresslist.Entry,
 ) error {
 	list := t.cfg.Firewall.AddressList
 	comment := addresslist.CommentFor(t.cfg.Firewall.CommentPrefix, t.service)
 
 	addEntries, err := t.prepareAdd(add, list, comment)
+	if err != nil {
+		return err
+	}
+
+	updateEntries, err := t.prepareUpdate(update, list, comment)
 	if err != nil {
 		return err
 	}
@@ -123,7 +137,33 @@ func (t *Transaction) Apply(
 		t.created = append(t.created, created)
 	}
 
-	// 2. Затем удаляем лишние записи.
+	// 2. Включаем выключенные управляемые записи (re-enable).
+	for _, e := range updateEntries {
+		if updErr := t.client.UpdateEntry(ctx, e); updErr != nil {
+			t.log.Error("transaction update failed",
+				"service", t.service,
+				"list", e.List,
+				"comment", e.Comment,
+				"id", e.ID,
+				"address", e.Address,
+				"disabled", e.Disabled,
+				"snapshot_id", t.snapshotID,
+				"err", updErr,
+			)
+
+			if rbErr := t.rollback(); rbErr != nil {
+				t.state = StateDegraded
+				return fmt.Errorf("update %s: %w; rollback failed: %v", e.Address, updErr, rbErr)
+			}
+
+			t.state = StateRolledBack
+			return fmt.Errorf("update %s: %w", e.Address, updErr)
+		}
+
+		t.updated = append(t.updated, e)
+	}
+
+	// 3. Затем удаляем лишние записи.
 	for _, e := range removeEntries {
 		delErr := t.client.DeleteEntry(ctx, e.ID)
 		if delErr != nil {
@@ -189,6 +229,45 @@ func (t *Transaction) prepareAdd(
 			ne.Disabled = "false"
 		}
 
+		out = append(out, ne)
+	}
+
+	return out, nil
+}
+
+// prepareUpdate проверяет записи для обновления: обязателен корректный .id
+// (PATCH {path}/{.id}). Входной Disabled — текущее состояние записи (из
+// UpdatePlan она приходит со значением "true"); цель плана обновления —
+// всегда включение: disabled=false (PROMPT I, II.7).
+// List/Comment заполняются для логов — в PATCH они не отправляются
+// (см. Client.UpdateEntry).
+func (t *Transaction) prepareUpdate(
+	in []addresslist.Entry,
+	list string,
+	comment string,
+) ([]addresslist.Entry, error) {
+	out := make([]addresslist.Entry, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+
+	for _, e := range in {
+		if e.ID == "" {
+			return nil, fmt.Errorf("update entry requires .id (address %q)", e.Address)
+		}
+		if strings.ContainsAny(e.ID, "/?#") {
+			return nil, fmt.Errorf("invalid entry id %q", e.ID)
+		}
+		if _, ok := seen[e.ID]; ok {
+			continue
+		}
+		seen[e.ID] = struct{}{}
+
+		ne := e
+		ne.List = list
+		ne.Comment = comment
+		ne.Disabled = "false"
+		if norm, err := addresslist.NormalizeAddress(ne.Address); err == nil {
+			ne.Address = norm
+		}
 		out = append(out, ne)
 	}
 
@@ -305,6 +384,21 @@ func (t *Transaction) rollback() error {
 		}
 	}
 
+	// Возвращаем выключенные записи в исходное состояние (disabled=true).
+	for i := len(t.updated) - 1; i >= 0; i-- {
+		e := t.updated[i]
+		e.Disabled = "true"
+
+		if err := t.client.UpdateEntry(ctx, e); err != nil {
+			errs = append(errs, fmt.Sprintf(
+				"rollback re-disable id=%s address=%s: %v",
+				e.ID,
+				e.Address,
+				err,
+			))
+		}
+	}
+
 	// Возвращаем то, что успели удалить.
 	for i := len(t.deleted) - 1; i >= 0; i-- {
 		e := t.deleted[i]
@@ -329,6 +423,7 @@ func (t *Transaction) rollback() error {
 	}
 
 	t.created = nil
+	t.updated = nil
 	t.deleted = nil
 
 	return nil
