@@ -62,7 +62,7 @@ var knownServices = map[string]knownService{
 	"fastly": {
 		methods: []string{"cdn"},
 		static:  []string{"https://api.fastly.com/public-ip-list"},
-		asn:     "AS54825",
+		asn:     "AS54113",
 	},
 	"akamai": {
 		methods: []string{"asn"},

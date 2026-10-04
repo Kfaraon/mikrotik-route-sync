@@ -422,6 +422,10 @@ var knownMethods = map[string]bool{
 	"whois": true, "static_url": true,
 }
 
+// IsValidMethod проверяет, что метод входит в известный набор
+// (cdn, asn, dynamic, whois, static_url).
+func IsValidMethod(m string) bool { return knownMethods[m] }
+
 // EffectiveSchedule возвращает эффективное расписание сервиса.
 // Приоритет: service -> group -> global.
 func (c *Config) EffectiveSchedule(service string) string {

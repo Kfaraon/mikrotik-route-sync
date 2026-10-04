@@ -388,6 +388,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Post("/services/sync", s.apiSyncMany)
 		r.Post("/services/{name}/sync", s.apiSyncOne)
 		r.Post("/services/{name}/dry-run", s.apiDryRun)
+		r.Post("/services/{name}/recommend", s.apiRecommendService)
 		r.Get("/schedules", s.apiSchedules)
 		r.Put("/schedules/{service}", s.apiUpdateSchedule)
 		r.Get("/logs", s.apiLogs)
@@ -1087,7 +1088,10 @@ func (s *Server) apiProgress(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
+		Name      string   `json:"name"`
+		Method    string   `json:"method"`
+		StaticURL string   `json:"static_url"`
+		Domains   []string `json:"domains"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
@@ -1097,12 +1101,42 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid service name")
 		return
 	}
-	if err := s.syncer.AddServiceWithConfig(r.Context(), req.Name, config.ServiceOverride{}); err != nil {
+	ov := config.ServiceOverride{
+		Method:    strings.TrimSpace(strings.ToLower(req.Method)),
+		StaticURL: strings.TrimSpace(req.StaticURL),
+		Domains:   req.Domains,
+	}
+	if err := s.syncer.AddServiceWithConfig(r.Context(), req.Name, ov); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.auditChange(r, "api", "service_add", req.Name)
 	writeOK(w, map[string]string{"service": req.Name})
+}
+
+// apiRecommendService — проверка сервиса на обслуживание за CDN.
+// body: {"apply": true} — применить рекомендацию (purge + method=cdn).
+func (s *Server) apiRecommendService(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var req struct {
+		Apply bool `json:"apply"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req) // пустое тело = только проверка
+
+	ov := s.syncer.GetServiceOverride(name)
+	adv := s.syncer.AdviseCDN(r.Context(), name, ov)
+
+	resp := map[string]any{"advice": adv}
+	if req.Apply {
+		purged, err := s.syncer.ApplyCDNRecommendation(context.WithoutCancel(r.Context()), name, adv)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		resp["applied"] = true
+		resp["purged"] = purged
+	}
+	writeOK(w, resp)
 }
 
 func (s *Server) apiDeleteService(w http.ResponseWriter, r *http.Request) {

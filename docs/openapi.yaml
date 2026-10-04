@@ -268,6 +268,63 @@ paths:
                   data: { $ref: '#/components/schemas/SyncResult' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/services/{name}/recommend:
+    post:
+      summary: Подбор источника — проверка, не обслуживается ли сервис за CDN
+      description: >-
+        Резолвит A-записи доменов, определяет ASN и сверяет адреса с
+        официальными списками CDN (Cloudflare, AWS CloudFront, Google, Fastly).
+        Тело {"apply": true} применяет рекомендацию: удаляет старые
+        AUTO-записи сервиса и переключает override на method: cdn.
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                apply: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Рекомендация (и, при apply, результат применения)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      advice:
+                        type: object
+                        properties:
+                          detected: { type: boolean }
+                          cdn: { type: string, example: Cloudflare }
+                          asn: { type: integer, example: 13335 }
+                          url: { type: string, example: 'https://www.cloudflare.com/ips-v4' }
+                          prefix_count: { type: integer, example: 15 }
+                          whois_count: { type: integer, example: 86 }
+                          domains: { type: array, items: { type: string } }
+                          ips: { type: array, items: { type: string } }
+                          current_method: { type: string, example: whois }
+                          recommend: { type: boolean }
+                          reason: { type: string }
+                      applied: { type: boolean }
+                      purged: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/schedules:
     get:
       summary: Все расписания (глобальное, группы, сервисы, эффективные)

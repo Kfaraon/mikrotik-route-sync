@@ -46,6 +46,7 @@
 > отбрасываются коллекторами и на этапах валидации/агрегации.
 
 - Автоматическая классификация источника: `asn`, `cdn`, `dynamic`, `whois`, `static_url`
+- Автоопределение CDN при добавлении сервиса: A-записи домена сверяются с официальными списками (Cloudflare, AWS CloudFront, Google, Fastly) — при совпадении сразу ставится метод `cdn`
 - Определение ASN по домену / IPv4 и работа с ASN, указанным напрямую
 - Резолвинг: дамп BGP-таблицы bgp.tools с fallback на RIPEstat и RDAP
 - Официальные IPv4-источники: Cloudflare, AWS CloudFront, Google, Fastly, Akamai
@@ -199,6 +200,8 @@
 | `app info <service>` | Информация о сервисе (расписание, overrides) |
 | `app add-service <service>` | Добавить и первоначально синхронизировать сервис |
 | `app remove-service <service>` | Удалить сервис и только его управляемые address-list записи |
+| `app recommend <service>` | Подобрать источник: проверка сервиса за CDN (отчёт) |
+| `app recommend <service> --yes` | Применить рекомендацию: purge старых AUTO-записей + метод `cdn` |
 | `app backup <service>` | Экспорт управляемых записей сервиса в JSON |
 | `app restore <service> --from-file f.json --force` | Восстановить из файла |
 | `app restore <service> --from-snapshot <id> --force` | Восстановить из снапшота |
@@ -242,6 +245,21 @@
     ./app add-service cloudflare
 
 Можно передать домен, IP или ASN — resolver / classifier выберет подходящий метод.
+
+Если метод не задан явно, при добавлении домена выполняется **автоопределение
+CDN**: резолвятся A-записи, определяется ASN и адреса сверяются с официальным
+списком CDN (Cloudflare, AWS CloudFront, Google, Fastly). При полном совпадении
+сразу ставится метод `cdn` (обычно существенно компактнее `whois`) с уведомлением
+в Telegram. Ручной выбор метода / `static_url` никогда не переопределяется.
+
+    ./app add-service rutracker.net            # детект применится автоматически
+    ./app recommend rutracker.net              # отчёт по источнику
+    ./app recommend rutracker.net --yes        # применить к существующему сервису
+
+`recommend --yes` удаляет старые AUTO-записи сервиса (иначе covered-семантика
+их не трогает) и переключает override на `method: cdn`. Выполняйте при
+остановленном демоне. В Web UI та же проверка — кнопка «Подобрать источник
+(CDN)» в карточке сервиса.
 
 ### Переопределения (overrides)
 
@@ -600,6 +618,7 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
 | `POST` | `/api/v1/services/sync` | Запустить синхронизацию набора сервисов (асинхронно) |
 | `POST` | `/api/v1/services/{name}/sync` | Синхронизировать один сервис |
 | `POST` | `/api/v1/services/{name}/dry-run` | Расчёт diff без применения |
+| `POST` | `/api/v1/services/{name}/recommend` | Проверка сервиса за CDN; тело `{"apply": true}` — применить (purge + `method: cdn`) |
 | `GET` | `/api/v1/schedules` | Все расписания (global/groups/services/effective) |
 | `PUT` | `/api/v1/schedules/{service}` | Изменить расписание сервиса |
 | `GET` | `/api/v1/logs` | Логи (`level`, `service`, `since`, `limit`) |

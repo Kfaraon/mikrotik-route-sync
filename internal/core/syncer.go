@@ -113,6 +113,9 @@ type Syncer struct {
 	reloadMu sync.Mutex
 	reload   func() error
 
+	// cdnProbeFn — подмена пробника CDN-детекции в тестах (nil = реальный).
+	cdnProbeFn func(ctx context.Context, name string, domains []string) *CDNAdvice
+
 	// telegramRestartMu защищает функцию перезапуска Telegram-бота
 	telegramRestartMu   sync.Mutex
 	telegramRestartFunc func() error
@@ -1066,7 +1069,7 @@ var cdnNameToASN = map[string]int{
 	"cloudflare": 13335,
 	"aws":        16509,
 	"google":     15169,
-	"fastly":     54825,
+	"fastly":     54113,
 }
 
 func hasMethod(methods []string, want string) bool {
@@ -1210,9 +1213,6 @@ func (s *Syncer) AddService(ctx context.Context, name string) error {
 }
 
 func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override config.ServiceOverride) error {
-	s.serviceMu.Lock()
-	defer s.serviceMu.Unlock()
-
 	name = strings.ToLower(strings.TrimSpace(name))
 	if !config.ValidateServiceName(name) {
 		return fmt.Errorf("invalid service name: %s (allowed: lowercase letters/digits with '-', '_', '.' — e.g. instagram, youtube.com, 8.8.8.8, AS13335)", name)
@@ -1221,6 +1221,30 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	if err := validator.SanitizeComment(name); err != nil {
 		return err
 	}
+
+	if override.Method != "" && !config.IsValidMethod(override.Method) {
+		return fmt.Errorf("unknown method %q (allowed: cdn, asn, dynamic, whois, static_url)", override.Method)
+	}
+
+	// Автоопределение источника: если метод не задан явно — проверяем, не
+	// обслуживается ли домен за CDN (Cloudflare и др.), и сразу ставим
+	// метод cdn. Ручной выбор (метод/static_url) не переопределяется;
+	// сбой проверки не блокирует добавление (детект best-effort).
+	var detected *CDNAdvice
+	if override.Method == "" && override.StaticURL == "" {
+		if adv := s.AdviseCDN(ctx, name, override); adv.Detected {
+			override.Method = "cdn"
+			detected = adv
+			s.log.Info("cdn source auto-detected",
+				"service", name, "cdn", adv.CDN, "asn", adv.ASN, "url", adv.URL,
+				"cdn_prefixes", adv.PrefixCount, "whois_prefixes", adv.WhoisCount)
+		} else {
+			s.log.Debug("cdn auto-detection skipped", "service", name, "reason", adv.Reason)
+		}
+	}
+
+	s.serviceMu.Lock()
+	defer s.serviceMu.Unlock()
 
 	for _, p := range s.cfg.Services {
 		if p == name {
@@ -1240,6 +1264,12 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	}
 	s.audit.LogServiceAdd("", "core", name)
 	s.emit("service_added", map[string]any{"service": name})
+
+	if detected != nil {
+		if n := s.getNotify(); n != nil {
+			_ = n.Send(context.WithoutCancel(ctx), cdnDetectedMessage(name, detected))
+		}
+	}
 	return nil
 }
 

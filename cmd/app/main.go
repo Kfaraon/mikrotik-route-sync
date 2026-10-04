@@ -84,6 +84,7 @@ func newRoot() *cobra.Command {
 		infoCmd(),
 		addServiceCmd(),
 		removeServiceCmd(),
+		recommendCmd(),
 		auditAddressListCmd(),
 		cleanupAutoEntriesCmd(),
 		backupCmd(),
@@ -307,6 +308,88 @@ func removeServiceCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&purge, "purge", false, "удалить AUTO-маршруты сервиса")
 	cmd.Flags().BoolVar(&forceOp, "force", false, "то же, что --purge")
 	return cmd
+}
+
+// ============================================================================
+// recommend — подбор источника сбора (проверка за CDN)
+// ============================================================================
+
+func recommendCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "recommend <service>",
+		Short: "Подобрать источник сбора: проверка, не обслуживается ли сервис за CDN",
+		Long: `Проверяет домены сервиса: резолвит A-записи, определяет ASN и сверяет
+с официальными списками CDN (Cloudflare, AWS CloudFront, Google, Fastly).
+Если все адреса входят в официальный список — предлагает метод cdn
+(обычно существенно компактнее, чем whois-сбор).
+
+Флаг --yes применяет рекомендацию к существующему сервису: удаляет старые
+AUTO-записи и переключает метод на cdn. Выполняйте при остановленном
+демоне (нужен доступ к кэшу и роутеру).`,
+		Args: cobra.ExactArgs(1),
+		Example: `  app recommend rutracker.net
+  app recommend rutracker.net --yes`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
+				ov := s.GetServiceOverride(name)
+				adv := s.AdviseCDN(ctx, name, ov)
+				printRecommendReport(name, adv)
+
+				if !yes {
+					if adv.Recommend {
+						fmt.Println("\nПрименить: app recommend " + name + " --yes")
+					}
+					return nil
+				}
+				if !adv.Recommend {
+					return fmt.Errorf("рекомендация не требуется — применять нечего")
+				}
+				purged, err := s.ApplyCDNRecommendation(ctx, name, adv)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("\nПрименено: метод → cdn, удалено AUTO-записей: %d\n", purged)
+				fmt.Println("Запустите демон и выполните синхронизацию для применения.")
+				return nil
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "применить рекомендацию (purge старых AUTO-записей + метод cdn)")
+	return cmd
+}
+
+// printRecommendReport — отчёт recommend в stdout (на русском).
+func printRecommendReport(name string, adv *core.CDNAdvice) {
+	fmt.Printf("Анализ источника: %s\n", name)
+	if len(adv.Domains) > 0 {
+		fmt.Printf("  Домены:        %s\n", strings.Join(adv.Domains, ", "))
+	}
+	if len(adv.IPs) > 0 {
+		fmt.Printf("  A-записи:      %s\n", strings.Join(adv.IPs, ", "))
+	}
+	fmt.Printf("  Текущий метод: %s\n", adv.CurrentMethod)
+	if adv.Detected {
+		fmt.Printf("  CDN:           %s (AS%d)\n", adv.CDN, adv.ASN)
+		fmt.Printf("  Список:        %s — %d префиксов\n", adv.URL, adv.PrefixCount)
+		if adv.WhoisCount > 0 {
+			fmt.Printf("  whois-сбор:    %d префиксов\n", adv.WhoisCount)
+		}
+	}
+	fmt.Printf("  Вердикт:       %s\n", adv.Reason)
+	switch {
+	case adv.Recommend:
+		if adv.WhoisCount > 0 {
+			fmt.Printf("  Рекомендация:  cdn (%d против %d)\n", adv.PrefixCount, adv.WhoisCount)
+		} else {
+			fmt.Println("  Рекомендация:  cdn")
+		}
+	case adv.Detected:
+		fmt.Println("  Рекомендация:  не требуется — уже используется официальный список")
+	default:
+		fmt.Println("  Рекомендация:  оставить текущий метод")
+	}
 }
 
 // ============================================================================

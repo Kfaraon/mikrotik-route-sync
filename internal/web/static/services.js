@@ -210,6 +210,7 @@
       routesMeta: null,
       routesQuery: ""
     },
+    cdn: null,
     delete: {
       open: false,
       name: null
@@ -1629,6 +1630,7 @@
     state.details.routes = [];
     state.details.routesMeta = null;
     state.details.routesQuery = "";
+    state.cdn = null;
 
     if (els.drawer) {
       els.drawer.hidden = false;
@@ -1772,7 +1774,100 @@
 
     html += "</div>";
 
+    html += '<div class="svc-cdn-probe">' + cdnBlockHtml() + "</div>";
+
     return html;
+  }
+
+  // CDN-блок во вкладке «Обзор»: подбор источника (проверка за Cloudflare
+  // и другими CDN с официальными списками).
+  function cdnBlockHtml() {
+    var c = state.cdn;
+    if (!c || c.name !== state.details.name) {
+      return '<button class="btn btn-small btn-outline" data-cdn-run="1">Подобрать источник (CDN)</button>';
+    }
+    if (c.loading) {
+      return '<div class="svc-cdn-loading">Проверка CDN…</div>';
+    }
+    if (c.error) {
+      return (
+        '<div class="svc-cdn-result"><p>Ошибка: ' + esc(c.error) + "</p>" +
+        '<button class="btn btn-small btn-outline" data-cdn-run="1">Повторить</button></div>'
+      );
+    }
+
+    var a = c.advice;
+    if (!a) {
+      return '<button class="btn btn-small btn-outline" data-cdn-run="1">Подобрать источник (CDN)</button>';
+    }
+
+    var h = '<div class="svc-cdn-result">';
+    if (c.applied) {
+      h +=
+        '<span class="svc-badge svc-badge-ok">Метод изменён на cdn' +
+        (c.purged ? ", удалено записей: " + c.purged : "") +
+        "</span>";
+    } else if (a.detected) {
+      h +=
+        "<p>" +
+        esc(a.cdn) +
+        " (AS" +
+        a.asn +
+        "): все адреса входят в официальный список (" +
+        a.prefix_count +
+        (a.whois_count ? " против whois — " + a.whois_count : "") +
+        ")</p>";
+      if (!a.recommend && a.reason) {
+        h += "<p>" + esc(a.reason) + "</p>";
+      }
+      if (a.recommend) {
+        h += '<button class="btn btn-small btn-primary" data-cdn-apply="1">Применить: метод cdn</button>';
+      }
+    } else {
+      h += "<p>CDN не обнаружен: " + esc(a.reason || "") + "</p>";
+      h += "<p>Рекомендация: оставить текущий метод (" + esc(a.current_method || "") + ")</p>";
+    }
+    h += '<button class="btn btn-small btn-outline" data-cdn-run="1">Проверить снова</button>';
+    h += "</div>";
+    return h;
+  }
+
+  function runCdnProbe(apply) {
+    var name = state.details.name;
+    if (!name) return;
+
+    state.cdn = { name: name, loading: true };
+    renderDetails();
+
+    api("/api/v1/services/" + encodeURIComponent(name) + "/recommend", {
+      method: "POST",
+      body: JSON.stringify({ apply: Boolean(apply) })
+    }).then(
+      function (data) {
+        if (state.details.name !== name) return;
+        state.cdn = {
+          name: name,
+          advice: data && data.advice ? data.advice : null,
+          applied: Boolean(data && data.applied),
+          purged: data && typeof data.purged === "number" ? data.purged : 0
+        };
+        renderDetails();
+        if (data && data.applied) {
+          showToast(
+            "Метод изменён на cdn" +
+              (state.cdn.purged ? ", удалено записей: " + state.cdn.purged : "")
+          );
+          loadAll(false);
+        }
+      },
+      function (err) {
+        if (state.details.name !== name) return;
+        var msg = String((err && err.message) || err);
+        state.cdn = { name: name, error: msg };
+        renderDetails();
+        showToast("Не удалось проверить CDN: " + msg, true);
+      }
+    );
   }
 
   function renderHistoryList(list) {
@@ -2154,8 +2249,17 @@
 
       els.drawerBody.addEventListener("click", function (e) {
         var b = closest(e.target, ".svc-route-copy");
-        if (!b) return;
-        copyText(b.getAttribute("data-addr") || "");
+        if (b) {
+          copyText(b.getAttribute("data-addr") || "");
+          return;
+        }
+        if (closest(e.target, "[data-cdn-apply]")) {
+          runCdnProbe(true);
+          return;
+        }
+        if (closest(e.target, "[data-cdn-run]")) {
+          runCdnProbe(false);
+        }
       });
     }
 

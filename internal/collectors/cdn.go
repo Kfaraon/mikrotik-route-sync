@@ -10,26 +10,41 @@ import (
 // Примечание: Akamai (AS20940) намеренно исключён — для него используется метод "asn".
 var cdnSources = map[int]cdnSource{
 	13335: { // Cloudflare
+		name: "Cloudflare",
 		url:  "https://www.cloudflare.com/ips-v4",
 		kind: "text",
 	},
 	16509: { // AWS CloudFront
+		name: "AWS CloudFront",
 		url:  "https://ip-ranges.amazonaws.com/ip-ranges.json",
 		kind: "aws",
 	},
 	15169: { // Google
+		name: "Google",
 		url:  "https://www.gstatic.com/ipranges/goog.json",
 		kind: "google",
 	},
-	54825: { // Fastly
+	54113: { // Fastly (AS54113; AS54825 — Packet Host, не Fastly)
+		name: "Fastly",
 		url:  "https://api.fastly.com/public-ip-list",
 		kind: "fastly",
 	},
 }
 
 type cdnSource struct {
+	name string
 	url  string
 	kind string
+}
+
+// CDNSource возвращает название CDN и URL официального списка для ASN
+// (используется автоопределением источника в core).
+func CDNSource(asn int) (name, url string, ok bool) {
+	src, ok := cdnSources[asn]
+	if !ok {
+		return "", "", false
+	}
+	return src.name, src.url, true
 }
 
 // CDNCollector — официальные публичные списки IPv4-диапазонов CDN-провайдеров.

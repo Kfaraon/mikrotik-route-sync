@@ -475,3 +475,10 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   .svc-time { min-width: auto; }
   .svc-right { text-align: left; }
 }
+
+
+/* CDN-блок: подбор источника (проверка за Cloudflare/другим CDN) */
+.svc-cdn-probe { margin-top: 14px; }
+.svc-cdn-result { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.svc-cdn-result p { margin: 0; flex: 1 1 100%; color: var(--muted, #666); }
+.svc-cdn-loading { color: var(--muted, #666); }
