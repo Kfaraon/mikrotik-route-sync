@@ -1,28 +1,4 @@
 /* Дашборд */
-.dash-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 2rem;
-  flex-wrap: wrap;
-}
-
-.dash-header-actions {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
-
-.switch {
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-  gap: 0.5rem;
-}
-
 .dash-grid {
   display: grid;
   gap: 1.5rem;

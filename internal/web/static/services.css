@@ -1,21 +1,4 @@
 /* Страница сервисов */
-.svc-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 2rem;
-  flex-wrap: wrap;
-}
-
-.svc-header-actions {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
-
 .svc-switch {
   display: inline-flex;
   align-items: center;

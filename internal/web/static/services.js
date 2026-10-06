@@ -128,8 +128,6 @@
 
   var els = {
     alert: byId("svc-alert"),
-    refresh: byId("svc-refresh"),
-    auto: byId("svc-auto-refresh"),
     search: byId("svc-search"),
     filter: byId("svc-filter"),
     sort: byId("svc-sort"),
@@ -187,7 +185,6 @@
     selection: {},
     progress: {},
     loading: false,
-    autoTimer: null,
     booted: false,
     collapsed: {},
     lastDiff: {},
@@ -261,13 +258,6 @@
 
   function setRefreshing(loading) {
     state.loading = loading;
-
-    if (!els.refresh) return;
-
-    els.refresh.disabled = loading;
-    // Подпись не меняем — иначе кнопка меняет ширину («Загрузка…» шире
-    // «⟳ Обновить»); грузит состояние btn-loading, крутится иконка.
-    els.refresh.classList.toggle("btn-loading", loading);
   }
 
   function setKpi(valueId, noteId, value, note, stateName) {
@@ -2351,37 +2341,7 @@
     });
   }
 
-  function scheduleAuto() {
-    if (state.autoTimer) {
-      clearInterval(state.autoTimer);
-      state.autoTimer = null;
-    }
-
-    if (els.auto && els.auto.checked) {
-      state.autoTimer = setInterval(function () {
-        if (
-          document.visibilityState === "visible" &&
-          !state.loading &&
-          !state.details.open &&
-          !state.delete.open
-        ) {
-          loadAll(false);
-        }
-      }, 60000);
-    }
-  }
-
   function bindEvents() {
-    if (els.refresh) {
-      els.refresh.addEventListener("click", function () {
-        handlePromise(loadAll(true));
-      });
-    }
-
-    if (els.auto) {
-      els.auto.addEventListener("change", scheduleAuto);
-    }
-
     if (els.search) {
       var searchTimer = null;
       els.search.addEventListener("input", function () {
@@ -2683,7 +2643,6 @@
   function init() {
     bindEvents();
     loadAll(true);
-    scheduleAuto();
   }
 
   init();

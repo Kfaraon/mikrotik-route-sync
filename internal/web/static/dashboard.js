@@ -93,8 +93,6 @@
 
   var els = {
     alert: byId("dash-alert"),
-    refresh: byId("dash-refresh"),
-    auto: byId("dash-auto-refresh"),
     health: byId("health-list"),
     next: byId("next-list"),
     attention: byId("attention-list")
@@ -112,8 +110,7 @@
     history: [],
     logs: [],
     derived: null,
-    loading: false,
-    autoTimer: null
+    loading: false
   };
 
   function setAlert(kind, message) {
@@ -133,13 +130,6 @@
 
   function setRefreshing(loading) {
     state.loading = loading;
-
-    if (!els.refresh) return;
-
-    els.refresh.disabled = loading;
-    // Подпись не меняем — кнопка не должна менять размер; грузит
-    // состояние btn-loading (крутится иконка).
-    els.refresh.classList.toggle("btn-loading", loading);
   }
 
   function parseTime(value) {
@@ -942,32 +932,7 @@
     els.attention.innerHTML = html;
   }
 
-  function scheduleAuto() {
-    if (state.autoTimer) {
-      clearInterval(state.autoTimer);
-      state.autoTimer = null;
-    }
-
-    if (els.auto && els.auto.checked) {
-      state.autoTimer = setInterval(function () {
-        if (document.visibilityState === "visible" && !state.loading) {
-          loadAll(false);
-        }
-      }, 60000);
-    }
-  }
-
   function bindEvents() {
-    if (els.refresh) {
-      els.refresh.addEventListener("click", function () {
-        loadAll(true);
-      });
-    }
-
-    if (els.auto) {
-      els.auto.addEventListener("change", scheduleAuto);
-    }
-
     document.addEventListener("keydown", function (e) {
       if ((e.ctrlKey || e.metaKey) && e.key === "r") {
         e.preventDefault();
@@ -979,7 +944,6 @@
   function init() {
     bindEvents();
     loadAll(true);
-    scheduleAuto();
   }
 
   init();
