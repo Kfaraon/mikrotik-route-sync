@@ -551,8 +551,13 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   .svc-actions { justify-content: flex-start; }
   .svc-actions button { flex: 1; min-width: 80px; min-height: 44px; }
   .svc-tabs { overflow-x: auto; }
-  .svc-tab { white-space: nowrap; }
+  .svc-tab { white-space: nowrap; padding: 0.6rem 0.9rem; font-size: 0.85rem; }
   .svc-icon-btn { min-width: 44px; min-height: 44px; }
+  /* Компактная шапка drawer: заголовок и табы занимают меньше высоты */
+  .svc-drawer-header { padding: 0.75rem 1rem; gap: 0.5rem; }
+  .svc-drawer-title-wrap h2 { font-size: 1.05rem; }
+  #svc-drawer-subtitle { font-size: 0.75rem; }
+  .svc-drawer-body { padding: 1rem; }
   .svc-drawer-panel { max-width: 100%; }
   .svc-list-row { grid-template-columns: 1fr; gap: 0.5rem; }
   .svc-time { min-width: auto; }
