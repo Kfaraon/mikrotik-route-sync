@@ -138,7 +138,6 @@
     bulkSync: byId("svc-bulk-sync"),
     bulkDry: byId("svc-bulk-dry"),
     bulkClear: byId("svc-bulk-clear"),
-    density: byId("svc-density"),
     addForm: byId("svc-add-form"),
     addInput: byId("svc-add-name"),
     addMethod: byId("svc-add-method"),
@@ -2431,29 +2430,6 @@
         updateSelectionUI();
       });
     }
-
-    // Плотность таблицы: компактно/свободно, выбор переживает перезагрузку.
-    function applyDensity() {
-      var table = document.querySelector(".svc-table");
-      var compact = false;
-      try {
-        compact = window.localStorage.getItem("svc-density") === "compact";
-      } catch (e) { /* приватный режим: без запоминания */ }
-      if (table) table.classList.toggle("compact", compact);
-      if (els.density) els.density.textContent = compact ? "Свободно" : "Компактно";
-    }
-
-    if (els.density) {
-      els.density.addEventListener("click", function () {
-        var table = document.querySelector(".svc-table");
-        var compact = table ? !table.classList.contains("compact") : true;
-        try {
-          window.localStorage.setItem("svc-density", compact ? "compact" : "roomy");
-        } catch (e) { /* ignore */ }
-        applyDensity();
-      });
-    }
-    applyDensity();
 
     if (els.bulkSync) {
       els.bulkSync.addEventListener("click", function () {
