@@ -6,6 +6,13 @@
     -webkit-overflow-scrolling: touch;
 }
 
+@media (min-width: 769px) {
+    .address-table-container {
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+}
+
 .address-table {
     width: 100%;
     border-collapse: collapse;
@@ -113,6 +120,45 @@
     .address-table tbody tr {
         height: 28px;
     }
+
+    /* Карточки вместо горизонтального скролла */
+    .address-table thead {
+        display: none;
+    }
+
+    .address-table,
+    .address-table tbody,
+    .address-table tr,
+    .address-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .address-table tbody tr {
+        height: auto;
+        margin-bottom: 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 0.5rem;
+        background: var(--bg);
+    }
+
+    .address-table td {
+        border: none;
+        padding: 0.4rem 0.5rem;
+        text-align: left;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .address-table td:before {
+        content: attr(data-label);
+        font-weight: 600;
+        display: block;
+        margin-bottom: 0.2rem;
+        color: var(--muted, #666);
+        font-size: 0.75rem;
+    }
 }
 
 /* Бейджи (базовый .badge — в app.css) */
@@ -129,6 +175,24 @@
 .badge-service {
     background: var(--badge-muted-bg);
     color: var(--badge-muted-text);
+}
+
+/* Аккордеон фильтров (свёрнут на телефоне через JS) */
+.filter-disclosure {
+    margin-bottom: 16px;
+}
+
+.filter-disclosure > summary {
+    cursor: pointer;
+    font-weight: 600;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+}
+
+.filter-disclosure .filter-bar {
+    margin-bottom: 0;
+    margin-top: 8px;
 }
 
 /* Счётчик результатов */

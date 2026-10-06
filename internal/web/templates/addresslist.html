@@ -30,7 +30,9 @@
         <div class="alert alert-error">{{ .Error }}</div>
         {{ else }}
 
-        <!-- Фильтры -->
+        <!-- Фильтры: на телефоне свёрнуты в аккордеон (6 полей съедают 2 экрана) -->
+        <details class="filter-disclosure" id="filterDisclosure" open>
+            <summary>Фильтры</summary>
         <div class="filter-bar">
             <div class="filter-group">
                 <label>Адрес</label>
@@ -64,6 +66,7 @@
                 <button class="btn btn-secondary" id="btnClearFilters">Сбросить</button>
             </div>
         </div>
+        </details>
 
         <!-- Счётчик результатов -->
         <div class="results-count" id="resultsCount"></div>
@@ -87,23 +90,23 @@
                         data-service="{{ .Service }}"
                         data-managed="{{ if .Managed }}yes{{ else }}no{{ end }}"
                         data-disabled="{{ if .Disabled }}yes{{ else }}no{{ end }}">
-                        <td><code>{{ .Address }}</code></td>
-                        <td>{{ .Comment }}</td>
-                        <td>
+                        <td data-label="Адрес"><code>{{ .Address }}</code></td>
+                        <td data-label="Комментарий">{{ .Comment }}</td>
+                        <td data-label="Сервис">
                             {{ if .Service }}
                             <span class="badge badge-service">{{ .Service }}</span>
                             {{ else }}
                             —
                             {{ end }}
                         </td>
-                        <td>
+                        <td data-label="Управляемая">
                             {{ if .Managed }}
                             <span class="badge badge-managed">Да</span>
                             {{ else }}
                             <span class="badge badge-dynamic">Нет</span>
                             {{ end }}
                         </td>
-                        <td>
+                        <td data-label="Отключено">
                             {{ if .Disabled }}
                             <span class="badge badge-disabled">Да</span>
                             {{ else }}

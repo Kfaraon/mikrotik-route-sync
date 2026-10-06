@@ -142,10 +142,17 @@
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow: auto;
   box-shadow: 0 1px 3px var(--shadow);
   margin-bottom: 1.5rem;
   transition: background var(--transition), border-color var(--transition);
+}
+
+@media (min-width: 769px) {
+  .sched-table-wrap {
+    max-height: 70vh;
+    overflow-y: auto;
+  }
 }
 
 .sched-table {
@@ -154,6 +161,13 @@
 }
 
 .sched-table thead {
+  background: var(--bg-alt);
+}
+
+.sched-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   background: var(--bg-alt);
 }
 

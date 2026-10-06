@@ -96,7 +96,8 @@
     refresh: byId("dash-refresh"),
     auto: byId("dash-auto-refresh"),
     health: byId("health-list"),
-    next: byId("next-list")
+    next: byId("next-list"),
+    attention: byId("attention-list")
   };
 
   var state = {
@@ -243,6 +244,10 @@
     var s = String(value || "").trim();
     if (!s) return "—";
 
+    // Go отдаёт дробные секунды ("45.617419091s"): без зачистки (\d+)s
+    // цепляет хвост дроби и получаются «617419091 сек.».
+    s = s.replace(/(\d+)\.\d+/, "$1");
+
     var hours = 0, mins = 0, secs = 0, m;
     var re = /(\d+)h|(\d+)m|(\d+)s/g;
 
@@ -252,7 +257,7 @@
       else if (m[3] !== undefined) secs = parseInt(m[3], 10);
     }
 
-    if (!hours && !mins && !secs) return s;
+    if (!hours && !mins && !secs) return /^\d+s$/.test(s) ? "0 сек." : s;
 
     var days = Math.floor(hours / 24);
     hours = hours % 24;
@@ -633,6 +638,7 @@
 
   function healthRow(label, value, note, cls) {
     return '<div class="health-row ' + esc(cls || "muted") + '">' +
+      '<span class="health-dot" aria-hidden="true"></span>' +
       "<span>" + esc(label) + "</span>" +
       "<strong>" + esc(value) + "</strong>" +
       "<small>" + esc(note) + "</small>" +
@@ -854,11 +860,86 @@
       buildDerived();
       renderHealth();
       renderNext();
+      renderAttention();
     }).catch(function (err) {
       setAlert("error", "Не удалось обновить дашборд: " + text(err && err.message));
     }).then(function () {
       setRefreshing(false);
     });
+  }
+
+  function numField(obj, names) {
+    if (!obj) return 0;
+    for (var i = 0; i < names.length; i++) {
+      var v = obj[names[i]];
+      if (v !== undefined && v !== null) return Number(v) || 0;
+    }
+    return 0;
+  }
+
+  // Панель «Требуют внимания»: сбои → ошибки → предупреждения → дыры качества.
+  // Причина та же, что красит health на «Сервисах»; клик ведёт на сервис.
+  function renderAttention() {
+    if (!els.attention) return;
+
+    var d = state.derived || {};
+    var degraded = d.degraded || {};
+    var errorSvc = d.errorSvc || {};
+    var warnSvc = d.warnSvc || {};
+    var latestByService = d.latestByService || {};
+
+    var items = [];
+    var seen = {};
+
+    function push(name, reason, cls) {
+      if (!name || seen[name]) return;
+      seen[name] = true;
+      items.push({ name: name, reason: reason, cls: cls });
+    }
+
+    var key;
+    for (key in degraded) {
+      if (Object.prototype.hasOwnProperty.call(degraded, key)) push(key, "сбой", "err");
+    }
+    for (key in errorSvc) {
+      if (Object.prototype.hasOwnProperty.call(errorSvc, key)) push(key, "ошибка", "err");
+    }
+    for (key in warnSvc) {
+      if (Object.prototype.hasOwnProperty.call(warnSvc, key)) push(key, "предупреждение", "warn");
+    }
+    for (key in latestByService) {
+      if (!Object.prototype.hasOwnProperty.call(latestByService, key)) continue;
+      var rec = latestByService[key];
+      var checked = numField(rec, ["cov_checked"]);
+      var covered = numField(rec, ["cov_covered"]);
+      if (checked > 0 && covered < checked) {
+        push(key, "покрытие " + covered + "/" + checked, "warn");
+      } else if (rec.sni_primary_failed) {
+        push(key, "SNI-провал", "warn");
+      } else if (numField(rec, ["rejected_total"]) > 0) {
+        push(key, "отброшено " + numField(rec, ["rejected_total"]), "warn");
+      }
+    }
+
+    if (!items.length) {
+      els.attention.innerHTML = '<div class="empty-state">Всё в норме.</div>';
+      return;
+    }
+
+    var html = "";
+    for (var i = 0; i < items.length && i < 8; i++) {
+      html += '<a class="list-row attention-row attention-' + items[i].cls + '" href="/services">' +
+        '<span class="health-dot" aria-hidden="true"></span>' +
+        "<div>" +
+          '<div class="primary-text">' + esc(items[i].name) + "</div>" +
+          '<div class="secondary-text">' + esc(items[i].reason) + "</div>" +
+        "</div>" +
+        "</a>";
+    }
+    if (items.length > 8) {
+      html += '<div class="secondary-text">…и ещё ' + (items.length - 8) + "</div>";
+    }
+    els.attention.innerHTML = html;
   }
 
   function scheduleAuto() {

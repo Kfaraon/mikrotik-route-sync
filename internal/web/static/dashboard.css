@@ -74,12 +74,24 @@
 
 .health-row {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: auto 1fr auto 1fr;
   gap: 1rem;
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--border);
   align-items: center;
 }
+
+.health-dot {
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.health-row.ok .health-dot { background: var(--success); }
+.health-row.err .health-dot { background: var(--danger); }
+.health-row.warn .health-dot { background: var(--warning); }
+.health-row.muted .health-dot { background: var(--border); }
 
 .health-row:last-child {
   border-bottom: none;
@@ -114,6 +126,11 @@
     padding: 1rem;
   }
 
+  /* Цвет уже в тексте strong — точка на отдельной строке не нужна */
+  .health-row .health-dot {
+    display: none;
+  }
+
   .health-row strong {
     order: -1;
   }
@@ -135,6 +152,27 @@
 .list-row:last-child {
   border-bottom: none;
 }
+
+/* Строка панели «Требуют внимания» — ссылка на страницу сервисов */
+a.list-row.attention-row {
+  text-decoration: none;
+  color: inherit;
+  grid-template-columns: auto 1fr;
+}
+
+a.list-row.attention-row:hover {
+  background: var(--bg-alt);
+}
+
+.attention-row .health-dot {
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.attention-err .health-dot { background: var(--danger); }
+.attention-warn .health-dot { background: var(--warning); }
 
 .activity-time {
   font-family: monospace;

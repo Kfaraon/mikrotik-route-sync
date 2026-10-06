@@ -186,6 +186,11 @@
 .svc-badge-group { background: var(--badge-group-bg); color: var(--badge-group-text); }
 .svc-badge-disabled { background: var(--badge-err-bg); color: var(--badge-err-text); }
 
+/* Компактная плотность таблицы (переключатель в тулбаре, выбор в localStorage) */
+.svc-table.compact td { padding: 0.4rem 0.6rem; font-size: 0.85rem; }
+.svc-table.compact th { padding: 0.5rem 0.6rem; font-size: 0.85rem; }
+.svc-table.compact .svc-actions button { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+
 /* Утилиты страницы */
 .svc-muted { color: var(--muted, #666); }
 .svc-small { font-size: 0.875rem; }
@@ -228,6 +233,10 @@
 
 @keyframes svc-progress-stripes {
   to { background-position: 12px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .svc-progress-fill { animation: none; }
 }
 
 /* Варианты кнопок в таблице/drawer */
@@ -510,51 +519,7 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   .svc-kpi-label { font-size: 0.75rem; }
 }
 
-/* Стек тостов: контейнер-обёртка, пузыри несут свой фон
-   (app.css .toast не трогаем — он общий для других страниц) */
-#mrs-toast.toast {
-  background: transparent;
-  box-shadow: none;
-  padding: 0;
-  opacity: 1;
-  transform: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  max-width: 400px;
-}
-.toast-msg {
-  background: var(--text);
-  color: var(--bg);
-  padding: 1rem 1.5rem;
-  border-radius: var(--radius);
-  box-shadow: 0 4px 12px var(--shadow);
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  animation: toast-in 0.25s ease;
-}
-.toast-msg-ok { background: var(--success); color: white; }
-.toast-msg-err { background: var(--danger); color: white; }
-.toast-msg span { flex: 1; }
-.toast-x {
-  background: transparent;
-  border: none;
-  color: inherit;
-  font-size: 1.25rem;
-  cursor: pointer;
-  padding: 0.25rem 0.5rem;
-  min-width: 44px;
-  min-height: 44px;
-}
-@keyframes toast-in {
-  from { opacity: 0; transform: translateY(0.5rem); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .toast-msg { animation: none; }
-  .svc-progress-fill { animation: none; }
-}
+/* Тосты — общие из app.css (.mrs-toast-msg через window.mrsToast). */
 
 
 /* CDN-блок: подбор источника (проверка за Cloudflare/другим CDN) */

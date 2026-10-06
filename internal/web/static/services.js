@@ -89,38 +89,10 @@
     return el && el.closest ? el.closest(selector) : null;
   }
 
+  // Единый стек уведомлений (реализация в app.js: window.mrsToast).
   function showToast(message, isError) {
-    var box = byId("mrs-toast");
-    if (!box) return;
-
-    // Стек вместо одиночного перезаписываемого тоста: массовые операции
-    // и алерты качества больше не съедают друг друга.
-    var el = document.createElement("div");
-    el.className = "toast-msg" + (isError ? " toast-msg-err" : " toast-msg-ok");
-
-    var span = document.createElement("span");
-    span.textContent = String(message);
-    el.appendChild(span);
-
-    if (isError) {
-      var x = document.createElement("button");
-      x.type = "button";
-      x.className = "toast-x";
-      x.setAttribute("aria-label", "Закрыть уведомление");
-      x.textContent = "×";
-      x.addEventListener("click", function () {
-        if (el.parentNode) el.parentNode.removeChild(el);
-      });
-      el.appendChild(x);
-    } else {
-      setTimeout(function () {
-        if (el.parentNode) el.parentNode.removeChild(el);
-      }, 6000);
-    }
-
-    box.appendChild(el);
-    while (box.children.length > 3) {
-      box.removeChild(box.firstChild);
+    if (window.mrsToast) {
+      window.mrsToast(message, isError);
     }
   }
 
@@ -166,6 +138,7 @@
     bulkSync: byId("svc-bulk-sync"),
     bulkDry: byId("svc-bulk-dry"),
     bulkClear: byId("svc-bulk-clear"),
+    density: byId("svc-density"),
     addForm: byId("svc-add-form"),
     addInput: byId("svc-add-name"),
     addMethod: byId("svc-add-method"),
@@ -2455,6 +2428,29 @@
       });
     }
 
+    // Плотность таблицы: компактно/свободно, выбор переживает перезагрузку.
+    function applyDensity() {
+      var table = document.querySelector(".svc-table");
+      var compact = false;
+      try {
+        compact = window.localStorage.getItem("svc-density") === "compact";
+      } catch (e) { /* приватный режим: без запоминания */ }
+      if (table) table.classList.toggle("compact", compact);
+      if (els.density) els.density.textContent = compact ? "Свободно" : "Компактно";
+    }
+
+    if (els.density) {
+      els.density.addEventListener("click", function () {
+        var table = document.querySelector(".svc-table");
+        var compact = table ? !table.classList.contains("compact") : true;
+        try {
+          window.localStorage.setItem("svc-density", compact ? "compact" : "roomy");
+        } catch (e) { /* ignore */ }
+        applyDensity();
+      });
+    }
+    applyDensity();
+
     if (els.bulkSync) {
       els.bulkSync.addEventListener("click", function () {
         handlePromise(bulkAction(selectedNames(), false, els.bulkSync));
@@ -2497,7 +2493,16 @@
 
       els.body.addEventListener("click", function (e) {
         var btn = closest(e.target, "button[data-action]");
-        if (!btn) return;
+        if (!btn) {
+          // Клик по строке (мимо кнопок/чекбокса) открывает drawer:
+          // на телефоне это основная мишень, кнопка «Детали» мелкая.
+          if (closest(e.target, "input, select, textarea, a")) return;
+          var tr = closest(e.target, 'tr[data-service]');
+          if (tr && tr.getAttribute("data-service")) {
+            openDrawer(tr.getAttribute("data-service"));
+          }
+          return;
+        }
 
         var name = btn.getAttribute("data-service");
         var action = btn.getAttribute("data-action");

@@ -20,18 +20,44 @@
     });
   }
 
-  function showError(msg) {
-    var t = document.getElementById("mrs-toast");
-    if (!t) {
-      t = document.createElement("div");
-      t.id = "mrs-toast";
-      t.className = "toast";
-      document.body.appendChild(t);
+  // Единый стек уведомлений для всех страниц (window.mrsToast).
+  // Пузыри несут свой фон; контейнер #mrs-toast — прозрачная обёртка.
+  // Ошибки липкие с крестиком, обычные гаснут за 6с, в стеке не больше 3.
+  window.mrsToast = function (message, isError) {
+    var box = document.getElementById("mrs-toast");
+    if (!box) return;
+
+    var el = document.createElement("div");
+    el.className = "mrs-toast-msg" + (isError ? " mrs-toast-err" : " mrs-toast-ok");
+
+    var span = document.createElement("span");
+    span.textContent = String(message);
+    el.appendChild(span);
+
+    if (isError) {
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "mrs-toast-x";
+      x.setAttribute("aria-label", "Закрыть уведомление");
+      x.textContent = "×";
+      x.addEventListener("click", function () {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      });
+      el.appendChild(x);
+    } else {
+      setTimeout(function () {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      }, 6000);
     }
-    t.textContent = msg;
-    t.classList.add("show");
-    clearTimeout(t._timer);
-    t._timer = setTimeout(function () { t.classList.remove("show"); }, 9000);
+
+    box.appendChild(el);
+    while (box.children.length > 3) {
+      box.removeChild(box.firstChild);
+    }
+  };
+
+  function showError(msg) {
+    window.mrsToast(msg, true);
   }
 
   var q = function (s) { return document.querySelector(s); };
@@ -72,6 +98,9 @@
     var logQueryEsc = "";
     var logPaused = false;
     var logLiveTimer = null;
+    var logCache = [];
+    var logShown = 500;
+    var LOG_RENDER_STEP = 500;
 
     function pad(value, length) {
       var s = String(value);
@@ -162,8 +191,25 @@
       logQueryEsc = escapeHtml(logQuery).toLowerCase();
     }
 
-    function renderLogEntry(entry) {
-      var level = String(entry.level || "INFO").toUpperCase();
+    // Рендер кэша порцией newest-first + кнопка «показать ещё».
+    function renderLogCache() {
+      var html = "";
+      var start = logCache.length - 1;
+      var stop = Math.max(-1, logCache.length - 1 - logShown);
+
+      for (var i = start; i > stop; i--) {
+        html += renderLogEntry(logCache[i]);
+      }
+
+      if (logShown < logCache.length) {
+        html += '<button type="button" class="btn btn-outline" data-log-more="1">' +
+          "Показать ещё (" + (logCache.length - logShown) + " осталось)</button>";
+      }
+
+      logOutput.innerHTML = html;
+    }
+
+    function renderLogEntry(entry) {      var level = String(entry.level || "INFO").toUpperCase();
       var levelClass = "level-" + level.toLowerCase();
       var entryClass = "log-entry";
 
@@ -394,13 +440,11 @@
 
           resetStats();
 
-          var html = "";
-
-          for (var i = entries.length - 1; i >= 0; i--) {
-            html += renderLogEntry(entries[i]);
-          }
-
-          logOutput.innerHTML = html;
+          // Кап рендера: API отдаёт до 10000 записей, DOM столько не тянет.
+          // Показываем newest-first порциями по 500, счётчики — по всему набору.
+          logCache = entries;
+          logShown = Math.min(entries.length, 500);
+          renderLogCache();
           updateStats();
 
           if (!logPaused) {
@@ -500,6 +544,14 @@
 
     logOutput.addEventListener("click", function (e) {
       var target = e.target;
+      var moreBtn = target && target.closest ? target.closest("[data-log-more]") : null;
+      if (moreBtn) {
+        var st = logOutput.scrollTop;
+        logShown += LOG_RENDER_STEP;
+        renderLogCache();
+        logOutput.scrollTop = st;
+        return;
+      }
       var copyBtn = target && target.closest ? target.closest(".log-copy") : null;
       if (!copyBtn) return;
 

@@ -64,22 +64,11 @@
     return n < 10 ? "0" + n : String(n);
   }
 
+  // Единый стек уведомлений (реализация в app.js: window.mrsToast).
   function showToast(message, isError) {
-    var t = document.getElementById("mrs-toast");
-    if (!t) {
-      t = document.createElement("div");
-      t.id = "mrs-toast";
-      t.className = "toast";
-      document.body.appendChild(t);
+    if (window.mrsToast) {
+      window.mrsToast(message, isError);
     }
-
-    t.textContent = message;
-    t.className = "toast show" + (isError ? "" : " success");
-
-    clearTimeout(t._timer);
-    t._timer = setTimeout(function () {
-      t.className = "toast";
-    }, 4000);
   }
 
   function parseDuration(spec) {
