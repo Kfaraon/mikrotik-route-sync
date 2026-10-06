@@ -35,6 +35,7 @@
 - [Кэш](#кэш)
 - [Docker](#docker)
 - [Proxmox LXC](#proxmox-lxc)
+- [Диагностика](#диагностика)
 - [Разработка](#разработка)
 - [Лицензия](#лицензия)
 
@@ -50,7 +51,8 @@
 - Определение ASN по домену / IPv4 и работа с ASN, указанным напрямую
 - Резолвинг: дамп BGP-таблицы bgp.tools с fallback на RIPEstat и RDAP
 - Официальные IPv4-источники: Cloudflare, AWS CloudFront, Google, Fastly, Akamai
-- DNS/dynamic-сбор для сервисов с меняющейся инфраструктурой
+- DNS/dynamic-сбор для сервисов с меняющейся инфраструктурой (диапазоны Google подмешиваются только сервисам Google; резолв с фолбэком на публичные DNS)
+- Контроль покрытия: текущие A-записи доменов сверяются с собранным набором (WARN + поле `coverage` в результате), широкие префиксы — в поле `broad`, SNI-проба (TLS-handshake доказывает, что адреса обслуживают домен) — в поле `verification`
 - Пользовательские списки через `static_url`
 - Кэш ASN и префиксов в `bbolt`
 - Фильтрация приватных, link-local, multicast и слишком широких сетей
@@ -283,7 +285,16 @@ CDN**: резолвятся A-записи, определяется ASN и ад
         domains: [youtube.com, googlevideo.com, ytimg.com]
         also_cdn: [google]
 
+Метод может быть составным — через запятую/плюс (`method: dynamic,whois`):
+сбор идёт по каждому методу по очереди, наборы объединяются. Разрешённые
+имена: `cdn`, `asn`, `dynamic`, `whois`, `static_url`.
+
 > `max_asn_prefixes` особенно важен для небольших сайтов на shared-инфраструктуре: он ограничивает риск случайно добавить слишком большое количество сетей ASN.
+>
+> `exclude` / `include_only` принимают только публичный IPv4: зарезервированные
+> диапазоны (`10.0.0.0/8`, `192.168.0.0/16`, …) и IPv6 отклоняются с ошибкой,
+> а не игнорируются молча — иначе исключение не работало бы, создавая ложное
+> чувство безопасности.
 
 ### Удаление
 
@@ -404,6 +415,8 @@ CDN**: резолвятся A-записи, определяется ASN и ад
       max_delete_ratio: 0.5
       require_confirmation_over: 100
       min_prefix_v4: 8
+      warn_broad_v4: 20
+      verify_sni: true
       allow_host_routes: true
       max_asn_prefixes: 100
 
@@ -421,6 +434,8 @@ CDN**: резолвятся A-записи, определяется ASN и ад
       akamai_api_key: ""
       rdap_timeout: 10s
       resolver: "1.1.1.1:53"
+      # резервные DNS при недоступности основного (пусто — 8.8.8.8:53 и 1.1.1.1:53)
+      fallback_resolvers: []
 
     snapshots:
       enabled: true
@@ -724,6 +739,51 @@ bind-mount всегда показывает права `0777` внутри ко
 - Вынести каталог логов на постоянное хранилище
 - Разрешать Web UI и RouterOS API только из доверенных сетей / VPN
 
+## Диагностика
+
+Симптом → куда смотреть и что делать. Во всех случаях начинайте с dry-run:
+он показывает `coverage`, `broad`, `verification` и `rejected` без изменений
+на роутере.
+
+### Сервис не открывается через VPN
+
+1. `dry-run` → поле `coverage.uncovered` непусто: собранный набор не покрывает
+   текущие A-записи доменов. Причины: обрезанный `max_asn_prefixes` (whois),
+   неверный метод (проверьте `recommend`), DNS провайдера отдаёт чужие IP.
+2. `coverage` полное, но `verification[].failed` непусто для **первого**
+   домена: адреса не обслуживают домен по TLS — маршрутов недостаточно,
+   смотрите источник сбора. Провалы aux-доменов (`googlevideo.com` при живом
+   `youtube.com`) — обычно ложные, алерты по ним не шлются.
+3. Всё зелёное, но не работает: проверьте, что клиент реально ходит через
+   VPN (маршруты/прокси), и что записи `TO-VPN` на роутере включены
+   (`disabled=false`).
+
+### `all prefixes rejected by validation`
+
+Ошибка содержит разбор (`host_routes=… blocked=… too_broad=…`):
+- `host_routes` при нулевом итоге — dynamic вернул только /32, а
+  `safety.allow_host_routes=false`. Включите (дефолт `true`).
+- `blocked`/`too_broad` — коллектор принёс мусор; поле `rejected` в результате
+  синка показывает счётчики даже при частичном отсеве.
+- `excluded`/`not_included` — перегиб фильтров `exclude`/`include_only`.
+
+### `overrides.exclude` не срабатывает / ошибка про pre-filter
+
+Фильтры принимают только публичный IPv4: `10.0.0.0/8`, `192.168.0.0/16`,
+IPv6 отклоняются с ошибкой (иначе исключение было бы молчаливым no-op).
+Уберите такие записи из `exclude`/`include_only` — они и так отсекаются.
+
+### `locked by another process`
+
+CLI-команда не может открыть кэш: демон держит bbolt-лок. Остановите демон
+(`docker compose stop mrs`) или выполняйте операцию через Web API/UI.
+
+### CDN не детектится (`recommend` → Detected=false)
+
+- Домен не разрешается с сервера (`skipped` в отчёте) — чините DNS.
+- A-записи вне официальных списков CDN (провайдерский прокси/GeoDNS):
+  остаётся `whois`; покрытие и SNI покажут, хватает ли его.
+
 ---
 
 ## Разработка
@@ -758,7 +818,8 @@ bind-mount всегда показывает права `0777` внутри ко
       classifier/       выбор метода сбора
       collectors/       источники сетей
       config/           конфигурация + атомарная запись
-      core/             orchestration, syncer, diff
+      core/             orchestration: syncer (движок), services, collect,
+                        entries, snapshots, cdndetect, sniprobe, coverage
       history/          история синхронизаций
       logging/          slog + rotation + redaction
       mikrotik/         RouterOS REST API

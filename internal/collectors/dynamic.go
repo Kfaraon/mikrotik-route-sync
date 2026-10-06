@@ -6,18 +6,21 @@ import (
 	"net/netip"
 )
 
-// DynamicCollector — DNS-резолвинг доменов + официальный Google JSON.
-// Используется для сервисов с динамической инфраструктурой (Google, YouTube, Telegram).
+// DynamicCollector — DNS-резолвинг доменов в IPv4-хост-адреса (/32).
+// Официальные диапазоны Google подмешиваются только для сервисов Google
+// (includeGoogle): раньше они добавлялись всем подряд, засоряя VPN-маршруты
+// посторонними префиксами.
 type DynamicCollector struct {
-	resolver ResolverAPI
-	http     *HTTP
-	domains  []string
-	alsoCDN  []int // ASN CDN-источников, которые нужно дополнительно опросить
+	resolver      ResolverAPI
+	http          *HTTP
+	domains       []string
+	alsoCDN       []int // ASN CDN-источников, которые нужно дополнительно опросить
+	includeGoogle bool
 }
 
 // NewDynamicCollector создаёт dynamic-коллектор.
-func NewDynamicCollector(r ResolverAPI, h *HTTP, domains []string, alsoCDN []int) *DynamicCollector {
-	return &DynamicCollector{resolver: r, http: h, domains: domains, alsoCDN: alsoCDN}
+func NewDynamicCollector(r ResolverAPI, h *HTTP, domains []string, alsoCDN []int, includeGoogle bool) *DynamicCollector {
+	return &DynamicCollector{resolver: r, http: h, domains: domains, alsoCDN: alsoCDN, includeGoogle: includeGoogle}
 }
 
 func (c *DynamicCollector) Name() string { return "dynamic" }
@@ -41,8 +44,9 @@ func (c *DynamicCollector) Collect(ctx context.Context, service string, opts Opt
 		}
 	}
 
-	// Официальные Google-диапазоны
-	if c.http != nil {
+	// Официальные Google-диапазоны — только для сервисов Google
+	// (youtube/google): остальным они не нужны и засоряют маршруты.
+	if c.includeGoogle && c.http != nil {
 		if g, err := fetchGoogleRanges(ctx, c.http); err == nil {
 			all = append(all, g...)
 		}

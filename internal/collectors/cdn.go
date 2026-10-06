@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+// GoogleASN — ASN Google (официальные диапазоны подмешиваются в dynamic
+// только для сервисов с этим ASN).
+const GoogleASN = 15169
+
 // CDN URL-источники по ASN (PROMPT II.2). Только IPv4.
 // Примечание: Akamai (AS20940) намеренно исключён — для него используется метод "asn".
 var cdnSources = map[int]cdnSource{

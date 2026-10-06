@@ -90,21 +90,38 @@
   }
 
   function showToast(message, isError) {
-    var t = byId("mrs-toast");
-    if (!t) {
-      t = document.createElement("div");
-      t.id = "mrs-toast";
-      t.className = "toast";
-      document.body.appendChild(t);
+    var box = byId("mrs-toast");
+    if (!box) return;
+
+    // Стек вместо одиночного перезаписываемого тоста: массовые операции
+    // и алерты качества больше не съедают друг друга.
+    var el = document.createElement("div");
+    el.className = "toast-msg" + (isError ? " toast-msg-err" : " toast-msg-ok");
+
+    var span = document.createElement("span");
+    span.textContent = String(message);
+    el.appendChild(span);
+
+    if (isError) {
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "toast-x";
+      x.setAttribute("aria-label", "Закрыть уведомление");
+      x.textContent = "×";
+      x.addEventListener("click", function () {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      });
+      el.appendChild(x);
+    } else {
+      setTimeout(function () {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      }, 6000);
     }
 
-    t.textContent = message;
-    t.className = "toast show" + (isError ? "" : " success");
-
-    clearTimeout(t._timer);
-    t._timer = setTimeout(function () {
-      t.className = "toast";
-    }, 5000);
+    box.appendChild(el);
+    while (box.children.length > 3) {
+      box.removeChild(box.firstChild);
+    }
   }
 
   function fallbackCopy(textValue) {
@@ -151,6 +168,7 @@
     bulkClear: byId("svc-bulk-clear"),
     addForm: byId("svc-add-form"),
     addInput: byId("svc-add-name"),
+    addMethod: byId("svc-add-method"),
     addBtn: byId("svc-add-btn"),
     body: byId("services-body"),
     empty: byId("services-empty"),
@@ -197,7 +215,10 @@
     progress: {},
     loading: false,
     autoTimer: null,
+    booted: false,
+    collapsed: {},
     lastDiff: {},
+    lastResult: {},
     diff: null,
     details: {
       open: false,
@@ -761,6 +782,66 @@
     };
   }
 
+  // Сумма отсева валидатора (поле rejected результата синка).
+  function rejectedTotal(r) {
+    if (!r) return 0;
+    return numField(r, ["ipv6", "IPv6"]) +
+      numField(r, ["blocked", "Blocked"]) +
+      numField(r, ["too_broad", "TooBroad"]) +
+      numField(r, ["host_routes", "HostRoute"]) +
+      numField(r, ["excluded", "Excluded"]) +
+      numField(r, ["not_included", "NotIncluded"]);
+  }
+
+  // Краткие флаги качества для тоста после синка.
+  function qualityFlags(d) {
+    var out = [];
+    if (!d) return out;
+    if (d.coverage && d.coverage.checked > 0 && d.coverage.covered < d.coverage.checked) {
+      out.push("покрытие " + d.coverage.covered + "/" + d.coverage.checked);
+    }
+    var vds = d.verification || [];
+    for (var i = 0; i < vds.length; i++) {
+      var vd = vds[i];
+      if (vd && vd.checked > 0) {
+        if (vd.failed && vd.failed.length) out.push("SNI-провал " + vd.domain);
+        break; // шумит только primary-домен (первый проверяемый)
+      }
+    }
+    var rej = rejectedTotal(d.rejected);
+    if (rej > 0) out.push("отброшено " + rej);
+    return out;
+  }
+
+  // Проблема качества из записи истории (cov_*/sni_primary_failed/
+  // rejected_total из metadata). Пусто — проблем нет или данных нет.
+  function qualityProblem(rec) {
+    if (!rec) return "";
+    var checked = numField(rec, ["cov_checked"]);
+    var covered = numField(rec, ["cov_covered"]);
+    if (checked > 0 && covered < checked) {
+      return "покрытие " + covered + "/" + checked;
+    }
+    if (rec.sni_primary_failed) return "SNI-провал";
+    var rej = numField(rec, ["rejected_total"]);
+    if (rej > 0) return "отброшено " + rej;
+    return "";
+  }
+
+  // Компактный маркер качества в колонке «Состояние»: детали — в health-бейдже
+  // и drawer, точка — быстрый скан взглядом.
+  function qualityDot(rec) {
+    if (!rec) return "";
+    var qp = qualityProblem(rec);
+    if (qp) {
+      return '<span class="svc-qdot svc-qdot-warn" title="Качество: ' + esc(qp) + '"></span>';
+    }
+    if (numField(rec, ["cov_checked"]) > 0) {
+      return '<span class="svc-qdot svc-qdot-ok" title="Качество: покрытие полное"></span>';
+    }
+    return "";
+  }
+
   function historySubtitle(rec) {
     if (!rec) return "нет данных";
 
@@ -899,6 +980,14 @@
       };
     }
 
+    // Качество последнего сбора из истории (покрытие, SNI primary, отсев):
+    // успешный синк с дырами — предупреждение, а не OK. Проверка обязана
+    // стоять до ветки success, иначе недостижима (статус у записи один).
+    var qp = qualityProblem(last);
+    if (qp) {
+      return { label: qp, cls: "svc-badge-warn", priority: 1 };
+    }
+
     if (lastStatus === "success") {
       return { label: "OK", cls: "svc-badge-ok", priority: 2 };
     }
@@ -930,6 +1019,8 @@
       var source = sourceFor(name);
       var scheduleOverride = !!getScheduleOverrideSpec(name);
       var configOverride = serviceHasOverride(row);
+      var ovMethod = text(row.Method || row.method);
+      var ovDomains = row.Domains || row.domains || [];
 
       if (state.selection[key]) {
         validSelection[key] = name;
@@ -950,7 +1041,9 @@
         group: group,
         source: source,
         scheduleOverride: scheduleOverride,
-        configOverride: configOverride
+        configOverride: configOverride,
+        ovMethod: ovMethod,
+        ovDomains: Array.isArray(ovDomains) ? ovDomains : []
       });
     });
 
@@ -1049,8 +1142,8 @@
     var selectedClass = state.selection[item.key] ? " svc-selected" : "";
 
     var nextHtml = item.next
-      ? esc(formatDateTime(item.next)) + '<div class="svc-muted svc-small">' + esc(relativeNext(item.next)) + "</div>"
-      : '<span class="svc-muted">—</span>';
+      ? '<div class="svc-muted svc-small">' + esc(relativeNext(item.next)) + "</div>"
+      : "";
 
     var lastHtml = item.last
       ? statusBadge(historyStatus(item.last)) + '<div class="svc-muted svc-small">' + esc(relativeTime(historyTime(item.last))) + "</div>"
@@ -1070,11 +1163,10 @@
           '<div class="svc-progress-label"></div>' +
         "</div>" +
       "</td>" +
-      '<td data-label="Состояние"><span class="svc-badge ' + esc(item.health.cls) + '">' + esc(item.health.label) + "</span></td>" +
+      '<td data-label="Состояние"><span class="svc-badge ' + esc(item.health.cls) + '">' + esc(item.health.label) + "</span>" + qualityDot(item.last) + "</td>" +
       '<td data-label="Расписание">' +
-        "<div>" + esc(humanSchedule(item.effective)) + "</div>" +
+        "<div>" + esc(humanSchedule(item.effective)) + "</div>" + nextHtml +
       "</td>" +
-      '<td data-label="Ближайший запуск">' + nextHtml + "</td>" +
       '<td data-label="Записей">' + esc(String(item.routes)) + "</td>" +
       '<td data-label="Последняя синхр.">' + lastHtml + "</td>" +
       '<td data-label="Действия">' +
@@ -1369,6 +1461,12 @@
 
     setRefreshing(true);
 
+    // Первая загрузка: skeleton вместо пустой таблицы.
+    if (!state.booted && els.body) {
+      els.body.innerHTML = skeletonHtml();
+      if (els.empty) els.empty.hidden = true;
+    }
+
     return Promise.allSettled([
       api("/api/v1/status"),
       api("/api/v1/services"),
@@ -1429,6 +1527,7 @@
       buildItems();
       renderKpis();
       renderTable();
+      state.booted = true;
 
       // Страница могла быть открыта в момент чужой синхронизации.
       pollProgressOnce();
@@ -1446,10 +1545,23 @@
     });
   }
 
-  function addService(name) {
+  function skeletonHtml() {
+    var h = "";
+    for (var i = 0; i < 4; i++) {
+      h += '<tr class="svc-skel-row"><td colspan="7">' +
+        '<div class="svc-skel w60"></div>' +
+        '<div class="svc-skel w80"></div>' +
+        "</td></tr>";
+    }
+    return h;
+  }
+
+  function addService(name, method) {
+    var body = { name: name };
+    if (method) body.method = method;
     return api("/api/v1/services", {
       method: "POST",
-      body: JSON.stringify({ name: name })
+      body: JSON.stringify(body)
     }).then(function () {
       showToast("Сервис добавлен: " + name);
       return loadAll(true);
@@ -1495,8 +1607,14 @@
           if (c.deleted) parts.push("-" + c.deleted);
           if (c.unchanged) parts.push("=" + c.unchanged);
 
+          // Полный результат (покрытие/SNI/отсев) — в drawer «Обзор»,
+          // краткие флаги — в тост: раньше качество молча выбрасывалось.
+          state.lastResult[lower(name)] = data || null;
+
           var msg = (dry ? "Тестовый запуск " : "Синхронизация ") + name;
           if (parts.length) msg += ": " + parts.join(" ");
+          var flags = qualityFlags(data);
+          if (flags.length) msg += " · ⚠ " + flags.join(", ");
 
           showToast(msg);
 
@@ -1774,9 +1892,77 @@
 
     html += "</div>";
 
-    html += '<div class="svc-cdn-probe">' + cdnBlockHtml() + "</div>";
+    html += detailsHtml("quality", "Качество последнего сбора", lastQualityHtml(item));
+    html += detailsHtml("source", "Источник сбора", sourceEditHtml(item));
+    html += detailsHtml("cdn", "Подбор источника (CDN)", cdnBlockHtml());
 
     return html;
+  }
+
+  // Свочиваемая секция обзора. На телефоне стартует свёрнутой (длинный
+  // скролл drawer), выбор пользователя запоминается в state.collapsed
+  // и переживает перерендеры.
+  function detailsHtml(key, title, inner) {
+    var open;
+    if (state.collapsed[key] !== undefined) {
+      open = !state.collapsed[key];
+    } else {
+      open = !isMobileView();
+    }
+    return '<details class="svc-collapsible" data-collapse="' + esc(key) + '"' + (open ? " open" : "") + ">" +
+      '<summary class="svc-block-title">' + esc(title) + "</summary>" + inner + "</details>";
+  }
+
+  function isMobileView() {
+    return Boolean(window.matchMedia && window.matchMedia("(max-width: 768px)").matches);
+  }
+
+  // Редактор источника сбора (scope: method + domains). Остальные поля
+  // override — через конфиг. Ошибки валидации показывает сервер (400).
+  function sourceEditHtml(item) {
+    var curMethod = item.ovMethod || "";
+    var curDomains = (item.ovDomains || []).join(", ");
+    var h = "<p>" + (curMethod
+      ? "Метод: <b>" + esc(curMethod) + "</b> (override)"
+      : "Метод: <b>авто</b> (классификатор)") + "</p>";
+    h += '<label class="svc-field"><span>Метод</span>' +
+      '<input id="svc-ov-method" value="' + esc(curMethod) + '" placeholder="dynamic,whois" spellcheck="false"></label>';
+    h += '<label class="svc-field"><span>Домены (через запятую)</span>' +
+      '<input id="svc-ov-domains" value="' + esc(curDomains) + '" placeholder="example.com, cdn.example.com" spellcheck="false"></label>';
+    h += '<div class="svc-row"><button class="btn btn-small btn-primary" data-ov-save="1">Сохранить</button></div>';
+    h += '<p class="svc-muted svc-small">Методы: cdn, asn, dynamic, whois, static_url; списки — через запятую. ' +
+      "Пустой метод — авто. Тестовый прогон — кнопкой ниже.</p>";
+    return h;
+  }
+
+  function saveOverride(name) {
+    var item = findItem(name);
+    var methodEl = byId("svc-ov-method");
+    var domainsEl = byId("svc-ov-domains");
+    if (!item || !methodEl || !domainsEl) return;
+
+    var body = {};
+    var m = trim(methodEl.value);
+    if (m !== (item.ovMethod || "")) body.method = m;
+    var d = [];
+    each(trim(domainsEl.value).split(","), function (s) {
+      s = trim(s);
+      if (s) d.push(s);
+    });
+    if (d.join(",") !== (item.ovDomains || []).join(",")) body.domains = d;
+
+    if (!("method" in body) && !("domains" in body)) {
+      showToast("Без изменений — сохранять нечего");
+      return;
+    }
+
+    handlePromise(api("/api/v1/services/" + encodeURIComponent(name), {
+      method: "PUT",
+      body: JSON.stringify(body)
+    }).then(function () {
+      showToast("Источник обновлён: " + name);
+      return loadAll(true);
+    }));
   }
 
   // CDN-блок во вкладке «Обзор»: подбор источника (проверка за Cloudflare
@@ -1827,9 +2013,116 @@
       h += "<p>CDN не обнаружен: " + esc(a.reason || "") + "</p>";
       h += "<p>Рекомендация: оставить текущий метод (" + esc(a.current_method || "") + ")</p>";
     }
+    h += qualityHtml(a);
     h += '<button class="btn btn-small btn-outline" data-cdn-run="1">Проверить снова</button>';
     h += "</div>";
     return h;
+  }
+
+  // Блок качества текущего сбора: покрытие A-записей, широкие префиксы,
+  // SNI-проба, отсев валидации. Общий для advice (recommend) и Result (sync):
+  // у advice поля rejected нет — блок просто не показывается.
+  function qualityHtml(a) {
+    var h = "";
+    if (!a) return h;
+    if (a.skipped && a.skipped.length) {
+      h += "<p>Пропущены (не разрешаются): " + esc(a.skipped.join(", ")) + "</p>";
+    }
+    if (a.coverage && a.coverage.checked > 0) {
+      h +=
+        "<p>Покрытие: " +
+        a.coverage.covered +
+        "/" +
+        a.coverage.checked +
+        " A-записей входят в текущий набор";
+      if (a.coverage.uncovered && a.coverage.uncovered.length) {
+        h += " — вне набора: " + esc(a.coverage.uncovered.join(", "));
+      }
+      h += "</p>";
+    }
+    if (a.broad && a.broad.length) {
+      h += "<p>Широкие префиксы: " + esc(a.broad.join(", ")) + "</p>";
+    }
+    if (a.verification && a.verification.length) {
+      var primarySeen = false;
+      for (var i = 0; i < a.verification.length; i++) {
+        var vd = a.verification[i];
+        if (!vd || !vd.checked) continue;
+        // Первый проверяемый домен — основной (домен сервиса); остальные —
+        // aux-инфраструктура, их провалы обычно ложные и не будят алерты.
+        var tag = primarySeen ? "" : " (основной)";
+        primarySeen = true;
+        if (vd.failed && vd.failed.length) {
+          h += "<p>SNI " + esc(vd.domain) + tag + ": ПРОВАЛ (" + esc(vd.failed.join(", ")) + ")</p>";
+        } else {
+          h += "<p>SNI " + esc(vd.domain) + tag + ": ok (" + vd.ok + "/" + vd.checked + ")</p>";
+        }
+      }
+    }
+    h += rejectedHtml(a.rejected);
+    return h;
+  }
+
+  // Отсев валидации из результата синка: счётчики по причинам + хинт
+  // про allow_host_routes (типичная причина пустого dynamic-сбора).
+  function rejectedHtml(r) {
+    var total = rejectedTotal(r);
+    if (!r || total <= 0) return "";
+    var parts = [];
+    var pairs = [
+      ["ipv6", "IPv6"], ["blocked", "заблокированные"], ["too_broad", "широкие"],
+      ["host_routes", "хосты /32"], ["excluded", "исключены"], ["not_included", "вне include"]
+    ];
+    for (var i = 0; i < pairs.length; i++) {
+      var n = numField(r, [pairs[i][0]]);
+      if (n > 0) parts.push(pairs[i][1] + ": " + n);
+    }
+    var h = "<p>Отброшено валидацией: " + total + " (" + esc(parts.join(", ")) + ")";
+    if (numField(r, ["host_routes"]) > 0) {
+      h += " — включите safety.allow_host_routes (dynamic отдаёт только /32)";
+    }
+    h += "</p>";
+    return h;
+  }
+
+  // Сводка качества из записи истории (персист; менее детально, чем
+  // полный Result — только флаги).
+  function historyQualityHtml(rec) {
+    var h = "";
+    if (!rec) return h;
+    var checked = numField(rec, ["cov_checked"]);
+    var covered = numField(rec, ["cov_covered"]);
+    if (checked > 0) {
+      h += "<p>Покрытие: " + covered + "/" + checked + " A-записей входят в набор";
+      if (covered < checked) h += " — сервис частично не работает через VPN";
+      h += "</p>";
+    }
+    if (rec.sni_primary_failed) {
+      h += "<p>SNI основного домена: ПРОВАЛ — адреса не обслуживают домен</p>";
+    }
+    var rej = numField(rec, ["rejected_total"]);
+    if (rej > 0) {
+      h += "<p>Отброшено валидацией: " + rej + "</p>";
+    }
+    return h;
+  }
+
+  // Секция «Качество последнего сбора»: свежий результат синка →
+  // advice проверки CDN → сводка из истории → заглушка.
+  function lastQualityHtml(item) {
+    var key = lower(item.name);
+    if (state.lastResult[key]) {
+      return '<p class="svc-muted">По последней синхронизации:</p>' + qualityHtml(state.lastResult[key]);
+    }
+    var c = state.cdn;
+    if (c && c.name === item.name && c.advice) {
+      return '<p class="svc-muted">По проверке CDN:</p>' + qualityHtml(c.advice);
+    }
+    var hq = historyQualityHtml(item.last);
+    if (hq) {
+      return '<p class="svc-muted">По истории (кратко):</p>' + hq;
+    }
+    return '<p class="svc-muted">Нет данных — запустите синхронизацию или проверку CDN.</p>';
   }
 
   function runCdnProbe(apply) {
@@ -2182,8 +2475,10 @@
         }
 
         handlePromise(withButton(els.addBtn, function () {
-          return addService(name).then(function () {
+          var method = els.addMethod ? trim(els.addMethod.value) : "";
+          return addService(name, method).then(function () {
             if (els.addInput) els.addInput.value = "";
+            if (els.addMethod) els.addMethod.value = "";
           });
         }));
       });
@@ -2259,8 +2554,18 @@
         }
         if (closest(e.target, "[data-cdn-run]")) {
           runCdnProbe(false);
+          return;
+        }
+        if (closest(e.target, "[data-ov-save]")) {
+          saveOverride(state.details.name);
         }
       });
+      // toggle не всплывает — ловим на capture; выбор переживает перерендеры.
+      els.drawerBody.addEventListener("toggle", function (e) {
+        var d = e.target && e.target.closest ? e.target.closest("[data-collapse]") : null;
+        if (!d) return;
+        state.collapsed[d.getAttribute("data-collapse")] = !d.open;
+      }, true);
     }
 
     if (els.drawerSync) {

@@ -25,10 +25,14 @@ type Cache interface {
 // Resolver резолвит домены и определяет их ASN.
 type Resolver struct {
 	dnsResolver string
+	fallbacks   []string
 	fetch       Fetcher
 	cache       Cache
 	ttl         time.Duration
 }
+
+// DNSFallbacks — публичные DNS на случай недоступности основного резолвера.
+var DNSFallbacks = []string{"8.8.8.8:53", "1.1.1.1:53"}
 
 // NewResolver создаёт резолвер.
 // dnsResolver — адрес вида "1.1.1.1:53" (пусто — системный DNS).
@@ -39,10 +43,29 @@ func NewResolver(dnsResolver string, fetch Fetcher, cache Cache, ttl time.Durati
 	}
 	return &Resolver{
 		dnsResolver: dnsResolver,
+		fallbacks:   append([]string(nil), DNSFallbacks...),
 		fetch:       fetch,
 		cache:       cache,
 		ttl:         ttl,
 	}
+}
+
+// WithFallbacks задаёт резервные DNS (пустой список — дефолтные публичные).
+// Дубли основного резолвера отбрасываются.
+func (r *Resolver) WithFallbacks(fb ...string) *Resolver {
+	if len(fb) == 0 {
+		fb = DNSFallbacks
+	}
+	out := make([]string, 0, len(fb))
+	for _, f := range fb {
+		f = strings.TrimSpace(f)
+		if f == "" || f == r.dnsResolver {
+			continue
+		}
+		out = append(out, f)
+	}
+	r.fallbacks = out
+	return r
 }
 
 // ParseASN парсит строку вида "AS12345" или "12345" в числовой ASN.
@@ -146,37 +169,88 @@ func (r *Resolver) ASNByIP(ctx context.Context, ipStr string) (int, error) {
 
 // lookupTXT выполняет TXT-запрос через настроенный резолвер (или системный).
 func (r *Resolver) lookupTXT(ctx context.Context, name string) ([]string, error) {
-	if r.dnsResolver == "" {
+	if r.dnsResolver == "" && len(r.fallbacks) == 0 {
 		return net.DefaultResolver.LookupTXT(ctx, name)
 	}
-	return r.resolver().LookupTXT(ctx, name)
+	return lookupWithFallback(ctx, r.resolvers(), func(ctx context.Context, res *net.Resolver) ([]string, error) {
+		return res.LookupTXT(ctx, name)
+	})
 }
 
 // lookupIP резолвит домен, используя указанный DNS-резолвер.
 func (r *Resolver) lookupIP(ctx context.Context, domain string) ([]net.IP, error) {
-	if r.dnsResolver == "" {
+	if r.dnsResolver == "" && len(r.fallbacks) == 0 {
 		return net.LookupIP(domain)
 	}
 
-	ips, err := r.resolver().LookupIPAddr(ctx, domain)
+	addr, err := lookupWithFallback(ctx, r.resolvers(), func(ctx context.Context, res *net.Resolver) ([]net.IPAddr, error) {
+		return res.LookupIPAddr(ctx, domain)
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	out := make([]net.IP, 0, len(ips))
-	for _, ip := range ips {
+	out := make([]net.IP, 0, len(addr))
+	for _, ip := range addr {
 		out = append(out, ip.IP)
 	}
 	return out, nil
 }
 
-// resolver создаёт net.Resolver с кастомным сервером.
-func (r *Resolver) resolver() *net.Resolver {
+// LookupCNAME возвращает каноническое имя домена (идёт по CNAME-цепочке).
+// Используется диагностикой; IP-резолв (lookupIP) цепочку проходит сам.
+func (r *Resolver) LookupCNAME(ctx context.Context, domain string) (string, error) {
+	if r.dnsResolver == "" && len(r.fallbacks) == 0 {
+		return net.DefaultResolver.LookupCNAME(ctx, domain)
+	}
+	return lookupWithFallback(ctx, r.resolvers(), func(ctx context.Context, res *net.Resolver) (string, error) {
+		return res.LookupCNAME(ctx, domain)
+	})
+}
+
+// resolvers — цепочка резолверов: основной (или системный), затем резервные.
+// nil в списке означает системный резолвер по умолчанию.
+func (r *Resolver) resolvers() []*net.Resolver {
+	out := make([]*net.Resolver, 0, len(r.fallbacks)+1)
+	if r.dnsResolver == "" {
+		out = append(out, nil)
+	} else {
+		out = append(out, r.resolverFor(r.dnsResolver))
+	}
+	for _, fb := range r.fallbacks {
+		out = append(out, r.resolverFor(fb))
+	}
+	return out
+}
+
+// lookupWithFallback пробует резолверы по очереди, возвращает первый успех.
+// Контекстная отмена прерывает перебор сразу.
+func lookupWithFallback[T any](ctx context.Context, rss []*net.Resolver, fn func(context.Context, *net.Resolver) (T, error)) (T, error) {
+	var zero T
+	var lastErr error
+	for _, res := range rss {
+		if res == nil {
+			res = net.DefaultResolver
+		}
+		out, err := fn(ctx, res)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return zero, ctx.Err()
+		}
+	}
+	return zero, lastErr
+}
+
+// resolverFor создаёт net.Resolver с кастомным сервером.
+func (r *Resolver) resolverFor(addr string) *net.Resolver {
 	return &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			d := net.Dialer{Timeout: 10 * time.Second}
-			return d.DialContext(ctx, network, r.dnsResolver)
+			return d.DialContext(ctx, network, addr)
 		},
 	}
 }

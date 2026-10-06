@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
@@ -154,34 +155,57 @@ type sessionStore struct {
 	mu   sync.RWMutex
 	data map[string]*session
 	ttl  time.Duration
+	stop chan struct{}
 }
 
 func newSessionStore(ttl time.Duration) *sessionStore {
 	if ttl <= 0 {
 		ttl = 24 * time.Hour
 	}
-	s := &sessionStore{data: map[string]*session{}, ttl: ttl}
+	s := &sessionStore{data: map[string]*session{}, ttl: ttl, stop: make(chan struct{})}
 	go s.gcLoop()
 	return s
 }
 
-func (st *sessionStore) gcLoop() {
-	for range time.Tick(10 * time.Minute) {
-		now := time.Now()
-		st.mu.Lock()
-		for k, v := range st.data {
-			if now.After(v.expires) {
-				delete(st.data, k)
-			}
-		}
-		st.mu.Unlock()
+// Stop останавливает фоновую чистку (вызывается при shutdown сервера,
+// иначе time.Ticker и горутина живут дольше процесса-владельца).
+func (st *sessionStore) Stop() {
+	select {
+	case <-st.stop:
+	default:
+		close(st.stop)
 	}
 }
+
+func (st *sessionStore) gcLoop() {
+	t := time.NewTicker(10 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-st.stop:
+			return
+		case now := <-t.C:
+			st.mu.Lock()
+			for k, v := range st.data {
+				if now.After(v.expires) {
+					delete(st.data, k)
+				}
+			}
+			st.mu.Unlock()
+		}
+	}
+}
+
+var hexFallbackCounter atomic.Uint64
 
 func randomHex(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		return strconv.FormatInt(time.Now().UnixNano(), 16)
+		// rand.Read на Linux практически не отказывает; fallback обязан
+		// оставаться уникальным (повтор session ID перезатрёт чужую сессию),
+		// непредсказуемость тут уже не гарантируется.
+		return strconv.FormatInt(time.Now().UnixNano(), 16) +
+			"-" + strconv.FormatUint(hexFallbackCounter.Add(1), 16)
 	}
 	return hex.EncodeToString(b)
 }
@@ -268,27 +292,62 @@ func (c *ipChecker) clientIP(r *http.Request) net.IP {
 
 type ipLimiter struct {
 	mu       sync.Mutex
-	limiters map[string]*rate.Limiter
+	limiters map[string]*ipEntry
 	rate     rate.Limit
 	burst    int
 }
+
+type ipEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+// maxLimiters — cap карты: без эвикции каждый уникальный IP (спуф XFF
+// за allowed_cidrs не проходит, но лимит всё равно нужен) рос бы вечно.
+const maxLimiters = 4096
+
+// limiterTTL — записи без обращений дольше TTL вычищаются при переполнении.
+const limiterTTL = 10 * time.Minute
 
 func newIPLimiter(rps int) *ipLimiter {
 	if rps <= 0 {
 		rps = 50
 	}
-	return &ipLimiter{limiters: map[string]*rate.Limiter{}, rate: rate.Limit(rps), burst: rps * 2}
+	return &ipLimiter{limiters: map[string]*ipEntry{}, rate: rate.Limit(rps), burst: rps * 2}
 }
 
 func (l *ipLimiter) allow(ip string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lim, ok := l.limiters[ip]
-	if !ok {
-		lim = rate.NewLimiter(l.rate, l.burst)
-		l.limiters[ip] = lim
+	if e, ok := l.limiters[ip]; ok {
+		e.lastSeen = time.Now()
+		return e.limiter.Allow()
 	}
-	return lim.Allow()
+	if len(l.limiters) >= maxLimiters {
+		l.evictLocked()
+	}
+	l.limiters[ip] = &ipEntry{limiter: rate.NewLimiter(l.rate, l.burst), lastSeen: time.Now()}
+	return l.limiters[ip].limiter.Allow()
+}
+
+// evictLocked вычищает давно не обращавшиеся записи; если все свежи
+// (флуд уникальными IP) — режет произвольно до половины cap.
+func (l *ipLimiter) evictLocked() {
+	now := time.Now()
+	for ip, e := range l.limiters {
+		if now.Sub(e.lastSeen) > limiterTTL {
+			delete(l.limiters, ip)
+		}
+	}
+	if len(l.limiters) >= maxLimiters {
+		n := 0
+		for ip := range l.limiters {
+			delete(l.limiters, ip)
+			if n++; n >= maxLimiters/2 {
+				break
+			}
+		}
+	}
 }
 
 // ============================================================================
@@ -384,6 +443,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Get("/progress", s.apiProgress)
 		r.Get("/services", s.apiServices)
 		r.Post("/services", s.apiAddService)
+		r.Put("/services/{name}", s.apiUpdateService)
 		r.Delete("/services/{name}", s.apiDeleteService)
 		r.Post("/services/sync", s.apiSyncMany)
 		r.Post("/services/{name}/sync", s.apiSyncOne)
@@ -775,6 +835,9 @@ type serviceRow struct {
 	Routes    int
 	LastSync  string
 	Overrides bool
+	// Текущий override для редактора источника (UI): пусто — авто.
+	Method  string
+	Domains []string
 }
 
 func (s *Server) pageServices(w http.ResponseWriter, r *http.Request) {
@@ -794,6 +857,10 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 			Comment:   addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
 			Schedule:  s.cfg.EffectiveSchedule(name),
 			Overrides: s.hasOverride(name),
+		}
+		if ov, ok := s.cfg.Overrides[name]; ok {
+			row.Method = ov.Method
+			row.Domains = append([]string(nil), ov.Domains...)
 		}
 		if entries, err := s.syncer.ListServiceEntries(ctx, name); err == nil {
 			row.Routes = len(entries)
@@ -958,7 +1025,7 @@ var settingsSpec = []settingSpec{
 	{"Безопасность", "safety.min_prefix_v4", "Минимальная маска IPv4", "number",
 		"Префиксы шире (например /7) отклоняются валидацией. Разрешённый диапазон 8..32 (8)."},
 	{"Безопасность", "safety.allow_host_routes", "Разрешить /32", "bool",
-		"Хост-маршруты из dynamic-сбора. По умолчанию false — одиночные IP не записываются."},
+		"Хост-маршруты из dynamic/whois-сбора. По умолчанию true — dynamic отдаёт только /32, без них метод пуст."},
 	{"Безопасность", "safety.max_asn_prefixes", "Лимит префиксов ASN/whois", "number",
 		"Защита от захвата чужих сетей мелкими сервисами (100). Переопределяется в overrides.<svc>.max_asn_prefixes."},
 	{"Retry", "retry.max_attempts", "Число попыток", "number",
@@ -1137,6 +1204,35 @@ func (s *Server) apiRecommendService(w http.ResponseWriter, r *http.Request) {
 		resp["purged"] = purged
 	}
 	writeOK(w, resp)
+}
+
+// apiUpdateService — изменить override сервиса (scope: method, domains).
+// method == null — не трогать, "" — сбросить в авто; domains == null —
+// не трогать, иначе заменить целиком. Ошибки валидации (метод, диапазоны)
+// возвращаются текстом 400 для показа в UI.
+func (s *Server) apiUpdateService(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var req struct {
+		Method  *string  `json:"method"`
+		Domains []string `json:"domains"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+	if req.Method == nil && req.Domains == nil {
+		writeErr(w, http.StatusBadRequest, "nothing to update: provide method and/or domains")
+		return
+	}
+	ov, err := s.syncer.UpdateServiceOverride(r.Context(), name, req.Method, req.Domains)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.auditChange(r, "api", "service_update", name)
+	writeOK(w, map[string]any{"service": name, "override": ov})
 }
 
 func (s *Server) apiDeleteService(w http.ResponseWriter, r *http.Request) {
@@ -1632,10 +1728,12 @@ func (s *Server) Start(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		s.log.Info("shutting down web server")
+		defer s.sessions.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return s.httpSrv.Shutdown(shutdownCtx)
 	case err := <-errCh:
+		s.sessions.Stop()
 		return err
 	}
 }

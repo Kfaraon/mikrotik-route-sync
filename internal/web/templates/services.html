@@ -46,6 +46,16 @@
                 <span class="svc-kpi-note" id="svc-total-note">загрузка…</span>
             </div>
             <div class="svc-kpi-card">
+                <span class="svc-kpi-label">Записей</span>
+                <span class="svc-kpi-value" id="svc-routes-value">—</span>
+                <span class="svc-kpi-note" id="svc-routes-note">загрузка…</span>
+            </div>
+            <div class="svc-kpi-card">
+                <span class="svc-kpi-label">На расписании</span>
+                <span class="svc-kpi-value" id="svc-auto-value">—</span>
+                <span class="svc-kpi-note" id="svc-auto-note">загрузка…</span>
+            </div>
+            <div class="svc-kpi-card">
                 <span class="svc-kpi-label">Проблемы</span>
                 <span class="svc-kpi-value" id="svc-problems-value">—</span>
                 <span class="svc-kpi-note" id="svc-problems-note">загрузка…</span>
@@ -66,6 +76,14 @@
         <div class="svc-add-card">
             <form id="svc-add-form" class="svc-add-form">
                 <input type="text" id="svc-add-name" placeholder="Имя сервиса, домен, IP или ASN (например: cloudflare или 1.1.1.1)" required>
+                <select id="svc-add-method" aria-label="Метод сбора">
+                    <option value="">Метод: авто</option>
+                    <option value="cdn">cdn</option>
+                    <option value="asn">asn</option>
+                    <option value="dynamic">dynamic</option>
+                    <option value="whois">whois</option>
+                    <option value="static_url">static_url</option>
+                </select>
                 <button type="submit" id="svc-add-btn" class="btn btn-primary">Добавить сервис</button>
             </form>
         </div>
@@ -111,7 +129,6 @@
                         <th>Сервис</th>
                         <th>Состояние</th>
                         <th>Расписание</th>
-                        <th>Ближайший запуск</th>
                         <th>Записей</th>
                         <th>Последняя синхр.</th>
                         <th>Действия</th>

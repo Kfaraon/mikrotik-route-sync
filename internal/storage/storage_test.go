@@ -2,6 +2,7 @@ package storage
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,5 +82,30 @@ func TestASNPrefixedCacheTTL(t *testing.T) {
 	}
 	if _, ok := c.GetASN("9.9.9.9"); ok {
 		t.Fatal("expired entry must not be returned")
+	}
+}
+
+func TestOpenLockedDBHintsDaemon(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "locked.db")
+	c, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	// Второй Open ждёт 2с (Timeout в Open) и должен объяснить причину:
+	// запущенный демон держит flock.
+	start := time.Now()
+	_, err = Open(path)
+	if err == nil {
+		t.Fatal("expected lock error")
+	}
+	if elapsed := time.Since(start); elapsed < time.Second {
+		t.Fatalf("expected ~2s lock wait, got %v", elapsed)
+	}
+	for _, want := range []string{"locked by another process", "stop the daemon"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q must mention %q", err, want)
+		}
 	}
 }

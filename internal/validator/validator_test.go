@@ -9,8 +9,12 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 func defaultSafety() config.SafetyConfig {
-	return config.SafetyConfig{MinPrefixV4: 8}
+	// Явный запрет хостов: большинство unit-тестов проверяют отсев /32.
+	// Дефолт nil (= разрешено) покрыт отдельным тестом ниже.
+	return config.SafetyConfig{MinPrefixV4: 8, AllowHostRoutes: boolPtr(false)}
 }
 
 func TestValidateFiltersPrivateAndHost(t *testing.T) {
@@ -31,7 +35,7 @@ func TestValidateFiltersPrivateAndHost(t *testing.T) {
 
 func TestValidateAllowsHostRoutesWhenEnabled(t *testing.T) {
 	safety := defaultSafety()
-	safety.AllowHostRoutes = true
+	safety.AllowHostRoutes = boolPtr(true)
 	v := Validator{Safety: safety}
 	out, err := v.Validate([]string{"8.8.8.8/32"}, config.ServiceOverride{})
 	if err != nil {
@@ -180,4 +184,100 @@ func netipMustPrefix(t *testing.T, s string) netip.Prefix {
 		t.Fatal(err)
 	}
 	return p.Masked()
+}
+
+func TestBroadPrefixes(t *testing.T) {
+	in := []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("172.16.0.0/12"),
+		netip.MustParsePrefix("192.168.0.0/20"),
+		netip.MustParsePrefix("192.168.1.0/24"),
+	}
+	got := BroadPrefixes(in, 20)
+	if len(got) != 2 || got[0] != "10.0.0.0/8" || got[1] != "172.16.0.0/12" {
+		t.Fatalf("broad=%v", got)
+	}
+	if got := BroadPrefixes(in, 8); len(got) != 0 {
+		t.Fatalf("threshold /8 must match nothing: %v", got)
+	}
+	if got := BroadPrefixes(nil, 20); len(got) != 0 {
+		t.Fatalf("nil must give empty: %v", got)
+	}
+}
+
+func TestValidateHostRoutesAllowedByDefault(t *testing.T) {
+	// nil AllowHostRoutes = дефолт true: dynamic (/32) и whois-гарантия
+	// покрытия работают без явного ключа в конфиге.
+	v := Validator{Safety: config.SafetyConfig{MinPrefixV4: 8}}
+	out, err := v.Validate([]string{"8.8.8.8/32"}, config.ServiceOverride{})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("nil AllowHostRoutes must keep /32, got %v", out)
+	}
+}
+
+func TestValidateWithStatsBreakdown(t *testing.T) {
+	v := Validator{Safety: defaultSafety()}
+	_, rej, err := v.ValidateWithStats([]string{
+		"8.8.8.0/24",  // ок
+		"::1/128",     // ipv6
+		"10.1.0.0/16", // blocked
+		"0.0.0.0/0",   // blocked (и too_broad — считается первым по порядку)
+		"8.8.9.0/32",  // host_routes (запрещены в defaultSafety)
+		"9.9.9.0/24",  // ок, затем excluded через ov
+		"7.7.7.0/24",  // ок, затем not_included через ov
+	}, config.ServiceOverride{
+		Exclude:     []string{"9.9.9.0/24"},
+		IncludeOnly: []string{"8.8.8.0/24", "9.0.0.0/8"},
+	})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if rej.IPv6 != 1 || rej.Blocked != 1 || rej.TooBroad != 1 || rej.HostRoute != 1 || rej.Excluded != 1 || rej.NotIncluded != 1 {
+		t.Fatalf("unexpected breakdown: %+v", rej)
+	}
+	if rej.Total() != 6 {
+		t.Fatalf("total=%d, want 6", rej.Total())
+	}
+}
+
+func TestValidateAllRejectedErrorMentionsReasons(t *testing.T) {
+	v := Validator{Safety: defaultSafety()}
+	_, err := v.Validate([]string{"1.1.1.1/32", "2.2.2.2/32"}, config.ServiceOverride{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"host_routes=2", "allow_host_routes"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q must mention %q", msg, want)
+		}
+	}
+}
+
+func TestValidateFilterListPreFilterFailsClosed(t *testing.T) {
+	// Запись фильтра, обречённая на no-op (reserved), — ошибка с именем
+	// записи, а не молчаливое игнорирование.
+	for _, ov := range []config.ServiceOverride{
+		{Exclude: []string{"10.0.0.0/8"}},
+		{IncludeOnly: []string{"192.168.0.0/16"}},
+	} {
+		_, err := Validator{Safety: defaultSafety()}.Validate(
+			[]string{"8.8.8.0/24"}, ov)
+		if err == nil {
+			t.Fatalf("expected fail-closed error for %+v", ov)
+		}
+		if !strings.Contains(err.Error(), "pre-filter") {
+			t.Fatalf("error must mention pre-filter: %v", err)
+		}
+	}
+	// Валидные фильтры по-прежнему работают.
+	out, err := Validator{Safety: defaultSafety()}.Validate(
+		[]string{"8.8.8.0/24", "9.9.9.0/24"},
+		config.ServiceOverride{Exclude: []string{"9.9.9.0/24"}})
+	if err != nil || len(out) != 1 {
+		t.Fatalf("out=%v err=%v", out, err)
+	}
 }

@@ -280,7 +280,7 @@ func addServiceCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&method, "method", "", "метод сбора (cdn, asn, dynamic, whois, static_url)")
+	cmd.Flags().StringVar(&method, "method", "", "метод сбора (cdn, asn, dynamic, whois, static_url; можно списком через запятую: dynamic,whois)")
 	cmd.Flags().StringVar(&staticURL, "static-url", "", "URL для static_url метода")
 	cmd.Flags().StringSliceVar(&domains, "domains", nil, "домены сервиса")
 	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "CIDR-сети для исключения")
@@ -335,7 +335,7 @@ AUTO-записи и переключает метод на cdn. Выполня�
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
 				ov := s.GetServiceOverride(name)
 				adv := s.AdviseCDN(ctx, name, ov)
-				printRecommendReport(name, adv)
+				printRecommendReport(name, adv, cfg.Safety.WarnBroadV4)
 
 				if !yes {
 					if adv.Recommend {
@@ -361,13 +361,17 @@ AUTO-записи и переключает метод на cdn. Выполня�
 }
 
 // printRecommendReport — отчёт recommend в stdout (на русском).
-func printRecommendReport(name string, adv *core.CDNAdvice) {
+func printRecommendReport(name string, adv *core.CDNAdvice, broadBits int) {
 	fmt.Printf("Анализ источника: %s\n", name)
 	if len(adv.Domains) > 0 {
 		fmt.Printf("  Домены:        %s\n", strings.Join(adv.Domains, ", "))
 	}
 	if len(adv.IPs) > 0 {
 		fmt.Printf("  A-записи:      %s\n", strings.Join(adv.IPs, ", "))
+	}
+	if len(adv.Skipped) > 0 {
+		fmt.Printf("  Пропущены:     %s (не разрешаются, в проверке не участвовали)\n",
+			strings.Join(adv.Skipped, ", "))
 	}
 	fmt.Printf("  Текущий метод: %s\n", adv.CurrentMethod)
 	if adv.Detected {
@@ -378,6 +382,30 @@ func printRecommendReport(name string, adv *core.CDNAdvice) {
 		}
 	}
 	fmt.Printf("  Вердикт:       %s\n", adv.Reason)
+	if adv.Coverage != nil && adv.Coverage.Checked > 0 {
+		fmt.Printf("  Покрытие:      %d/%d A-записей входят в текущий набор",
+			adv.Coverage.Covered, adv.Coverage.Checked)
+		if !adv.Coverage.Complete() {
+			fmt.Printf(" — ВНЕ НАБОРА: %s", strings.Join(adv.Coverage.Uncovered, ", "))
+		}
+		fmt.Println()
+	}
+	if len(adv.Broad) > 0 {
+		fmt.Printf("  Широкие:       %s (маска шире /%d — лишний трафик через VPN)\n",
+			strings.Join(adv.Broad, ", "), broadBits)
+	}
+	for _, vd := range adv.Verification {
+		if vd.Checked == 0 {
+			continue
+		}
+		if vd.Passed() {
+			fmt.Printf("  SNI:           %s — ok (%d/%d адресов обслуживают домен)\n",
+				vd.Domain, vd.OK, vd.Checked)
+		} else {
+			fmt.Printf("  SNI:           %s — ПРОВАЛ: %s не обслуживают домен\n",
+				vd.Domain, strings.Join(vd.Failed, ", "))
+		}
+	}
 	switch {
 	case adv.Recommend:
 		if adv.WhoisCount > 0 {

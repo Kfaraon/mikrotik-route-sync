@@ -21,6 +21,12 @@ type Record struct {
 	Removed    int       `json:"removed"`
 	Unchanged  int       `json:"unchanged"`
 	DurationMS int64     `json:"duration_ms"`
+	// Сводка качества последнего сбора (omitempty: старые записи без неё —
+	// «без данных», не «плохо»). UI красит health/проблемы по этим полям.
+	CovChecked       int  `json:"cov_checked,omitempty"`
+	CovCovered       int  `json:"cov_covered,omitempty"`
+	SNIPrimaryFailed bool `json:"sni_primary_failed,omitempty"`
+	RejectedTotal    int  `json:"rejected_total,omitempty"`
 }
 
 // Store — минимальный интерфейс персистентности (реализует storage.Cache).

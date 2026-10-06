@@ -6,6 +6,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -13,8 +14,10 @@ import (
 	"testing"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
 )
 
 // captureNotifier — захватывает отправленные уведомления.
@@ -108,7 +111,7 @@ func TestRunCDNProbeNotDetected(t *testing.T) {
 					return nil, context.DeadlineExceeded
 				}
 			},
-			reason: "не разрешается",
+			reason: "не разрешаются",
 		},
 		{
 			name: "resolve empty",
@@ -117,7 +120,7 @@ func TestRunCDNProbeNotDetected(t *testing.T) {
 					return nil, nil
 				}
 			},
-			reason: "не разрешается",
+			reason: "не разрешаются",
 		},
 		{
 			name: "asn failed",
@@ -226,6 +229,12 @@ func fakeProbe(detected bool) func(context.Context, string, []string) *CDNAdvice
 	}
 }
 
+// deadEndResolver — резолвер в никуда (быстрый отказ без сети):
+// все DNS-запросы в тестах должны идти через стабы, а не в интернет.
+func deadEndResolver() *resolver.Resolver {
+	return resolver.NewResolver("127.0.0.1:1", nil, nil, 0).WithFallbacks("127.0.0.1:2")
+}
+
 func TestAdviseCDNRecommendMatrix(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -275,10 +284,16 @@ func TestAdviseCDNRecommendMatrix(t *testing.T) {
 			detected: true, wantRecommend: false, wantMethod: "whois", probeCalled: false,
 		},
 		{
-			name: "name without dot -> probe skipped", service: "instagram",
-			detected: true, wantRecommend: false,
+			name: "bare unknown name -> probe on guessed domain", service: "yt",
+			detected: true, wantRecommend: true,
+			wantMethod:  "dynamic,whois",
+			probeCalled: true,
+		},
+		{
+			name: "bare known name -> probe on classifier domains", service: "instagram",
+			detected: true, wantRecommend: true,
 			wantMethod:  "dynamic,asn",
-			probeCalled: false,
+			probeCalled: true,
 		},
 	}
 
@@ -290,6 +305,14 @@ func TestAdviseCDNRecommendMatrix(t *testing.T) {
 				called = true
 				return fakeProbe(tc.detected)(ctx, name, domains)
 			}
+			// Офлайн: сбор подменён, резолвер в тупик, SNI выключена
+			// (иначе тесты ходят в сеть).
+			s.collectFn = func(_ context.Context, _ string, _ config.ServiceOverride) ([]netip.Prefix, string, error) {
+				return []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, "whois", nil
+			}
+			s.resPtr.Store(deadEndResolver())
+			off := false
+			s.cfg.Safety.VerifySNI = &off
 
 			adv := s.AdviseCDN(context.Background(), tc.service, tc.ov)
 			if called != tc.probeCalled {
@@ -318,6 +341,9 @@ func TestAddServiceAutoDetectsCDN(t *testing.T) {
 	ov := s.GetServiceOverride("rutracker.net")
 	if ov.Method != "cdn" {
 		t.Fatalf("override method=%q, want cdn", ov.Method)
+	}
+	if len(ov.Domains) != 1 || ov.Domains[0] != "rutracker.net" {
+		t.Fatalf("override domains=%v, want [rutracker.net]", ov.Domains)
 	}
 
 	msgs := n.all()
@@ -391,6 +417,9 @@ func TestApplyCDNRecommendation(t *testing.T) {
 	if got := s.GetServiceOverride("yt").Method; got != "cdn" {
 		t.Fatalf("method=%q, want cdn", got)
 	}
+	if got := s.GetServiceOverride("yt").Domains; len(got) != 1 || got[0] != "yt.net" {
+		t.Fatalf("domains=%v, want [yt.net]", got)
+	}
 	if len(m.deleted) != 2 {
 		t.Fatalf("router deletes=%v, want 2 AUTO:yt entries", m.deleted)
 	}
@@ -415,5 +444,180 @@ func TestApplyCDNRecommendationErrors(t *testing.T) {
 		fakeProbe(true)(context.Background(), "nosuch", nil)); err == nil ||
 		!strings.Contains(err.Error(), "not found") {
 		t.Fatalf("expected not-found error, got %v", err)
+	}
+}
+
+func TestServiceDomains(t *testing.T) {
+	cases := []struct {
+		name    string
+		service string
+		ov      config.ServiceOverride
+		want    []string
+	}{
+		{
+			name:    "arbitrary domain with explicit cdn falls back to service name",
+			service: "example.net",
+			ov:      config.ServiceOverride{Method: "cdn"},
+			want:    []string{"example.net"},
+		},
+		{
+			name:    "override domains win",
+			service: "example.net",
+			ov:      config.ServiceOverride{Method: "cdn", Domains: []string{"a.net", "b.net"}},
+			want:    []string{"a.net", "b.net"},
+		},
+		{
+			name:    "known service keeps classifier domains",
+			service: "youtube",
+			ov:      config.ServiceOverride{Method: "cdn"},
+			want:    []string{"youtube.com", "googlevideo.com", "ytimg.com"},
+		},
+		{
+			name:    "ip literal gives nothing",
+			service: "8.8.8.8",
+			ov:      config.ServiceOverride{Method: "whois"},
+			want:    nil,
+		},
+		{
+			name:    "unknown bare name falls back to guessed domain",
+			service: "yt",
+			ov:      config.ServiceOverride{Method: "whois"},
+			want:    []string{"yt.com"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			class := classifier.Classify(tc.service, tc.ov.Method)
+			got := serviceDomains(tc.service, tc.ov, class)
+			if len(got) != len(tc.want) {
+				t.Fatalf("domains=%v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("domains=%v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestCurrentMethodNameAndSplit(t *testing.T) {
+	if got := currentMethodName("x.net", config.ServiceOverride{Method: "cdn"}); got != "cdn" {
+		t.Fatalf("override method=%q, want cdn", got)
+	}
+	if got := currentMethodName("rutracker.net", config.ServiceOverride{}); got != "whois" {
+		t.Fatalf("default method=%q, want whois", got)
+	}
+	if got := currentMethodName("youtube", config.ServiceOverride{}); got != "dynamic,cdn" {
+		t.Fatalf("youtube default=%q, want dynamic,cdn", got)
+	}
+	for _, s := range []string{"dynamic,whois", "dynamic whois", "dynamic;whois", " dynamic , whois ", "dynamic+cdn"} {
+		parts := splitMethods(s)
+		if len(parts) != 2 || parts[0] != "dynamic" || (parts[1] != "whois" && parts[1] != "cdn") {
+			t.Fatalf("splitMethods(%q)=%v", s, parts)
+		}
+	}
+}
+
+func TestCDNDetectedMessage(t *testing.T) {
+	adv := &CDNAdvice{CDN: "Cloudflare", ASN: 13335,
+		URL: "https://www.cloudflare.com/ips-v4", PrefixCount: 15, WhoisCount: 86}
+	msg := cdnDetectedMessage("rutracker.net", adv)
+	for _, sub := range []string{"rutracker.net", "Cloudflare", "AS13335", "15", "86"} {
+		if !strings.Contains(msg, sub) {
+			t.Fatalf("message %q misses %q", msg, sub)
+		}
+	}
+
+	advNoWhois := &CDNAdvice{CDN: "Cloudflare", ASN: 13335,
+		URL: "https://www.cloudflare.com/ips-v4", PrefixCount: 15}
+	if msg := cdnDetectedMessage("x.net", advNoWhois); strings.Contains(msg, "whois") {
+		t.Fatalf("message without whois count must not mention whois: %q", msg)
+	}
+}
+
+func TestCDNSwitchedMessage(t *testing.T) {
+	adv := &CDNAdvice{CDN: "Cloudflare", ASN: 13335,
+		URL: "https://www.cloudflare.com/ips-v4", PrefixCount: 15, WhoisCount: 86}
+	msg := cdnSwitchedMessage("rutracker.net", adv, "whois", 86)
+	for _, sub := range []string{"rutracker.net", "cdn", "Cloudflare", "AS13335", "whois", "15", "86"} {
+		if !strings.Contains(msg, sub) {
+			t.Fatalf("message %q misses %q", msg, sub)
+		}
+	}
+
+	advNoWhois := &CDNAdvice{CDN: "Cloudflare", ASN: 13335,
+		URL: "https://www.cloudflare.com/ips-v4", PrefixCount: 15}
+	if msg := cdnSwitchedMessage("x.net", advNoWhois, "(auto)", 0); strings.Contains(msg, "Удалено") {
+		t.Fatalf("message with purged=0 must not mention deletion: %q", msg)
+	}
+}
+
+func TestFillQualityWiring(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	s.cdnProbeFn = fakeProbe(true)
+	// Сервис в конфиге, домен не резолвится (.invalid) — покрытие пустое,
+	// но поле заполнено; сбор подменён, SNI выключена: всё офлайн.
+	s.cfg.Services = append(s.cfg.Services, "nonexistent.invalid")
+	s.collectFn = func(_ context.Context, _ string, _ config.ServiceOverride) ([]netip.Prefix, string, error) {
+		return []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, "whois", nil
+	}
+	s.resPtr.Store(deadEndResolver())
+	off := false
+	s.cfg.Safety.VerifySNI = &off
+
+	adv := s.AdviseCDN(context.Background(), "nonexistent.invalid", config.ServiceOverride{})
+	if !adv.Detected {
+		t.Fatalf("fake probe must detect: %q", adv.Reason)
+	}
+	if adv.Coverage == nil {
+		t.Fatal("coverage must be filled for services in config")
+	}
+	if !adv.Coverage.Complete() {
+		t.Fatalf("unresolvable domain must give complete report: %+v", adv.Coverage)
+	}
+	if adv.Verification != nil {
+		t.Fatalf("sni disabled: verification=%v", adv.Verification)
+	}
+}
+
+func TestRunCDNProbeSkipsUnresolvableDomain(t *testing.T) {
+	deps := okDeps()
+	deps.resolveDomain = func(_ context.Context, d string) ([]string, error) {
+		if d == "ytimg.com" {
+			return nil, nil // apex без A-записей — пропуск, не провал
+		}
+		return []string{"104.16.1.1"}, nil
+	}
+	adv := runCDNProbe(context.Background(), "youtube",
+		[]string{"youtube.com", "ytimg.com"}, deps)
+	if !adv.Detected {
+		t.Fatalf("one dead domain must not kill detection: %q", adv.Reason)
+	}
+	if len(adv.Skipped) != 1 || adv.Skipped[0] != "ytimg.com" {
+		t.Fatalf("skipped=%v", adv.Skipped)
+	}
+	if len(adv.IPs) != 1 {
+		t.Fatalf("ips=%v", adv.IPs)
+	}
+}
+
+func TestAdviseCDNPropagatesSkipped(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	s.cdnProbeFn = func(_ context.Context, _ string, _ []string) *CDNAdvice {
+		return &CDNAdvice{Detected: true, CDN: "Google", ASN: 15169,
+			Skipped: []string{"ytimg.com"}, Reason: "fake"}
+	}
+	s.collectFn = func(_ context.Context, _ string, _ config.ServiceOverride) ([]netip.Prefix, string, error) {
+		return nil, "", fmt.Errorf("offline")
+	}
+	s.resPtr.Store(deadEndResolver())
+	off := false
+	s.cfg.Safety.VerifySNI = &off
+
+	adv := s.AdviseCDN(context.Background(), "youtube", config.ServiceOverride{})
+	if !adv.Detected || len(adv.Skipped) != 1 || adv.Skipped[0] != "ytimg.com" {
+		t.Fatalf("adv=%+v", adv)
 	}
 }

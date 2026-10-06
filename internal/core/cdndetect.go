@@ -21,21 +21,26 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/validator"
 )
 
 // CDNAdvice — результат проверки сервиса на обслуживание за CDN.
 type CDNAdvice struct {
-	Detected      bool     `json:"detected"`
-	CDN           string   `json:"cdn,omitempty"`
-	ASN           int      `json:"asn,omitempty"`
-	URL           string   `json:"url,omitempty"`
-	PrefixCount   int      `json:"prefix_count,omitempty"`
-	WhoisCount    int      `json:"whois_count,omitempty"`
-	Domains       []string `json:"domains,omitempty"`
-	IPs           []string `json:"ips,omitempty"`
-	CurrentMethod string   `json:"current_method"`
-	Recommend     bool     `json:"recommend"`
-	Reason        string   `json:"reason"`
+	Detected      bool            `json:"detected"`
+	CDN           string          `json:"cdn,omitempty"`
+	ASN           int             `json:"asn,omitempty"`
+	URL           string          `json:"url,omitempty"`
+	PrefixCount   int             `json:"prefix_count,omitempty"`
+	WhoisCount    int             `json:"whois_count,omitempty"`
+	Domains       []string        `json:"domains,omitempty"`
+	IPs           []string        `json:"ips,omitempty"`
+	Skipped       []string        `json:"skipped,omitempty"`
+	CurrentMethod string          `json:"current_method"`
+	Recommend     bool            `json:"recommend"`
+	Reason        string          `json:"reason"`
+	Coverage      *CoverageReport `json:"coverage,omitempty"`
+	Broad         []string        `json:"broad,omitempty"`
+	Verification  []*SNIVerdict   `json:"verification,omitempty"`
 }
 
 // cdnProbeDeps — зависимости пробника (внедряются в тестах).
@@ -68,9 +73,11 @@ func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOv
 		adv.PrefixCount = p.PrefixCount
 		adv.WhoisCount = p.WhoisCount
 		adv.IPs = p.IPs
+		adv.Skipped = p.Skipped
 		adv.Reason = p.Reason
 	}
 	if !adv.Detected {
+		s.fillQuality(ctx, name, ov, adv)
 		return adv
 	}
 
@@ -86,7 +93,42 @@ func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOv
 	default:
 		adv.Recommend = true
 	}
+	s.fillQuality(ctx, name, ov, adv)
 	return adv
+}
+
+// fillQuality — показатели качества текущего сбора для сервисов из конфига:
+// покрытие A-записей, широкие префиксы, SNI-проба. При добавлении нового
+// сервиса (его ещё нет в конфиге) пропускаем — детект и так всё проверил.
+// Best-effort: сбой сбора качество не подменяет.
+func (s *Syncer) fillQuality(ctx context.Context, name string, ov config.ServiceOverride, adv *CDNAdvice) {
+	s.serviceMu.Lock()
+	_, inCfg := s.cfg.Overrides[name]
+	if !inCfg {
+		for _, p := range s.cfg.Services {
+			if p == name {
+				inCfg = true
+				break
+			}
+		}
+	}
+	s.serviceMu.Unlock()
+	if !inCfg || len(adv.Domains) == 0 {
+		return
+	}
+	prefixes, _, err := s.collectOrStub(ctx, name, ov)
+	if err != nil {
+		return
+	}
+	adv.Coverage = s.checkServiceCoverage(ctx, name, adv.Domains, prefixes)
+	// Широкие префиксы текущего сбора (кроме cdn — см. SyncService).
+	if !hasMethod(splitMethods(currentMethodName(name, ov)), "cdn") {
+		adv.Broad = validator.BroadPrefixes(prefixes, s.cfg.Safety.WarnBroadV4)
+	}
+	// SNI-проба текущего набора (только если включена).
+	if s.cfg.Safety.VerifySNIEnabled() {
+		adv.Verification = s.verifyServiceSNI(ctx, adv.Domains)
+	}
 }
 
 // adviseProbe — точка подмены пробника в тестах (cdnProbeFn).
@@ -138,24 +180,32 @@ func runCDNProbe(ctx context.Context, name string, domains []string, deps *cdnPr
 
 	var allIPs []string
 	var asn int
-	for i, d := range domains {
+	var resolved int
+	for _, d := range domains {
 		ips, err := deps.resolveDomain(ctx, d)
 		if err != nil || len(ips) == 0 {
-			adv.Reason = fmt.Sprintf("домен %s не разрешается", d)
-			return adv
+			// Apex без A-записей (ytimg.com) — не приговор всему сервису:
+			// пропускаем домен, фиксируем в отчёте.
+			adv.Skipped = append(adv.Skipped, d)
+			continue
 		}
 		a, err := deps.resolveASN(ctx, d)
 		if err != nil || a == 0 {
 			adv.Reason = fmt.Sprintf("ASN домена %s не определён", d)
 			return adv
 		}
-		if i == 0 {
+		if resolved == 0 {
 			asn = a
 		} else if a != asn {
 			adv.Reason = fmt.Sprintf("домены в разных AS (AS%d и AS%d)", asn, a)
 			return adv
 		}
+		resolved++
 		allIPs = append(allIPs, ips...)
+	}
+	if resolved == 0 {
+		adv.Reason = fmt.Sprintf("домены не разрешаются: %s", strings.Join(domains, ", "))
+		return adv
 	}
 	adv.ASN = asn
 
@@ -217,6 +267,9 @@ func runCDNProbe(ctx context.Context, name string, domains []string, deps *cdnPr
 	}
 	adv.Detected = true
 	adv.Reason = fmt.Sprintf("все A-записи входят в официальный список %s", url)
+	if len(adv.Skipped) > 0 {
+		adv.Reason += fmt.Sprintf(" (пропущены неразрешённые: %s)", strings.Join(adv.Skipped, ", "))
+	}
 
 	// Сравнение с whois — best-effort (в отчёте цифра «15 против 86»).
 	if deps.collectWhois != nil {
@@ -272,6 +325,11 @@ func (s *Syncer) ApplyCDNRecommendation(ctx context.Context, name string, adv *C
 		prevMethod = "(auto)"
 	}
 	prev.Method = "cdn"
+	// Фиксируем домены проверки: без них cdn на произвольном домене не сможет
+	// резолвить ASN при сборе (см. serviceDomains) — метод станет мёртвым.
+	if len(prev.Domains) == 0 && len(adv.Domains) > 0 {
+		prev.Domains = append([]string(nil), adv.Domains...)
+	}
 	if s.cfg.Overrides == nil {
 		s.cfg.Overrides = make(map[string]config.ServiceOverride)
 	}
@@ -293,7 +351,9 @@ func (s *Syncer) ApplyCDNRecommendation(ctx context.Context, name string, adv *C
 
 	msg := cdnSwitchedMessage(name, adv, prevMethod, purged)
 	if n := s.getNotify(); n != nil {
-		_ = n.Send(context.WithoutCancel(ctx), msg)
+		if err := n.Send(context.WithoutCancel(ctx), msg); err != nil {
+			s.log.Warn("telegram cdn notice not delivered", "service", name, "err", err)
+		}
 	}
 	return purged, nil
 }
@@ -303,11 +363,29 @@ func (s *Syncer) GetServiceOverride(name string) config.ServiceOverride {
 	return s.cfg.Overrides[strings.ToLower(strings.TrimSpace(name))]
 }
 
-// adviseDomains — домены для проверки: override.Domains или само имя,
+// serviceDomains — домены для сбора: override → классификатор → само имя,
+// если это домен. Последний шаг страхует явный метод cdn/asn на произвольном
+// домене: без домена ASN нечем резолвить, и сбор всегда падает
+// ("ASN is required", 0 префиксов).
+func serviceDomains(name string, ov config.ServiceOverride, class classifier.Result) []string {
+	if len(ov.Domains) > 0 {
+		return ov.Domains
+	}
+	if len(class.Domains) > 0 {
+		return class.Domains
+	}
+	return adviseDomains(name, ov)
+}
+
+// adviseDomains — домены для проверки: override.Domains, затем домены
+// классификатора (известные сервисы вида "youtube"), затем само имя,
 // если это домен (содержит точку и не является IP-адресом).
 func adviseDomains(name string, ov config.ServiceOverride) []string {
 	if len(ov.Domains) > 0 {
 		return append([]string(nil), ov.Domains...)
+	}
+	if class := classifier.Classify(name, ""); len(class.Domains) > 0 {
+		return append([]string(nil), class.Domains...)
 	}
 	if name == "" {
 		return nil
@@ -329,10 +407,11 @@ func currentMethodName(name string, ov config.ServiceOverride) string {
 	return strings.Join(classifier.Classify(name, "").Methods, ",")
 }
 
-// splitMethods разбивает строку методов ("dynamic,whois") на список.
+// splitMethods разбивает строку методов ("dynamic,whois" из конфига,
+// "dynamic+whois" из usedMethod после сбора) на список.
 func splitMethods(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool {
-		return r == ',' || r == ' ' || r == ';'
+		return r == ',' || r == ' ' || r == ';' || r == '+'
 	})
 }
 

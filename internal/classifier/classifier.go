@@ -55,8 +55,9 @@ var knownServices = map[string]knownService{
 		asn:     "AS32934",
 	},
 	"telegram": {
-		methods: []string{"dynamic", "asn"},
+		methods: []string{"dynamic", "asn", "static_url"},
 		domains: []string{"telegram.org", "t.me"},
+		static:  []string{"https://core.telegram.org/resources/cidr.txt"},
 		asn:     "AS62240",
 	},
 	"fastly": {
@@ -80,7 +81,7 @@ func Classify(service, overrideMethod string) Result {
 	if overrideMethod != "" {
 		var methods []string
 		for _, m := range strings.FieldsFunc(overrideMethod, func(r rune) bool {
-			return r == ',' || r == ' ' || r == ';'
+			return r == ',' || r == ' ' || r == ';' || r == '+'
 		}) {
 			m = strings.TrimSpace(strings.ToLower(m))
 			if m != "" {

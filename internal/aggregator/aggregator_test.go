@@ -1,6 +1,7 @@
 package aggregator
 
 import (
+	"errors"
 	"net/netip"
 	"testing"
 )
@@ -168,5 +169,43 @@ func TestSubtractPrefixHostFromNetwork(t *testing.T) {
 	}
 	if sumAddresses(again).Int64() != 255 {
 		t.Fatalf("re-subtract must be idempotent: %s", sumAddresses(again))
+	}
+}
+
+func TestNormalizeAllCountedBreakdown(t *testing.T) {
+	out, pre, err := NormalizeAllCounted([]string{
+		"8.8.8.0/24",    // ок
+		"2001:db8::/32", // ipv6
+		"0.0.0.0/0",     // too_broad (проверка ширины раньше reserved)
+		"10.9.0.0/16",   // blocked (reserved)
+	})
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(out) != 1 || out[0].String() != "8.8.8.0/24" {
+		t.Fatalf("out=%v", out)
+	}
+	if pre.IPv6 != 1 || pre.TooBroad != 1 || pre.Blocked != 1 {
+		t.Fatalf("pre=%+v", pre)
+	}
+	// Совместимость: NormalizeAll возвращает тот же набор без статистики.
+	plain, err := NormalizeAll([]string{"8.8.8.0/24", "10.9.0.0/16"})
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(plain) != 1 {
+		t.Fatalf("plain=%v", plain)
+	}
+}
+
+func TestValidateSentinels(t *testing.T) {
+	if err := Validate(netip.MustParsePrefix("2001:db8::/32"), nil); !errors.Is(err, ErrNotIPv4) {
+		t.Fatalf("want ErrNotIPv4, got %v", err)
+	}
+	if err := Validate(netip.MustParsePrefix("0.0.0.0/0"), nil); !errors.Is(err, ErrTooWide) {
+		t.Fatalf("want ErrTooWide, got %v", err)
+	}
+	if err := Validate(netip.MustParsePrefix("10.9.0.0/16"), nil); !errors.Is(err, ErrReserved) {
+		t.Fatalf("want ErrReserved, got %v", err)
 	}
 }

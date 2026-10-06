@@ -120,6 +120,21 @@
   margin-bottom: 1.5rem;
 }
 
+/* Липкая шапка: работает во внутреннем скролле обёртки (см. max-height ниже) */
+.svc-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* Внутренний скролл длинного списка вместо прокрутки всей страницы */
+@media (min-width: 769px) {
+  .svc-table-wrap {
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+}
+
 .svc-table {
   width: 100%;
   border-collapse: collapse;
@@ -461,19 +476,81 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   .svc-diff-toolbar .svc-switch { justify-content: flex-start; }
   .svc-add-form { flex-direction: column; }
   .svc-add-form input { width: 100%; }
+  .svc-add-form select { width: 100%; min-width: 0; }
   .svc-table thead { display: none; }
   .svc-table, .svc-table tbody, .svc-table tr, .svc-table td { display: block; width: 100%; }
-  .svc-table tr { margin-bottom: 1rem; border: 1px solid var(--border, #e0e0e0); border-radius: var(--radius, 8px); padding: 0.5rem; }
+  .svc-table tr { position: relative; margin-bottom: 1rem; border: 1px solid var(--border, #e0e0e0); border-radius: var(--radius, 8px); padding: 0.5rem; }
   .svc-table td { border: none; padding: 0.5rem; text-align: left; }
   .svc-table td:before { content: attr(data-label); font-weight: 600; display: block; margin-bottom: 0.25rem; color: var(--muted, #666); font-size: 0.875rem; }
-  .svc-col-check { display: none; }
+  /* Чекбокс не прячем (bulk-операции нужны и на телефоне): плашкой в углу карточки */
+  .svc-table td[data-label="Выбор"] { position: absolute; top: 0.25rem; right: 0.25rem; width: auto; padding: 0.5rem; }
+  .svc-table td[data-label="Выбор"]:before { content: ""; display: none; }
+  .svc-table td[data-label="Выбор"] input[type="checkbox"] { width: 22px; height: 22px; }
   .svc-actions { justify-content: flex-start; }
-  .svc-actions button { flex: 1; min-width: 80px; }
+  .svc-actions button { flex: 1; min-width: 80px; min-height: 44px; }
+  .svc-tabs { overflow-x: auto; }
+  .svc-tab { white-space: nowrap; }
+  .svc-icon-btn { min-width: 44px; min-height: 44px; }
   .svc-drawer-panel { max-width: 100%; }
-  .svc-drawer-footer { grid-template-columns: 1fr; }
+  .svc-drawer-footer { grid-template-columns: 1fr; padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px)); }
+  .svc-drawer-footer button { min-height: 44px; }
   .svc-list-row { grid-template-columns: 1fr; gap: 0.5rem; }
   .svc-time { min-width: auto; }
   .svc-right { text-align: left; }
+}
+
+/* Компактные KPI на маленьких телефонах (карточек уже 6) */
+@media (max-width: 480px) {
+  .svc-kpi-grid { gap: 0.5rem; }
+  .svc-kpi-card { padding: 0.75rem; }
+  .svc-kpi-value { font-size: 1.5rem; }
+  .svc-kpi-label { font-size: 0.75rem; }
+}
+
+/* Стек тостов: контейнер-обёртка, пузыри несут свой фон
+   (app.css .toast не трогаем — он общий для других страниц) */
+#mrs-toast.toast {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  opacity: 1;
+  transform: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 400px;
+}
+.toast-msg {
+  background: var(--text);
+  color: var(--bg);
+  padding: 1rem 1.5rem;
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px var(--shadow);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  animation: toast-in 0.25s ease;
+}
+.toast-msg-ok { background: var(--success); color: white; }
+.toast-msg-err { background: var(--danger); color: white; }
+.toast-msg span { flex: 1; }
+.toast-x {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  min-width: 44px;
+  min-height: 44px;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-msg { animation: none; }
+  .svc-progress-fill { animation: none; }
 }
 
 
@@ -482,3 +559,64 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
 .svc-cdn-result { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .svc-cdn-result p { margin: 0; flex: 1 1 100%; color: var(--muted, #666); }
 .svc-cdn-loading { color: var(--muted, #666); }
+
+/* Блок качества последнего сбора и редактор источника (drawer «Обзор») */
+.svc-block-title { font-size: 1rem; margin: 0 0 8px; }
+.svc-quality-block { margin-top: 14px; }
+.svc-quality-block p { margin: 0 0 6px; color: var(--muted, #666); }
+.svc-source-edit { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.svc-source-edit p { margin: 0; color: var(--muted, #666); }
+.svc-field { display: flex; flex-direction: column; gap: 4px; }
+.svc-field > span { font-size: 0.875rem; color: var(--muted, #666); }
+.svc-field input { width: 100%; }
+.svc-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.svc-add-form select { min-width: 140px; }
+
+/* Маркер качества в колонке «Состояние» */
+.svc-qdot {
+  display: inline-block;
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  margin-left: 0.4em;
+  vertical-align: baseline;
+}
+.svc-qdot-ok { background: var(--success, #28a745); }
+.svc-qdot-warn { background: var(--warning, #ffc107); }
+
+/* Свочиваемые секции drawer («Качество», «Источник», CDN) */
+.svc-collapsible { margin-top: 14px; }
+.svc-collapsible > summary {
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.svc-collapsible > summary:focus-visible {
+  outline: 2px solid var(--primary, #007bff);
+  outline-offset: 2px;
+}
+
+/* Skeleton первой загрузки таблицы */
+.svc-skel-row td { padding: 1rem; border-bottom: 1px solid var(--border, #e0e0e0); }
+.svc-skel-row .svc-skel + .svc-skel { margin-top: 0.5rem; }
+.svc-skel {
+  height: 1rem;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-alt, #f8f9fa) 25%, var(--border, #e0e0e0) 50%, var(--bg-alt, #f8f9fa) 75%);
+  background-size: 200% 100%;
+  animation: svc-skel-shimmer 1.2s ease infinite;
+}
+.svc-skel.w40 { width: 40%; }
+.svc-skel.w60 { width: 60%; }
+.svc-skel.w80 { width: 80%; }
+@keyframes svc-skel-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .svc-skel { animation: none; }
+}

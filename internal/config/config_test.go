@@ -47,6 +47,9 @@ func TestLoadDefaultsAndValidate(t *testing.T) {
 	if cfg.Safety.MinPrefixV4 != 8 {
 		t.Fatalf("min prefix defaults wrong: %+v", cfg.Safety)
 	}
+	if cfg.Safety.WarnBroadV4 != 20 {
+		t.Fatalf("warn broad defaults wrong: %+v", cfg.Safety)
+	}
 	if cfg.MikroTik.Port != 443 {
 		t.Fatalf("ssl port default wrong: %d", cfg.MikroTik.Port)
 	}
@@ -134,6 +137,7 @@ func TestValidateSSLPortMismatch(t *testing.T) {
 		Firewall:  FirewallConfig{AddressList: "TO-VPN"},
 		Schedules: SchedulesConfig{Global: "every 6h"},
 	}
+	setDefaults(cfg)
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected rejection of use_ssl=false + port=443")
 	}
@@ -294,5 +298,176 @@ func TestEffectiveSchedulePriority(t *testing.T) {
 	}
 	if got := cfg.EffectiveSchedule("other"); got != "every 6h" {
 		t.Fatalf("global fallback: %s", got)
+	}
+}
+
+func TestIsValidMethod(t *testing.T) {
+	for _, m := range []string{"cdn", "asn", "dynamic", "whois", "static_url", "cdn ", " asn", "dynamic,whois"} {
+		if !IsValidMethod(m) {
+			t.Errorf("IsValidMethod(%q)=false, want true", m)
+		}
+	}
+	for _, m := range []string{"", "bogus", "CDN", "dynamic,,whois", "dynamic,bogus"} {
+		if IsValidMethod(m) {
+			t.Errorf("IsValidMethod(%q)=true, want false", m)
+		}
+	}
+}
+
+func TestServicesInGroupAndScheduleFor(t *testing.T) {
+	c := &Config{}
+	c.Schedules.Global = "every 6h"
+	c.Schedules.Groups = map[string]GroupConfig{
+		"social": {Schedule: "daily at 03:00", Services: []string{"instagram", "telegram"}},
+	}
+
+	got := c.ServicesInGroup("social")
+	if len(got) != 2 || got[0] != "instagram" || got[1] != "telegram" {
+		t.Fatalf("ServicesInGroup=%v", got)
+	}
+	if got := c.ServicesInGroup("nosuch"); got != nil {
+		t.Fatalf("ServicesInGroup(nosuch)=%v, want nil", got)
+	}
+	if got := c.ScheduleFor("instagram"); got != "daily at 03:00" {
+		t.Fatalf("ScheduleFor via group=%q", got)
+	}
+	if got := c.ScheduleFor("other"); got != "every 6h" {
+		t.Fatalf("ScheduleFor fallback=%q", got)
+	}
+}
+
+func TestVerifySNIEnabledDefault(t *testing.T) {
+	var c Config
+	if !c.Safety.VerifySNIEnabled() {
+		t.Fatal("default must be enabled")
+	}
+	off := false
+	c.Safety.VerifySNI = &off
+	if c.Safety.VerifySNIEnabled() {
+		t.Fatal("explicit false must disable")
+	}
+}
+
+func validBase(t *testing.T) *Config {
+	t.Helper()
+	c := &Config{}
+	c.MikroTik.Host = "h"
+	c.MikroTik.Username = "u"
+	c.Firewall.AddressList = "TO-VPN"
+	c.Schedules.Global = "manual"
+	setDefaults(c)
+	return c
+}
+
+func TestValidateSafetyRanges(t *testing.T) {
+	if err := validBase(t).Validate(); err != nil {
+		t.Fatalf("defaults must validate: %v", err)
+	}
+	cases := []struct {
+		name string
+		set  func(c *Config)
+	}{
+		{"min_prefix_v4 low", func(c *Config) { c.Safety.MinPrefixV4 = 7 }},
+		{"min_prefix_v4 high", func(c *Config) { c.Safety.MinPrefixV4 = 33 }},
+		{"warn_broad_v4 low", func(c *Config) { c.Safety.WarnBroadV4 = 7 }},
+		{"warn_broad_v4 high", func(c *Config) { c.Safety.WarnBroadV4 = 33 }},
+		{"max_asn_prefixes zero", func(c *Config) { c.Safety.MaxASNPrefixes = 0 }},
+		{"max_asn_prefixes huge", func(c *Config) { c.Safety.MaxASNPrefixes = 10001 }},
+		{"max_delete_ratio negative", func(c *Config) { c.Safety.MaxDeleteRatio = -0.1 }},
+		{"max_delete_ratio above one", func(c *Config) { c.Safety.MaxDeleteRatio = 1.1 }},
+		{"require_confirmation_over negative", func(c *Config) { c.Safety.RequireConfirmationOver = -1 }},
+	}
+	for _, tc := range cases {
+		c := validBase(t)
+		tc.set(c)
+		if err := c.Validate(); err == nil {
+			t.Errorf("%s: expected validation error", tc.name)
+		}
+	}
+	// Границы допустимы.
+	c := validBase(t)
+	c.Safety.MinPrefixV4 = 32
+	c.Safety.WarnBroadV4 = 8
+	c.Safety.MaxASNPrefixes = 10000
+	c.Safety.MaxDeleteRatio = 1
+	if err := c.Validate(); err != nil {
+		t.Fatalf("boundaries must validate: %v", err)
+	}
+}
+
+func TestValidateCompositeMethods(t *testing.T) {
+	for _, m := range []string{"dynamic,whois", "dynamic+cdn", "cdn;whois", "dynamic, whois"} {
+		c := validBase(t)
+		c.Overrides = map[string]ServiceOverride{"svc": {Method: m}}
+		if err := c.Validate(); err != nil {
+			t.Errorf("composite method %q must validate: %v", m, err)
+		}
+		if !IsValidMethod(m) {
+			t.Errorf("IsValidMethod(%q)=false, want true", m)
+		}
+	}
+	for _, m := range []string{"dynamic,,whois", "dynamic,bogus", "dynamic,"} {
+		c := validBase(t)
+		c.Overrides = map[string]ServiceOverride{"svc": {Method: m}}
+		if err := c.Validate(); err == nil {
+			t.Errorf("method %q must be rejected", m)
+		}
+		if IsValidMethod(m) {
+			t.Errorf("IsValidMethod(%q)=true, want false", m)
+		}
+	}
+}
+
+func TestSplitMethods(t *testing.T) {
+	got := SplitMethods("dynamic,whois+cdn; asn")
+	want := []string{"dynamic", "whois", "cdn", "asn"}
+	if len(got) != len(want) {
+		t.Fatalf("SplitMethods = %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SplitMethods = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestAllowHostRoutesDefaultsTrue(t *testing.T) {
+	var s SafetyConfig
+	if !s.AllowHostRoutesEnabled() {
+		t.Fatal("nil AllowHostRoutes must default to enabled")
+	}
+	path := writeTempConfig(t, minimalYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Safety.AllowHostRoutesEnabled() {
+		t.Fatal("loaded default must enable host routes")
+	}
+}
+
+func TestSetAllowHostRoutesPointer(t *testing.T) {
+	path := writeTempConfig(t, minimalYAML)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Set("safety.allow_host_routes", "false"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if cfg.Safety.AllowHostRoutesEnabled() {
+		t.Fatal("expected host routes disabled")
+	}
+	if got, _ := cfg.GetPath("safety.allow_host_routes"); fmt.Sprint(got) != "false" {
+		t.Fatalf("GetPath allow_host_routes = %v", got)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("explicit false must validate: %v", err)
+	}
+	if err := cfg.Set("safety.allow_host_routes", "true"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if !cfg.Safety.AllowHostRoutesEnabled() {
+		t.Fatal("expected host routes enabled")
 	}
 }

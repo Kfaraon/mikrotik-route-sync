@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	berrors "go.etcd.io/bbolt/errors"
 )
 
 // Имена бакетов в bbolt (данные только IPv4).
@@ -53,6 +55,12 @@ func Open(path string) (*Cache, error) {
 
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
+		// Типичная причина таймаута — запущенный демон держит эксклюзивный
+		// flock (read-only режим не спасает: shared-lock тоже ждёт).
+		// Говорим прямо, что делать, вместо сырого "timeout".
+		if errors.Is(err, berrors.ErrTimeout) {
+			return nil, fmt.Errorf("open bolt %s: locked by another process (stop the daemon first, e.g. `docker compose stop mrs`, or use the web API instead of CLI): %w", path, err)
+		}
 		return nil, fmt.Errorf("open bolt: %w", err)
 	}
 

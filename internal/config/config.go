@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -151,8 +152,20 @@ type SafetyConfig struct {
 	MaxDeleteRatio          float64 `yaml:"max_delete_ratio"`
 	RequireConfirmationOver int     `yaml:"require_confirmation_over"`
 	MinPrefixV4             int     `yaml:"min_prefix_v4"`
-	AllowHostRoutes         bool    `yaml:"allow_host_routes"`
-	MaxASNPrefixes          int     `yaml:"max_asn_prefixes"`
+	// AllowHostRoutes — разрешить хостовые /32 из dynamic/whois-сбора.
+	// Указатель, чтобы дефолт был «разрешено»: nil = true. dynamic отдаёт
+	// только /32, whois гарантирует покрытие резолвленных IP хостами —
+	// запрет по умолчанию ломал бы оба метода целиком.
+	AllowHostRoutes *bool `yaml:"allow_host_routes"`
+	MaxASNPrefixes  int   `yaml:"max_asn_prefixes"`
+	// WarnBroadV4 — warn-порог ширины префикса (только отчёт, не отсев:
+	// официальные списки CDN содержат /13–/19 — это нормально и не
+	// должно ломать сбор; дефолт 20).
+	WarnBroadV4 int `yaml:"warn_broad_v4"`
+	// VerifySNI — SNI-проба после сбора (TLS-handshake доказывает, что адреса
+	// обслуживают домен). Только варнинги, сбор не блокируется.
+	// Указатель, чтобы дефолт был «включено»: nil = true.
+	VerifySNI *bool `yaml:"verify_sni"`
 }
 
 // RetryConfig — настройки повторных попыток (exponential backoff).
@@ -173,6 +186,9 @@ type ExternalConfig struct {
 	AkamaiAPIKey    string   `yaml:"akamai_api_key"`
 	RDAPTimeout     Duration `yaml:"rdap_timeout"`
 	Resolver        string   `yaml:"resolver"`
+	// FallbackResolvers — резервные DNS при недоступности основного
+	// (пусто — публичные 8.8.8.8:53 и 1.1.1.1:53).
+	FallbackResolvers []string `yaml:"fallback_resolvers"`
 }
 
 // SnapshotsConfig — настройки снапшотов маршрутов.
@@ -299,11 +315,23 @@ func setDefaults(c *Config) {
 		c.Safety.MaxDeleteRatio = 0.5
 	}
 	// Только IPv4: минимум /8 (PROMPT XIV). IPv6 не поддерживается.
+	// Дефолт осознанно широкий: официальные списки CDN (Cloudflare /13)
+	// должны собираться; сужать — только явно под свою ответственность.
 	if c.Safety.MinPrefixV4 == 0 {
 		c.Safety.MinPrefixV4 = 8
 	}
+	// Warn-порог ширины (только отчёт): префиксы шире — в отчёт sync/recommend.
+	if c.Safety.WarnBroadV4 == 0 {
+		c.Safety.WarnBroadV4 = 20
+	}
 	if c.Safety.MaxASNPrefixes == 0 {
 		c.Safety.MaxASNPrefixes = 100
+	}
+	// Хостовые /32 разрешены по умолчанию (nil = true): материализуем,
+	// чтобы GetPath/UI показывали фактическое значение, а Save фиксировал.
+	if c.Safety.AllowHostRoutes == nil {
+		t := true
+		c.Safety.AllowHostRoutes = &t
 	}
 	if c.Firewall.CommentPrefix == "" {
 		c.Firewall.CommentPrefix = "AUTO"
@@ -374,6 +402,24 @@ func (c *Config) Validate() error {
 	if c.Schedules.Global == "" {
 		return fmt.Errorf("schedules.global required")
 	}
+	// Диапазоны safety: мусор (отрицательные, нулевые маски) ловим здесь,
+	// а не молчаливым отключением защит (MaxDeleteRatio<=0, например,
+	// незаметно выключал бы safe-diff).
+	if c.Safety.MinPrefixV4 < 8 || c.Safety.MinPrefixV4 > 32 {
+		return fmt.Errorf("safety.min_prefix_v4 must be 8..32, got %d", c.Safety.MinPrefixV4)
+	}
+	if c.Safety.WarnBroadV4 < 8 || c.Safety.WarnBroadV4 > 32 {
+		return fmt.Errorf("safety.warn_broad_v4 must be 8..32, got %d", c.Safety.WarnBroadV4)
+	}
+	if c.Safety.MaxASNPrefixes < 1 || c.Safety.MaxASNPrefixes > 10000 {
+		return fmt.Errorf("safety.max_asn_prefixes must be 1..10000, got %d", c.Safety.MaxASNPrefixes)
+	}
+	if c.Safety.MaxDeleteRatio < 0 || c.Safety.MaxDeleteRatio > 1 {
+		return fmt.Errorf("safety.max_delete_ratio must be 0..1, got %v", c.Safety.MaxDeleteRatio)
+	}
+	if c.Safety.RequireConfirmationOver < 0 {
+		return fmt.Errorf("safety.require_confirmation_over must be >= 0, got %d", c.Safety.RequireConfirmationOver)
+	}
 	// Типичная ошибка: http:// на TLS-порт (или наоборот) — коннект виснет по
 	// таймауту и circuit breaker открывается; ловим на этапе валидации.
 	if !c.MikroTik.UseSSL && c.MikroTik.Port == 443 {
@@ -403,8 +449,10 @@ func (c *Config) Validate() error {
 		if !ValidateServiceName(name) {
 			return fmt.Errorf("invalid override service name %q", name)
 		}
-		if ov.Method != "" && !knownMethods[ov.Method] {
-			return fmt.Errorf("service %q: unknown method %q", name, ov.Method)
+		if ov.Method != "" {
+			if err := ValidateMethods(ov.Method); err != nil {
+				return fmt.Errorf("service %q: %v", name, err)
+			}
 		}
 		if ov.StaticURL != "" {
 			u, err := url.Parse(ov.StaticURL)
@@ -422,9 +470,62 @@ var knownMethods = map[string]bool{
 	"whois": true, "static_url": true,
 }
 
-// IsValidMethod проверяет, что метод входит в известный набор
-// (cdn, asn, dynamic, whois, static_url).
-func IsValidMethod(m string) bool { return knownMethods[m] }
+// SplitMethods разбивает строку методов на части. Составные методы
+// ("dynamic,whois", "dynamic+cdn") собираются по очереди, результат
+// склеивается через "+" в usedMethod. Разделители: запятая, точка
+// с запятой, плюс, пробельные символы.
+func SplitMethods(s string) []string {
+	var out []string
+	for _, m := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ';' || r == '+' || unicode.IsSpace(r)
+	}) {
+		if m != "" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// ValidateMethods проверяет список методов: каждая часть должна входить
+// в известный набор (cdn, asn, dynamic, whois, static_url). Пустые
+// сегменты ("dynamic,,whois") — ошибка: обычно это опечатка.
+func ValidateMethods(s string) error {
+	parts := SplitMethods(s)
+	if len(parts) == 0 {
+		return fmt.Errorf("empty method list")
+	}
+	// Ловим пустые сегменты явно (опечатки вида "dynamic,,whois").
+	seps := 0
+	for _, r := range s {
+		if r == ',' || r == ';' || r == '+' {
+			seps++
+		}
+	}
+	if seps >= len(parts) {
+		return fmt.Errorf("empty method in list %q", s)
+	}
+	for _, m := range parts {
+		if !knownMethods[m] {
+			return fmt.Errorf("unknown method %q in list %q (allowed: cdn, asn, dynamic, whois, static_url)", m, s)
+		}
+	}
+	return nil
+}
+
+// IsValidMethod проверяет, что метод (или составной список через ",;+")
+// входит в известный набор (cdn, asn, dynamic, whois, static_url).
+func IsValidMethod(m string) bool { return ValidateMethods(m) == nil }
+
+// VerifySNIEnabled — включена ли SNI-проба (дефолт true: nil = включено).
+func (s SafetyConfig) VerifySNIEnabled() bool {
+	return s.VerifySNI == nil || *s.VerifySNI
+}
+
+// AllowHostRoutesEnabled — разрешены ли хостовые /32 (дефолт true:
+// nil = разрешено). Явный false отбрасывает /32 в валидации.
+func (s SafetyConfig) AllowHostRoutesEnabled() bool {
+	return s.AllowHostRoutes == nil || *s.AllowHostRoutes
+}
 
 // EffectiveSchedule возвращает эффективное расписание сервиса.
 // Приоритет: service -> group -> global.

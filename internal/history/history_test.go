@@ -1,7 +1,9 @@
 package history
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,5 +49,46 @@ func TestServiceFilterAndPersistence(t *testing.T) {
 	h2.AttachStore(c)
 	if recs := h2.Records("", 10); len(recs) != 2 {
 		t.Fatalf("persistence broken: %+v", recs)
+	}
+}
+
+func TestRecordQualityJSONCompat(t *testing.T) {
+	// Полная сводка сериализуется и переживает round-trip через bbolt.
+	full := Record{Service: "x", CovChecked: 2, CovCovered: 1,
+		SNIPrimaryFailed: true, RejectedTotal: 3}
+	raw, err := json.Marshal(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"cov_checked", "cov_covered", "sni_primary_failed", "rejected_total"} {
+		if !strings.Contains(string(raw), key) {
+			t.Fatalf("key %s missing in %s", key, raw)
+		}
+	}
+	var back Record
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.CovChecked != 2 || back.CovCovered != 1 || !back.SNIPrimaryFailed || back.RejectedTotal != 3 {
+		t.Fatalf("round-trip broken: %+v", back)
+	}
+	// Старые записи (без ключей, из bbolt до обновления) — нули, т.е.
+	// «без данных», а не «плохо»; новые omitempty-поля их не ломают.
+	var oldRec Record
+	if err := json.Unmarshal([]byte(`{"service":"y","added":5}`), &oldRec); err != nil {
+		t.Fatal(err)
+	}
+	if oldRec.CovChecked != 0 || oldRec.SNIPrimaryFailed || oldRec.RejectedTotal != 0 {
+		t.Fatalf("old record must decode to zero quality: %+v", oldRec)
+	}
+	// Пустая сводка не сериализуется (шум в bbolt ни к чему).
+	empty, err := json.Marshal(Record{Service: "z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"cov_checked", "sni_primary_failed", "rejected_total"} {
+		if strings.Contains(string(empty), key) {
+			t.Fatalf("empty quality must be omitted, got %s", empty)
+		}
 	}
 }

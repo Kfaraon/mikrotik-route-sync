@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
@@ -339,4 +340,49 @@ func newJar(t *testing.T) http.CookieJar {
 		t.Fatal(err)
 	}
 	return jar
+}
+
+func TestIPLimiterEvicts(t *testing.T) {
+	l := newIPLimiter(1000)
+	if !l.allow("10.0.0.1") {
+		t.Fatal("first request must pass")
+	}
+	// Переполнение уникальными IP — карта обязана оставаться ограниченной.
+	for i := 0; i < maxLimiters+500; i++ {
+		l.allow(strings.Repeat("x", 8) + string(rune(i)))
+	}
+	l.mu.Lock()
+	n := len(l.limiters)
+	l.mu.Unlock()
+	if n > maxLimiters {
+		t.Fatalf("limiters=%d, want <= %d", n, maxLimiters)
+	}
+	// Протухшие записи вычищаются при следующем переполнении.
+	l2 := newIPLimiter(1000)
+	l2.allow("10.9.9.9")
+	l2.mu.Lock()
+	for _, e := range l2.limiters {
+		e.lastSeen = e.lastSeen.Add(-2 * limiterTTL)
+	}
+	l2.mu.Unlock()
+	for i := 0; i < maxLimiters+1; i++ {
+		l2.allow(strings.Repeat("y", 8) + string(rune(i)))
+	}
+	l2.mu.Lock()
+	_, stale := l2.limiters["10.9.9.9"]
+	l2.mu.Unlock()
+	if stale {
+		t.Fatal("stale entry must be evicted")
+	}
+}
+
+func TestSessionStoreStop(t *testing.T) {
+	st := newSessionStore(time.Hour)
+	st.Stop()
+	st.Stop() // двойной Stop не паникует
+	select {
+	case <-st.stop:
+	default:
+		t.Fatal("stop channel must be closed")
+	}
 }

@@ -56,6 +56,10 @@ safety:
   # address-list свободно хранит одиночные IP (/32) — разрешаем по умолчанию
   allow_host_routes: true
   max_asn_prefixes: 100
+  # warn-порог ширины префикса (только отчёт в sync/recommend, не отсев)
+  warn_broad_v4: 20
+  # SNI-проба после сбора (TLS-handshake; только варнинги)
+  verify_sni: true
 retry:
   max_attempts: 3
   base_delay: 1s
@@ -70,6 +74,8 @@ external:
   akamai_api_key: ""
   rdap_timeout: 10s
   resolver: 1.1.1.1:53
+  # резервные DNS при недоступности основного (пусто — 8.8.8.8:53 и 1.1.1.1:53)
+  fallback_resolvers: []
 snapshots:
   enabled: true
   ttl: 168h

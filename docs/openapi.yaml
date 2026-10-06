@@ -155,6 +155,37 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/services/{name}:
+    put:
+      summary: Изменить override сервиса (method, domains)
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method:
+                  type: string
+                  example: dynamic,whois
+                  description: null — не трогать, пустая строка — сбросить в авто
+                domains:
+                  type: array
+                  items: { type: string }
+                  description: null — не трогать, иначе заменить целиком
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     delete:
       summary: Удалить сервис и (опционально) его AUTO-маршруты
       tags: [Services]
@@ -317,9 +348,26 @@ paths:
                           whois_count: { type: integer, example: 86 }
                           domains: { type: array, items: { type: string } }
                           ips: { type: array, items: { type: string } }
+                          skipped: { type: array, items: { type: string } }
                           current_method: { type: string, example: whois }
                           recommend: { type: boolean }
                           reason: { type: string }
+                          coverage:
+                            type: object
+                            properties:
+                              checked: { type: integer }
+                              covered: { type: integer }
+                              uncovered: { type: array, items: { type: string } }
+                          broad: { type: array, items: { type: string } }
+                          verification:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                domain: { type: string }
+                                checked: { type: integer }
+                                ok: { type: integer }
+                                failed: { type: array, items: { type: string } } }
                       applied: { type: boolean }
                       purged: { type: integer }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -466,6 +514,31 @@ components:
         unchanged: { type: integer }
         error: { type: string }
         dry_run: { type: boolean }
+        coverage:
+          type: object
+          properties:
+            checked: { type: integer }
+            covered: { type: integer }
+            uncovered: { type: array, items: { type: string } }
+        broad: { type: array, items: { type: string } }
+        rejected:
+          type: object
+          properties:
+            ipv6: { type: integer }
+            blocked: { type: integer }
+            too_broad: { type: integer }
+            host_routes: { type: integer }
+            excluded: { type: integer }
+            not_included: { type: integer }
+        verification:
+          type: array
+          items:
+            type: object
+            properties:
+              domain: { type: string }
+              checked: { type: integer }
+              ok: { type: integer }
+              failed: { type: array, items: { type: string } }
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
         duration: { type: string }

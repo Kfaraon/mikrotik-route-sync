@@ -17,13 +17,14 @@ type Deps struct {
 
 // Params — параметры конкретного сервиса для построения коллектора.
 type Params struct {
-	Service     string
-	ASN         int
-	Domains     []string
-	IPs         []string
-	StaticURL   string
-	MaxPrefixes int
-	AlsoCDN     []int
+	Service       string
+	ASN           int
+	Domains       []string
+	IPs           []string
+	StaticURL     string
+	MaxPrefixes   int
+	AlsoCDN       []int
+	IncludeGoogle bool // подмешивать диапазоны Google в dynamic (только сервисы Google)
 }
 
 // Registry — реестр фабрик коллекторов по имени метода.
@@ -69,7 +70,7 @@ func NewRegistry(deps *Deps) *Registry {
 		if len(p.Domains) == 0 {
 			return nil, fmt.Errorf("dynamic: domains are required for service %s", p.Service)
 		}
-		return NewDynamicCollector(r.deps.Resolver, r.deps.HTTP, p.Domains, p.AlsoCDN), nil
+		return NewDynamicCollector(r.deps.Resolver, r.deps.HTTP, p.Domains, p.AlsoCDN, p.IncludeGoogle), nil
 	})
 
 	return r

@@ -1,6 +1,7 @@
 package aggregator
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -21,7 +22,7 @@ func Validate(p netip.Prefix, safety *config.SafetyConfig) error {
 		return fmt.Errorf("invalid prefix")
 	}
 	if !p.Addr().Is4() {
-		return fmt.Errorf("prefix %s is not IPv4 (IPv6 is not supported)", p)
+		return fmt.Errorf("prefix %s: %w", p, ErrNotIPv4)
 	}
 	p = p.Masked()
 
@@ -31,15 +32,34 @@ func Validate(p netip.Prefix, safety *config.SafetyConfig) error {
 	}
 
 	if p.Bits() < minV4 {
-		return fmt.Errorf("prefix %s too wide (min /%d)", p, minV4)
+		return fmt.Errorf("prefix %s too wide (min /%d): %w", p, minV4, ErrTooWide)
 	}
 	for _, r := range reservedV4 {
 		if r.Overlaps(p) {
-			return fmt.Errorf("prefix %s overlaps reserved %s", p, r)
+			return fmt.Errorf("prefix %s overlaps reserved %s: %w", p, r, ErrReserved)
 		}
 	}
 	return nil
 }
+
+// Сентинелы причин отсева: позволяют считать breakdown без парсинга
+// текстов ошибок (см. NormalizeAllCounted, validator.RejectStats).
+var (
+	ErrNotIPv4  = errors.New("not IPv4 (IPv6 is not supported)")
+	ErrTooWide  = errors.New("prefix too wide")
+	ErrReserved = errors.New("prefix overlaps reserved range")
+)
+
+// PreFilterStats — сколько префиксов отсёк предфильтр NormalizeAllCounted
+// (до этого отсев был невидимым: FilterValid-ошибки выбрасывались).
+type PreFilterStats struct {
+	IPv6     int
+	TooBroad int
+	Blocked  int
+}
+
+// Total — всего отсечено предфильтром.
+func (s PreFilterStats) Total() int { return s.IPv6 + s.TooBroad + s.Blocked }
 
 // FilterValid фильтрует список префиксов, возвращая только валидные.
 // Принимает необязательный параметр safety для переопределения минимальных масок из конфига.
@@ -173,8 +193,17 @@ func addrAdd(a netip.Addr, delta uint32) netip.Addr {
 // (уровни 2 и 4): источники обязаны очищаться, а не ронять синхронизацию.
 // Дубликаты удаляются.
 func NormalizeAll(raw []string) ([]netip.Prefix, error) {
+	out, _, err := NormalizeAllCounted(raw)
+	return out, err
+}
+
+// NormalizeAllCounted — NormalizeAll плюс счётчик отсева предфильтра.
+// Раньше FilterValid-ошибки молча выбрасывались (`valid, _ :=`): коллектор
+// вернул 100 префиксов, до валидатора дошло 40 — и никто не знал почему.
+func NormalizeAllCounted(raw []string) ([]netip.Prefix, PreFilterStats, error) {
+	var pre PreFilterStats
 	if len(raw) == 0 {
-		return nil, nil
+		return nil, pre, nil
 	}
 
 	var prefixes []netip.Prefix
@@ -196,10 +225,26 @@ func NormalizeAll(raw []string) ([]netip.Prefix, error) {
 	}
 
 	if len(parseErrors) > 0 {
-		return nil, fmt.Errorf("parse errors: %s", strings.Join(parseErrors, "; "))
+		return nil, pre, fmt.Errorf("parse errors: %s", strings.Join(parseErrors, "; "))
 	}
 
-	valid, _ := FilterValid(prefixes, nil)
+	var valid []netip.Prefix
+	for _, p := range prefixes {
+		if err := Validate(p, nil); err != nil {
+			switch {
+			case errors.Is(err, ErrNotIPv4):
+				pre.IPv6++
+			case errors.Is(err, ErrTooWide):
+				pre.TooBroad++
+			case errors.Is(err, ErrReserved):
+				pre.Blocked++
+			default:
+				pre.Blocked++
+			}
+			continue
+		}
+		valid = append(valid, p.Masked())
+	}
 
 	seen := make(map[netip.Prefix]bool)
 	var unique []netip.Prefix
@@ -210,7 +255,7 @@ func NormalizeAll(raw []string) ([]netip.Prefix, error) {
 		}
 	}
 
-	return unique, nil
+	return unique, pre, nil
 }
 
 // Aggregate выполняет безопасную агрегацию набора IPv4-префиксов.

@@ -204,6 +204,21 @@ func convertValue(value any, targetType reflect.Type) (reflect.Value, error) {
 		return v, nil
 	}
 
+	// Указатель на примитив (*bool для allow_host_routes/verify_sni):
+	// конвертируем внутренность и заворачиваем. nil оставляет nil.
+	if targetType.Kind() == reflect.Ptr {
+		if value == nil {
+			return reflect.Zero(targetType), nil
+		}
+		inner, err := convertValue(value, targetType.Elem())
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		ptr := reflect.New(targetType.Elem())
+		ptr.Elem().Set(inner)
+		return ptr, nil
+	}
+
 	// Конвертация в Duration
 	if targetType == reflect.TypeOf(Duration(0)) {
 		switch val := value.(type) {

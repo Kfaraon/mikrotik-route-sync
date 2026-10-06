@@ -709,3 +709,76 @@ func TestProgressClearedAfterSuccessAndError(t *testing.T) {
 		t.Fatalf("progress left after error: %+v", got)
 	}
 }
+
+// Фаза 1.4: отсев валидатора виден в результате синка (rejected breakdown).
+func TestE2ESyncReportsRejectedPrefixes(t *testing.T) {
+	fr := newFakeRouter()
+	src := &fakeSource{}
+	src.set([]string{addrB, "10.9.0.0/16"}, nil) // второе — reserved, отсекается предфильтром
+	s := newE2ESyncer(t, fr, src, true)
+
+	res, err := s.SyncService(context.Background(), "demo", false, false)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("sync must succeed despite partial rejection: %+v", res)
+	}
+	if res.Rejected == nil || res.Rejected.Blocked != 1 || res.Rejected.Total() != 1 {
+		t.Fatalf("rejected breakdown missing: %+v", res.Rejected)
+	}
+	// Сводка качества персистится в историю для UI-health.
+	rec, ok := s.History().Last("demo")
+	if !ok {
+		t.Fatal("history record missing")
+	}
+	if rec.RejectedTotal != 1 {
+		t.Fatalf("history rejected_total=%d", rec.RejectedTotal)
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+// UpdateServiceOverride: точечное обновление method/domains с валидацией.
+func TestUpdateServiceOverride(t *testing.T) {
+	fr := newFakeRouter()
+	src := &fakeSource{}
+	src.set([]string{addrB}, nil)
+	s := newE2ESyncer(t, fr, src, true)
+
+	ov, err := s.UpdateServiceOverride(context.Background(), "demo", strPtr("dynamic,whois"), []string{"example.com"})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if ov.Method != "dynamic,whois" || len(ov.Domains) != 1 || ov.Domains[0] != "example.com" {
+		t.Fatalf("ov=%+v", ov)
+	}
+	// nil-поля не трогают существующее.
+	ov, err = s.UpdateServiceOverride(context.Background(), "demo", nil, nil)
+	if err != nil {
+		t.Fatalf("noop update: %v", err)
+	}
+	if ov.Method != "dynamic,whois" {
+		t.Fatalf("noop must preserve: %+v", ov)
+	}
+	// Мусор отклоняется.
+	if _, err := s.UpdateServiceOverride(context.Background(), "demo", strPtr("bogus"), nil); err == nil {
+		t.Fatal("expected method rejection")
+	}
+	if _, err := s.UpdateServiceOverride(context.Background(), "nope", strPtr("whois"), nil); err == nil {
+		t.Fatal("expected not-found")
+	}
+	// Пустой method сбрасывает в авто.
+	ov, err = s.UpdateServiceOverride(context.Background(), "demo", strPtr(""), nil)
+	if err != nil || ov.Method != "" {
+		t.Fatalf("clear must reset method: %+v %v", ov, err)
+	}
+	// Пустой override не хранится (без мусора в конфиге).
+	s.cfg.Overrides["demo"] = config.ServiceOverride{Method: "whois"}
+	if _, err := s.UpdateServiceOverride(context.Background(), "demo", strPtr(""), []string{}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if _, ok := s.cfg.Overrides["demo"]; ok {
+		t.Fatalf("empty override must be pruned, got %+v", s.cfg.Overrides["demo"])
+	}
+}

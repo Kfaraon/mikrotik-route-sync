@@ -88,6 +88,22 @@ func (c *WHOISCollector) Collect(ctx context.Context, service string, opts Optio
 		}
 	}
 
+	// Гарантия покрытия: сами резолвленные адреса всегда входят в набор.
+	// Без этого кап maxPrefixes может отсечь подсеть с IP сервиса
+	// (linkedin.com: IP вне первых 100 префиксов ASN) — сервис не
+	// заработает через VPN. Хостовые /32 сверх капа пренебрежимо малы.
+	for _, ipStr := range addresses {
+		addr, err := netip.ParseAddr(ipStr)
+		if err != nil || !addr.Is4() {
+			continue
+		}
+		host := netip.PrefixFrom(addr, 32)
+		if !seen[host] {
+			seen[host] = true
+			all = append(all, host)
+		}
+	}
+
 	all = filterPrefixes(all, opts)
 	if len(all) == 0 {
 		return nil, fmt.Errorf("whois: no prefixes found for service %s", service)
