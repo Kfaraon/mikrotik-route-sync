@@ -301,7 +301,10 @@
     var v = byId(valueId);
     var n = byId(noteId);
 
-    if (v) v.textContent = text(value);
+    if (v) {
+      v.textContent = text(value);
+      v.title = text(value);
+    }
     if (n) n.textContent = text(note);
 
     var card = v && v.closest ? v.closest(".svc-kpi-card") : null;
