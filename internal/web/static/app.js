@@ -606,23 +606,29 @@
     });
   })();
 
-  // Активная вкладка всегда в поле зрения: после перехода на страницу
-  // скролл-ряд навбара сбрасывается к началу и активная ссылка может
-  // оказаться за краем — доворачиваем ленту так, чтобы её было видно.
-  // Вертикаль страницы не трогаем (только scrollLeft).
+  // Лента навбара помнит своё место: позицию горизонтального скролла
+  // сохраняем, при загрузке страницы молча восстанавливаем — без доводок
+  // и прыжков, кнопка остаётся там, где её нажали. Вертикаль не трогаем.
   (function () {
     var nav = document.querySelector(".bar");
     if (!nav) return;
-    var act = nav.querySelector("a.active");
-    if (!act) return;
+    var KEY = "mrs-nav-scroll";
+    function save() {
+      try { sessionStorage.setItem(KEY, String(nav.scrollLeft)); } catch (e) { /* приватный режим */ }
+    }
     try {
-      if (nav.scrollWidth <= nav.clientWidth + 1) return;
-      var r = act.getBoundingClientRect();
-      var n = nav.getBoundingClientRect();
-      if (r.left < n.left || r.right > n.right) {
-        nav.scrollLeft += (r.left - n.left) - (n.width - r.width) / 2;
-      }
-    } catch (e) { /* старый движок: активная просто остаётся как есть */ }
+      var v = parseFloat(sessionStorage.getItem(KEY));
+      if (!isNaN(v) && v > 0) nav.scrollLeft = v;
+    } catch (e) { /* без sessionStorage начинаем слева */ }
+    var t = null;
+    nav.addEventListener("scroll", function () {
+      if (t) return;
+      t = setTimeout(function () { t = null; save(); }, 150);
+    });
+    nav.addEventListener("click", function (e) {
+      var a = e.target && e.target.closest ? e.target.closest("a") : null;
+      if (a) save();
+    });
   })();
 
 })();
