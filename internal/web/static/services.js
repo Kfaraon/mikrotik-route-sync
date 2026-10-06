@@ -151,8 +151,9 @@
     drawerBody: byId("svc-drawer-body"),
     drawerSync: byId("svc-drawer-sync"),
     drawerDry: byId("svc-drawer-dry"),
-    drawerDiff: byId("svc-drawer-diff"),
     drawerDelete: byId("svc-drawer-delete"),
+    drawerMenuBtn: byId("svc-drawer-menu"),
+    drawerMenu: byId("svc-drawer-menu-list"),
     deleteModal: byId("svc-delete-modal"),
     deleteName: byId("svc-delete-name"),
     deleteKeep: byId("svc-delete-keep"),
@@ -2220,9 +2221,12 @@
 
     var head =
       '<div class="svc-routes-meta">' + esc(scope && summary ? scope + " · " + summary : scope || summary) + "</div>" +
+      '<div class="svc-routes-toolbar">' +
       '<div class="svc-routes-search">' +
       '<input type="search" id="svc-routes-search" placeholder="Поиск префикса" value="' +
       esc(state.details.routesQuery || "") + '">' +
+      "</div>" +
+      '<button type="button" class="btn btn-outline btn-small" data-svc-diff>Показать изменения</button>' +
       "</div>";
 
     if (down) {
@@ -2567,6 +2571,16 @@
         if (closest(e.target, "[data-ov-save]")) {
           saveOverride(state.details.name);
         }
+        // Кнопка diff живёт на вкладке «Записи» (футера drawer больше нет).
+        if (closest(e.target, "[data-svc-diff]")) {
+          var name = state.details.name;
+          var d = name && state.lastDiff[name];
+          if (d) {
+            openDiff(d);
+          } else {
+            showToast("Изменения появятся после синхронизации, запущенной из интерфейса");
+          }
+        }
       });
       // toggle не всплывает — ловим на capture; выбор переживает перерендеры.
       els.drawerBody.addEventListener("toggle", function (e) {
@@ -2590,15 +2604,33 @@
       });
     }
 
-    if (els.drawerDiff) {
-      els.drawerDiff.addEventListener("click", function () {
-        var name = state.details.name;
-        var d = name && state.lastDiff[name];
-        if (d) {
-          openDiff(d);
+    // Меню ⋯ в шапке drawer: открыть/закрыть, мимо и Esc закрывают.
+    function closeDrawerMenu() {
+      if (els.drawerMenu) els.drawerMenu.hidden = true;
+      if (els.drawerMenuBtn) els.drawerMenuBtn.setAttribute("aria-expanded", "false");
+    }
+
+    if (els.drawerMenuBtn && els.drawerMenu) {
+      els.drawerMenuBtn.addEventListener("click", function (e) {
+        if (e && e.stopPropagation) e.stopPropagation();
+        var open = els.drawerMenu.hidden;
+        if (open) {
+          els.drawerMenu.hidden = false;
+          els.drawerMenuBtn.setAttribute("aria-expanded", "true");
         } else {
-          showToast("Изменения появятся после синхронизации, запущенной из интерфейса");
+          closeDrawerMenu();
         }
+      });
+      els.drawerMenu.addEventListener("click", function () {
+        closeDrawerMenu();
+      });
+      document.addEventListener("click", function (e) {
+        if (!els.drawerMenu.hidden && !(e.target && e.target.closest && e.target.closest(".svc-menu-wrap"))) {
+          closeDrawerMenu();
+        }
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeDrawerMenu();
       });
     }
 

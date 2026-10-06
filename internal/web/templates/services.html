@@ -152,7 +152,17 @@
                     <h2 id="svc-drawer-title">Детали сервиса</h2>
                     <span id="svc-drawer-subtitle" class="svc-muted svc-small"></span>
                 </div>
-                <button type="button" class="svc-icon-btn" data-svc-close aria-label="Закрыть">&times;</button>
+                <div class="svc-drawer-actions">
+                    <button type="button" class="svc-icon-btn" id="svc-drawer-sync" title="Синхронизировать" aria-label="Синхронизировать">↻</button>
+                    <div class="svc-menu-wrap">
+                        <button type="button" class="svc-icon-btn" id="svc-drawer-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Дополнительные действия" title="Дополнительные действия">⋯</button>
+                        <div class="svc-menu-list" id="svc-drawer-menu-list" role="menu" hidden>
+                            <button type="button" class="svc-menu-item" id="svc-drawer-dry" role="menuitem">Тестовый прогон</button>
+                            <button type="button" class="svc-menu-item svc-menu-danger" id="svc-drawer-delete" role="menuitem">Удалить</button>
+                        </div>
+                    </div>
+                    <button type="button" class="svc-icon-btn" data-svc-close aria-label="Закрыть">&times;</button>
+                </div>
             </div>
             <div class="svc-tabs">
                 <button type="button" class="svc-tab active" data-svc-tab="overview">Обзор</button>
@@ -162,12 +172,6 @@
             </div>
             <div id="svc-drawer-body" class="svc-drawer-body">
                 <div class="svc-empty">Загрузка деталей…</div>
-            </div>
-            <div class="svc-drawer-footer">
-                <button type="button" id="svc-drawer-sync" class="btn btn-primary">Синхронизировать</button>
-                <button type="button" id="svc-drawer-dry" class="btn btn-secondary">Тестовый прогон</button>
-                <button type="button" id="svc-drawer-diff" class="btn btn-outline">Показать изменения</button>
-                <button type="button" id="svc-drawer-delete" class="btn btn-danger">Удалить</button>
             </div>
         </div>
     </div>

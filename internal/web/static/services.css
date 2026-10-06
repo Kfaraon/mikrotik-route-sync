@@ -335,16 +335,58 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
 
 .svc-drawer-body { flex: 1; padding: 1.5rem; overflow-y: auto; }
 
-/* Футер drawer — сетка 2×2: все подписи помещаются без обрезки */
-.svc-drawer-footer {
-  padding: 1.5rem;
-  border-top: 1px solid var(--border, #e0e0e0);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-  background: var(--bg-alt, #f8f9fa);
+/* Действия в шапке drawer: синхр + меню ⋯ + закрыть.
+   Футера больше нет — контент занимает всю высоту панели. */
+.svc-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
 }
-.svc-drawer-footer button { width: 100%; min-width: 0; }
+
+.svc-menu-wrap { position: relative; }
+
+.svc-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  min-width: 200px;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: var(--radius, 8px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  padding: 0.25rem;
+}
+
+.svc-menu-list[hidden] { display: none; }
+
+.svc-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text, #333);
+  font-size: 0.95rem;
+  font-weight: 500;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.svc-menu-item:hover:not(:disabled) {
+  background: var(--bg-alt, #f8f9fa);
+  color: var(--text, #333);
+  transform: none;
+  box-shadow: none;
+}
+
+.svc-menu-danger { color: var(--danger, #dc3545); }
+.svc-menu-danger:hover:not(:disabled) { color: var(--danger, #dc3545); }
 
 /* Детали в drawer */
 .svc-detail-grid {
@@ -442,7 +484,15 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   color: var(--muted, #666);
   margin-bottom: 0.75rem;
 }
-.svc-routes-search { margin-bottom: 0.75rem; }
+.svc-routes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.svc-routes-search { flex: 1 1 200px; margin-bottom: 0; }
+.svc-routes-search input { width: 100%; }
 
 .svc-route-row {
   display: flex;
@@ -504,8 +554,6 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   .svc-tab { white-space: nowrap; }
   .svc-icon-btn { min-width: 44px; min-height: 44px; }
   .svc-drawer-panel { max-width: 100%; }
-  .svc-drawer-footer { grid-template-columns: 1fr; padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px)); }
-  .svc-drawer-footer button { min-height: 44px; }
   .svc-list-row { grid-template-columns: 1fr; gap: 0.5rem; }
   .svc-time { min-width: auto; }
   .svc-right { text-align: left; }

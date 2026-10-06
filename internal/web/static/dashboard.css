@@ -29,8 +29,10 @@
   margin-bottom: 1.5rem;
 }
 
+/* Карточки широкие (min 420px): на 1280 в ряд встают две,
+   текст строк состояния не рвётся на клочки. */
 .dash-grid-3 {
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
 }
 
 @media (max-width: 768px) {
@@ -100,6 +102,17 @@
 .health-row strong {
   font-size: 1.125rem;
   color: var(--text);
+}
+
+/* Значение (Доступен, имя сервиса, число) — одним куском на десктопе,
+   на мобиле правило ниже возвращает переносы. */
+@media (min-width: 769px) {
+  .health-row strong {
+    white-space: nowrap;
+  }
+  .health-row small {
+    min-width: 0;
+  }
 }
 
 .health-row small {

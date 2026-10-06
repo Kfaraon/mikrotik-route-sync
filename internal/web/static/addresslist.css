@@ -136,16 +136,22 @@
 
     .address-table tbody tr {
         height: auto;
-        margin-bottom: 0.75rem;
+        margin-bottom: 0.5rem;
         border: 1px solid var(--border);
         border-radius: var(--radius);
-        padding: 0.5rem;
+        padding: 0.25rem 0.75rem;
         background: var(--bg);
     }
 
+    /* Подпись и значение в одну строку (подпись слева, значение справа) —
+       карточка вдвое короче, пустого места справа нет. */
     .address-table td {
+        display: grid;
+        grid-template-columns: 7rem 1fr;
+        gap: 0.5rem;
+        align-items: baseline;
         border: none;
-        padding: 0.4rem 0.5rem;
+        padding: 0.3rem 0;
         text-align: left;
         white-space: normal;
         overflow-wrap: anywhere;
@@ -155,9 +161,14 @@
         content: attr(data-label);
         font-weight: 600;
         display: block;
-        margin-bottom: 0.2rem;
+        margin-bottom: 0;
         color: var(--muted, #666);
         font-size: 0.75rem;
+    }
+
+    /* Бейдж — grid-элемент, по умолчанию тянется на всю колонку */
+    .address-table td .badge {
+        justify-self: start;
     }
 }
 

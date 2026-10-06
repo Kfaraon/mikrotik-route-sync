@@ -606,4 +606,24 @@
     });
   })();
 
+  // Активная вкладка всегда в поле зрения: после перехода на страницу
+  // скролл-ряд навбара сбрасывается к началу и активная ссылка может
+  // оказаться за краем — доворачиваем ленту так, чтобы её было видно.
+  // Вертикаль страницы не трогаем (только scrollLeft).
+  (function () {
+    var nav = document.querySelector(".bar");
+    if (!nav) return;
+    var act = nav.querySelector("a.active");
+    if (!act) return;
+    try {
+      if (nav.scrollWidth <= nav.clientWidth + 1) return;
+      var r = act.getBoundingClientRect();
+      var n = nav.getBoundingClientRect();
+      if (r.left < n.left || r.right > n.right) {
+        nav.scrollLeft += (r.left - n.left) - (n.width - r.width) / 2;
+      }
+    } catch (e) { /* старый движок: активная просто остаётся как есть */ }
+  })();
+
 })();
+
