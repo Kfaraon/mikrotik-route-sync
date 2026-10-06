@@ -188,22 +188,38 @@
     color: var(--badge-muted-text);
 }
 
-/* Аккордеон фильтров (свёрнут на телефоне через JS) */
+/* Аккордеон фильтров — карточка как .sched-help («Поддерживаемые форматы и подсказки»):
+   шапка-summary с фоном, контент без собственной рамки */
 .filter-disclosure {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     margin-bottom: 16px;
+    overflow: hidden;
 }
 
 .filter-disclosure > summary {
+    padding: 1rem;
     cursor: pointer;
     font-weight: 600;
+    background: var(--bg-alt);
+    user-select: none;
+    color: var(--text);
     min-height: 44px;
     display: flex;
     align-items: center;
 }
 
+.filter-disclosure > summary:hover {
+    background: var(--border);
+}
+
 .filter-disclosure .filter-bar {
     margin-bottom: 0;
-    margin-top: 8px;
+    margin-top: 0;
+    background: none;
+    border: none;
+    border-radius: 0;
 }
 
 /* Счётчик результатов */

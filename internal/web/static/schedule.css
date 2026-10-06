@@ -77,23 +77,40 @@
   }
 }
 
-/* Фильтры в сворачиваемом блоке (как в «Списках адресов»):
-   на телефоне стартуют свёрнутыми через JS ниже. */
+/* Фильтры в сворачиваемом блоке — карточка как .sched-help
+   («Поддерживаемые форматы и подсказки»): шапка-summary с фоном,
+   тулбар внутри без собственной рамки/тени */
 .sched-filter-disclosure {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   margin-bottom: 1.5rem;
+  overflow: hidden;
 }
 
 .sched-filter-disclosure > summary {
+  padding: 1rem;
   cursor: pointer;
   font-weight: 600;
+  background: var(--bg-alt);
+  user-select: none;
+  color: var(--text);
   min-height: 44px;
   display: flex;
   align-items: center;
 }
 
+.sched-filter-disclosure > summary:hover {
+  background: var(--border);
+}
+
 .sched-filter-disclosure .sched-toolbar {
   margin-bottom: 0;
-  margin-top: 0.5rem;
+  margin-top: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* Панель инструментов */

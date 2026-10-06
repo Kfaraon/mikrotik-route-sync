@@ -1046,9 +1046,6 @@
       if (item.health.priority <= 1) problems++;
     });
 
-    var selected = Object.keys(state.selection).length;
-    var latest = state.allHistorySorted && state.allHistorySorted[0];
-
     setKpi(
       "svc-total-value",
       "svc-total-note",
@@ -1079,27 +1076,6 @@
       String(problems),
       problems ? "ошибки, предупреждения, сбои" : "проблем не обнаружено",
       problems ? "err" : "ok"
-    );
-
-    if (latest) {
-      var st = historyStatus(latest);
-      setKpi(
-        "svc-last-value",
-        "svc-last-note",
-        historyService(latest) || "—",
-        statusNote(st) + " · " + relativeTime(historyTime(latest)),
-        st === "success" ? "ok" : st === "error" ? "err" : st === "warning" ? "warn" : "muted"
-      );
-    } else {
-      setKpi("svc-last-value", "svc-last-note", "—", "история пуста", "muted");
-    }
-
-    setKpi(
-      "svc-selected-value",
-      "svc-selected-note",
-      String(selected),
-      selected ? "готово к массовым действиям" : "отметьте сервисы для действий",
-      selected ? "ok" : "muted"
     );
   }
 
@@ -1373,14 +1349,6 @@
       els.selectAll.checked = visibleKeys.length > 0 && selectedVisible === visibleKeys.length;
       els.selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleKeys.length;
     }
-
-    setKpi(
-      "svc-selected-value",
-      "svc-selected-note",
-      String(count),
-      count ? "готово к массовым действиям" : "отметьте сервисы для действий",
-      count ? "ok" : "muted"
-    );
   }
 
   function toggleSelect(key, name, checked) {

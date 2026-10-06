@@ -677,9 +677,9 @@ summary:focus-visible {
     display: none;
   }
 
+  /* Бренд в мобиле прячем: места мало, страница и так понятна по активной вкладке */
   .brand {
-    font-size: 1rem;
-    flex-shrink: 0;
+    display: none;
   }
 
   .bar a {
