@@ -40,7 +40,18 @@
 
 @media (max-width: 768px) {
   .sched-summary {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .summary-card {
+    padding: 0.6rem 0.5rem;
+  }
+
+  .summary-card span {
+    font-size: 0.7rem;
+    margin-bottom: 0.25rem;
   }
 
   .summary-card strong {
@@ -50,8 +61,39 @@
 
 @media (max-width: 480px) {
   .sched-summary {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, 1fr);
   }
+
+  .summary-card {
+    padding: 0.5rem 0.25rem;
+  }
+
+  .summary-card span {
+    font-size: 0.65rem;
+  }
+
+  .summary-card strong {
+    font-size: 1.1rem;
+  }
+}
+
+/* Фильтры в сворачиваемом блоке (как в «Списках адресов»):
+   на телефоне стартуют свёрнутыми через JS ниже. */
+.sched-filter-disclosure {
+  margin-bottom: 1.5rem;
+}
+
+.sched-filter-disclosure > summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.sched-filter-disclosure .sched-toolbar {
+  margin-bottom: 0;
+  margin-top: 0.5rem;
 }
 
 /* Панель инструментов */
