@@ -38,6 +38,18 @@ func fieldNameMatches(goName, pathPart string) bool {
 	return norm(goName) == norm(pathPart)
 }
 
+// deref разворачивает указатели до конкретного значения (nil-safe:
+// Elem() от nil даёт zero Value с Kind() == Invalid — цикл завершается).
+// Единая точка вместо трёх копий Kind()==Ptr (на которых спотыкается
+// govet-inline; семантика для одноуровневых *bool/*Duration та же).
+func deref(v reflect.Value) reflect.Value {
+	//nolint:govet // false positive: reflect.Ptr — константа stdlib, инлайнить нечего
+	for v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return v
+}
+
 // Set устанавливает значение параметра по точечному пути.
 // Поддерживает пути вида "mikrotik.host", "safety.max_delete_ratio".
 // После установки требуется вызов Save() для сохранения на диск.
@@ -60,9 +72,7 @@ func setNestedValue(v reflect.Value, parts []string, value any) error {
 
 	current := v
 	for i, part := range parts[:len(parts)-1] {
-		if current.Kind() == reflect.Ptr {
-			current = current.Elem()
-		}
+		current = deref(current)
 
 		// Обработка map (например, Overrides, Groups, Services в Schedules)
 		if current.Kind() == reflect.Map {
@@ -111,9 +121,7 @@ func setNestedValue(v reflect.Value, parts []string, value any) error {
 		return nil
 	}
 
-	if current.Kind() == reflect.Ptr {
-		current = current.Elem()
-	}
+	current = deref(current)
 	if current.Kind() != reflect.Struct {
 		return fmt.Errorf("cannot navigate into non-struct: %s", lastPart)
 	}
@@ -154,9 +162,7 @@ func (c *Config) GetPath(path string) (any, error) {
 	v := reflect.ValueOf(c).Elem()
 
 	for i, part := range parts {
-		for v.Kind() == reflect.Ptr {
-			v = v.Elem()
-		}
+		v = deref(v)
 		switch v.Kind() {
 		case reflect.Map:
 			mv := v.MapIndex(reflect.ValueOf(part))
@@ -177,6 +183,7 @@ func (c *Config) GetPath(path string) (any, error) {
 			return nil, fmt.Errorf("cannot navigate %s: not a struct or map", part)
 		}
 	}
+	//nolint:govet // false positive: reflect.Ptr — константа stdlib, инлайнить нечего
 	for v.Kind() == reflect.Ptr {
 		if v.IsNil() {
 			return nil, nil
@@ -206,6 +213,7 @@ func convertValue(value any, targetType reflect.Type) (reflect.Value, error) {
 
 	// Указатель на примитив (*bool для allow_host_routes/verify_sni):
 	// конвертируем внутренность и заворачиваем. nil оставляет nil.
+	//nolint:govet // false positive: reflect.Ptr — константа stdlib, инлайнить нечего
 	if targetType.Kind() == reflect.Ptr {
 		if value == nil {
 			return reflect.Zero(targetType), nil
@@ -408,10 +416,10 @@ func AtomicWrite(path string, c *Config) error {
 		// (Docker: "./config.yaml:/data/config.yaml" -> "device or resource busy",
 		// EXDEV и т.п.). Пишем на место: truncate + copy.
 		if copyErr := copyFileSync(tmpPath, path); copyErr != nil {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 			return fmt.Errorf("rename: %v; in-place fallback: %w", renameErr, copyErr)
 		}
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 	}
 
 	// Гарантируем права 0600 (POSIX; на Windows пропускаем — см. выше)
@@ -431,7 +439,7 @@ func copyFileSync(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("open tmp: %w", err)
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	fi, err := in.Stat()
 	if err != nil {
@@ -444,11 +452,11 @@ func copyFileSync(src, dst string) error {
 	}
 
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		_ = out.Close()
 		return fmt.Errorf("copy: %w", err)
 	}
 	if err := out.Sync(); err != nil {
-		out.Close()
+		_ = out.Close()
 		return fmt.Errorf("sync: %w", err)
 	}
 	return out.Close()

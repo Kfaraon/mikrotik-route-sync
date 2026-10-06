@@ -78,7 +78,7 @@ func Open(path string) (*Cache, error) {
 		return nil
 	})
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return &Cache{db: db}, nil

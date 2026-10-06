@@ -102,17 +102,17 @@ func (b *Bot) menu(id int64) {
 func (b *Bot) statusText(ctx context.Context) string {
 	var sb strings.Builder
 	sb.WriteString("Статус (Firewall Address List):\n")
-	sb.WriteString(fmt.Sprintf("  список: %s\n", b.syncer.Config().Firewall.AddressList))
-	sb.WriteString(fmt.Sprintf("  аптайм: %s\n", notifier.FormatDur(time.Since(b.syncer.StartTime()))))
+	fmt.Fprintf(&sb, "  список: %s\n", b.syncer.Config().Firewall.AddressList)
+	fmt.Fprintf(&sb, "  аптайм: %s\n", notifier.FormatDur(time.Since(b.syncer.StartTime())))
 	last := b.syncer.LastSync()
 	if last.IsZero() {
 		sb.WriteString("  последняя синхронизация: ещё не выполнялась\n")
 	} else {
 		loc := notifier.LoadLocation(b.syncer.Config().Timezone)
-		sb.WriteString(fmt.Sprintf("  последняя синхронизация: %s\n",
-			last.In(loc).Format("02.01.2006 15:04:05")))
+		fmt.Fprintf(&sb, "  последняя синхронизация: %s\n",
+			last.In(loc).Format("02.01.2006 15:04:05"))
 	}
-	sb.WriteString(fmt.Sprintf("  версия: %s\n", b.syncer.Version()))
+	fmt.Fprintf(&sb, "  версия: %s\n", b.syncer.Version())
 	if dg := b.syncer.DegradedServices(); len(dg) > 0 {
 		sb.WriteString("  ⚠️ требует внимания (DEGRADED): " + strings.Join(dg, ", ") + "\n")
 	}
@@ -120,11 +120,11 @@ func (b *Bot) statusText(ctx context.Context) string {
 	for _, svc := range b.syncer.ListServices() {
 		info, err := b.syncer.InfoService(ctx, svc)
 		if err != nil {
-			sb.WriteString(fmt.Sprintf("  - %s: ошибка (%s)\n", svc, notifier.LocalizeError(err.Error())))
+			fmt.Fprintf(&sb, "  - %s: ошибка (%s)\n", svc, notifier.LocalizeError(err.Error()))
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("  - %s: записей=%d (comment=%s), расписание=%s\n",
-			svc, info.EntryCount, info.Comment, info.Schedule))
+		fmt.Fprintf(&sb, "  - %s: записей=%d (comment=%s), расписание=%s\n",
+			svc, info.EntryCount, info.Comment, info.Schedule)
 	}
 	return sb.String()
 }
@@ -133,7 +133,7 @@ func (b *Bot) schedulesText() string {
 	var sb strings.Builder
 	sb.WriteString("Эффективные расписания:\n")
 	for _, svc := range b.syncer.ListServices() {
-		sb.WriteString(fmt.Sprintf("  - %s → %s\n", svc, b.syncer.Config().EffectiveSchedule(svc)))
+		fmt.Fprintf(&sb, "  - %s → %s\n", svc, b.syncer.Config().EffectiveSchedule(svc))
 	}
 	return sb.String()
 }

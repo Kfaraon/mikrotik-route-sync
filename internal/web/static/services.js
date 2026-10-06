@@ -1152,10 +1152,10 @@
       ? statusBadge(historyStatus(item.last)) + '<div class="svc-muted svc-small">' + esc(relativeTime(historyTime(item.last))) + "</div>"
       : '<span class="svc-muted">—</span>';
 
+    // Бейдж группы — здесь; счётчики ошибок/предупреждений не дублируем:
+    // они уже отражены в колонке «Состояние» через health.
     var badges = "";
     if (item.group) badges += '<span class="svc-badge svc-badge-group">' + esc(item.group) + "</span>";
-    if (item.errorCount) badges += '<span class="svc-badge svc-badge-err">' + esc(item.errorCount) + " ошиб.</span>";
-    if (item.warnCount) badges += '<span class="svc-badge svc-badge-warn">' + esc(item.warnCount) + " предупр.</span>";
 
     return '<tr class="' + selectedClass + '" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '">' +
       '<td data-label="Выбор"><input type="checkbox" class="svc-row-check" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '"' + checked + "></td>" +

@@ -52,7 +52,6 @@ var webFS embed.FS
 type wsClient struct {
 	conn *websocket.Conn
 	send chan []byte
-	mu   sync.Mutex
 }
 
 func (c *wsClient) writeLoop(done chan struct{}) {
@@ -569,7 +568,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		user, pass, ok := r.BasicAuth()
 		userOK := subtle.ConstantTimeCompare([]byte(user), []byte(s.cfg.Web.Auth.Username)) == 1
 		passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(s.cfg.Web.Auth.Password)) == 1
-		if !ok || !(userOK && passOK) {
+		if !ok || !userOK || !passOK {
 			if ok {
 				s.log.Warn("web auth failed", "user", user, "remote", r.RemoteAddr)
 			}

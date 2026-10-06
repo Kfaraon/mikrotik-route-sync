@@ -92,7 +92,7 @@ func newTestSyncer(t *testing.T, handler http.HandlerFunc) (*Syncer, *config.Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cache.Close() })
+	t.Cleanup(func() { _ = cache.Close() })
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s, err := NewSyncer(cfg, log, cache, &notifier.NoopNotifier{})

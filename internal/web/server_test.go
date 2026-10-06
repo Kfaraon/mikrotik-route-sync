@@ -68,7 +68,7 @@ services: [testsvc]
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cache.Close() })
+	t.Cleanup(func() { _ = cache.Close() })
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s, err := core.NewSyncer(cfg, log, cache, &notifier.NoopNotifier{})
@@ -98,7 +98,7 @@ func doAuth(c *http.Client, base, method, path, csrf string, body io.Reader) (*h
 	if err != nil {
 		panic(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp, string(b)
 }
@@ -112,7 +112,7 @@ func TestHealthzNoAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz: %d", resp.StatusCode)
 	}
@@ -132,7 +132,7 @@ func TestAuthRequiredAndDashboardRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", resp.StatusCode)
 	}
@@ -296,7 +296,7 @@ func TestCIDREnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz must be allowed without cidr check, got %d", resp.StatusCode)
 	}
@@ -304,7 +304,7 @@ func TestCIDREnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected 403 from foreign subnet, got %d", resp.StatusCode)
 	}

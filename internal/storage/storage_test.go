@@ -13,7 +13,7 @@ func openTestCache(t *testing.T) *Cache {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { c.Close() })
+	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
 
@@ -92,7 +92,7 @@ func TestOpenLockedDBHintsDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	// Второй Open ждёт 2с (Timeout в Open) и должен объяснить причину:
 	// запущенный демон держит flock.
 	start := time.Now()

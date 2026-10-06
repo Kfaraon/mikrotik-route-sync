@@ -89,7 +89,7 @@ func (v *SNIVerifier) probeIP(ctx context.Context, domain, ip string, timeout ti
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if dc, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
 		_ = dc.SetDeadline(time.Now().Add(timeout))

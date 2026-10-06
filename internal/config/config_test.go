@@ -210,7 +210,7 @@ func TestSetGetSnakeCaseKeys(t *testing.T) {
 
 func TestFilePermissionsRejected(t *testing.T) {
 	path := writeTempConfig(t, minimalYAML)
-	os.Chmod(path, 0o644)
+	_ = os.Chmod(path, 0o644)
 	t.Setenv("MRS_REQUIRE_FILE_PERMS", "1")
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected 0600 permission enforcement")
@@ -262,7 +262,7 @@ func TestSaveFallsBackWhenTempCreationDenied(t *testing.T) {
 	if err := os.Mkdir(tmpBlock, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(tmpBlock) })
+	t.Cleanup(func() { _ = os.RemoveAll(tmpBlock) })
 
 	if err := cfg.Set("mikrotik.rate_limit", "7"); err != nil {
 		t.Fatal(err)

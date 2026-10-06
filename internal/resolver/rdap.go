@@ -66,9 +66,7 @@ func collectRDAPASNs(v *rdapResponse) map[int]struct{} {
 		for _, e := range ents {
 			for _, s := range []string{e.Handle, e.ID} {
 				s = strings.ToUpper(strings.TrimSpace(s))
-				if strings.HasPrefix(s, "AUTNUM") {
-					s = strings.TrimPrefix(s, "AUTNUM")
-				}
+				s = strings.TrimPrefix(s, "AUTNUM")
 				if strings.HasPrefix(s, "AS") {
 					if n, err := ParseASN(s); err == nil {
 						out[n] = struct{}{}

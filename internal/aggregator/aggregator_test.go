@@ -19,16 +19,6 @@ func prefixes(t *testing.T, ss ...string) []netip.Prefix {
 	return out
 }
 
-func hasPrefix(set []netip.Prefix, want string) bool {
-	w := netip.MustParsePrefix(want)
-	for _, p := range set {
-		if p == w {
-			return true
-		}
-	}
-	return false
-}
-
 func TestAggregateMergesSiblings(t *testing.T) {
 	in := prefixes(t, "8.8.8.0/25", "8.8.8.128/25")
 	out, err := Aggregate(in)

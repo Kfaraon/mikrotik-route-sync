@@ -197,15 +197,15 @@ func listCmd() *cobra.Command {
 					return nil
 				}
 				w := tabWriter()
-				fmt.Fprintln(w, "SERVICE\tSCHEDULE\tROUTES")
+				_, _ = fmt.Fprintln(w, "SERVICE\tSCHEDULE\tROUTES")
 				for _, name := range services {
 					routes := 0
 					if rs, err := s.Backup(ctx, name); err == nil {
 						routes = len(rs.Entries)
 					}
-					fmt.Fprintf(w, "%s\t%s\t%d\n", name, cfg.EffectiveSchedule(name), routes)
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%d\n", name, cfg.EffectiveSchedule(name), routes)
 				}
-				w.Flush()
+				_ = w.Flush()
 				return nil
 			})
 		},
@@ -439,11 +439,11 @@ func auditAddressListCmd() *cobra.Command {
 					return nil
 				}
 				w := tabWriter()
-				fmt.Fprintln(w, "SERVICE\tADDRESS\tID")
+				_, _ = fmt.Fprintln(w, "SERVICE\tADDRESS\tID")
 				for _, o := range orphans {
-					fmt.Fprintf(w, "%s\t%s\t%s\n", o.Service, o.Addresslist.Address, o.Addresslist.ID)
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", o.Service, o.Addresslist.Address, o.Addresslist.ID)
 				}
-				w.Flush()
+				_ = w.Flush()
 				fmt.Printf("Total: %d\n", len(orphans))
 				return nil
 			})
@@ -769,7 +769,7 @@ func daemonCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, cache, log, err := bootstrap()
 			if cache != nil {
-				defer cache.Close()
+				defer func() { _ = cache.Close() }()
 			}
 			if err != nil {
 				return err
@@ -786,7 +786,7 @@ func daemonCmd() *cobra.Command {
 
 			pidFile := cfgPath + ".pid"
 			if err := os.WriteFile(pidFile, []byte(fmt.Sprint(os.Getpid())), 0o600); err == nil {
-				defer os.Remove(pidFile)
+				defer func() { _ = os.Remove(pidFile) }()
 			}
 
 			sched := scheduler.New(cfg, s, notify, log)
@@ -1066,7 +1066,7 @@ func tailLogFollow(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		return err
@@ -1202,7 +1202,7 @@ func bootstrap() (*config.Config, *storage.Cache, *slog.Logger, error) {
 func withSyncer(fn func(context.Context, *config.Config, *core.Syncer) error) error {
 	cfg, cache, log, err := bootstrap()
 	if cache != nil {
-		defer cache.Close()
+		defer func() { _ = cache.Close() }()
 	}
 	if err != nil {
 		return err

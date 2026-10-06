@@ -150,7 +150,7 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body any) ([]by
 		if e != nil {
 			return nil, e
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		b, e := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		if e != nil {

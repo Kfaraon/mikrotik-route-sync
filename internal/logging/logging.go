@@ -232,7 +232,7 @@ func TailLogFile(path string, limit int) ([]map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open log: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var lines []string
 	scanner := bufio.NewScanner(file)
