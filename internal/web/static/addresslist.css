@@ -113,6 +113,30 @@
 
     /* Карточки таблицы — общий паттерн .mrs-cards из app.css
        (старые компактные height/padding строк тут только мешали бы) */
+
+    /* Свёрнутая карточка: видны только адрес и комментарий, остальное —
+       по тапу (класс .open ставит JS). */
+    .address-table.mrs-cards tbody tr { cursor: pointer; }
+
+    .address-table.mrs-cards tbody tr:not(.open) td[data-label]:not([data-label="Адрес"]):not([data-label="Комментарий"]) {
+        display: none;
+    }
+
+    .address-table.mrs-cards td[data-label="Адрес"] { padding-right: 2rem; }
+
+    .address-table.mrs-cards tbody tr::after {
+        content: "›";
+        position: absolute;
+        right: 0.75rem;
+        top: 0.7rem;
+        color: var(--muted, #666);
+        font-size: 1.25rem;
+        line-height: 1;
+        transition: transform 0.2s ease;
+        pointer-events: none;
+    }
+
+    .address-table.mrs-cards tbody tr.open::after { transform: rotate(90deg); }
 }
 
 /* Пустое состояние после фильтрации (класс svc-empty живёт в services.css) */

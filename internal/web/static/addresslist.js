@@ -86,5 +86,38 @@
         }
     } catch (e) { /* без matchMedia — раскрыто */ }
 
+    // Карточки сворачиваются: видны адрес и комментарий, тап разворачивает.
+    // Делегирование — строки серверные, класс переживает фильтрацию.
+    (function () {
+        var body = table.querySelector("tbody");
+        if (!body) return;
+
+        function toggle(tr) {
+            if (!tr || tr.parentNode !== body) return;
+            var open = tr.classList.toggle("open");
+            tr.setAttribute("aria-expanded", open ? "true" : "false");
+        }
+
+        var rows = body.querySelectorAll("tr");
+        for (var i = 0; i < rows.length; i++) {
+            rows[i].setAttribute("tabindex", "0");
+            rows[i].setAttribute("role", "button");
+            rows[i].setAttribute("aria-expanded", "false");
+        }
+
+        body.addEventListener("click", function (e) {
+            var tr = e.target && e.target.closest ? e.target.closest("tr") : null;
+            toggle(tr);
+        });
+
+        body.addEventListener("keydown", function (e) {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            var tr = e.target && e.target.closest ? e.target.closest("tr") : null;
+            if (!tr) return;
+            e.preventDefault();
+            toggle(tr);
+        });
+    })();
+
     applyFilters();
 })();
