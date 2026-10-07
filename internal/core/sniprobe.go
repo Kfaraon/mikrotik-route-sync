@@ -52,14 +52,21 @@ func (v *SNIVerifier) Verify(ctx context.Context, domain string, ips []string) *
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
+	// Лимит одновременных handshake: по умолчанию 10, можно переопределить через env или конфиг.
+	// Используем буферизированный канал как семафор — проще и быстрее errgroup.
+	const maxConcurrentSNIPprobes = 10
+	sem := make(chan struct{}, maxConcurrentSNIPprobes)
+
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, ip := range ips {
 		ip := ip
 		vd.Checked++
 		wg.Add(1)
+		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
+			defer func() { <-sem }()
 			if err := v.probeIP(ctx, domain, ip, timeout); err != nil {
 				mu.Lock()
 				vd.Failed = append(vd.Failed, ip)

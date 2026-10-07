@@ -27,6 +27,7 @@ type Bot struct {
 	log    *slog.Logger
 	mu     sync.RWMutex
 	limits map[int64]*rate.Limiter
+	wg     sync.WaitGroup
 }
 
 // New создаёт бота с явными зависимостями.
@@ -149,6 +150,9 @@ func (b *Bot) startSync(ctx context.Context, services []string) {
 
 // Run обрабатывает обновления до отмены ctx.
 func (b *Bot) Run(ctx context.Context) error {
+	b.wg.Add(1)
+	defer b.wg.Done()
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 30
 	updates := b.api.GetUpdatesChan(u)
@@ -221,3 +225,8 @@ func (b *Bot) handleCallback(ctx context.Context, id int64, data string) {
 
 // Start — алиас Run для совместимости с CLI.
 func (b *Bot) Start(ctx context.Context) error { return b.Run(ctx) }
+
+// Wait блокируется до завершения Run (после отмены ctx).
+func (b *Bot) Wait() {
+	b.wg.Wait()
+}

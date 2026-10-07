@@ -27,6 +27,11 @@ type Scheduler struct {
 	wg      sync.WaitGroup
 	sem     chan struct{}
 	started bool
+
+	// Для interval-based расписаний (every N): единый таймер + куча
+	// вместо горутины на сервис. Это предотвращает утечку горутин
+	// при большом количестве сервисов.
+	intervalHeap *intervalHeap
 }
 
 func NewScheduler(cfg *config.Config, s *core.Syncer) *Scheduler {
@@ -80,10 +85,18 @@ func (s *Scheduler) startLocked(quiet bool) {
 	}
 	s.sem = make(chan struct{}, limit)
 	s.cron = cron.New(cron.WithLocation(loc))
+
+	// Инициализируем кучу для interval-based сервисов
+	s.intervalHeap = newIntervalHeap()
+
 	for _, svc := range s.cfg.Services {
 		s.addLocked(ctx, svc, s.cfg.ScheduleFor(svc))
 	}
 	s.cron.Start()
+
+	// Запускаем единую горутину для interval-based сервисов
+	s.wg.Add(1)
+	go s.intervalRunner(ctx)
 
 	if d, ok := purgeInterval(s.cfg.Scheduler.CachePurge); ok {
 		s.wg.Add(1)
@@ -162,20 +175,14 @@ func (s *Scheduler) addLocked(ctx context.Context, service, spec string) {
 	}
 	if d, ok := interval(spec); ok {
 		svc, original := service, spec
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			t := time.NewTicker(d)
-			defer t.Stop()
-			for {
-				select {
-				case <-t.C:
-					s.dispatch(ctx, svc, original)
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
+		// Добавляем в кучу вместо создания горутины на сервис.
+		// Первый запуск — через интервал (как было в Ticker).
+		s.intervalHeap.Push(intervalItem{
+			service:  svc,
+			spec:     original,
+			interval: d,
+			nextRun:  time.Now().Add(d),
+		})
 		return
 	}
 	s.log.Warn("unsupported schedule", "service", service, "schedule", spec)
@@ -259,6 +266,164 @@ func (s *Scheduler) reloadLocked(quiet bool) error {
 		s.log.Info("scheduler reloaded")
 	}
 	return nil
+}
+
+// intervalHeap — min-heap для управления следующими запусками interval-based сервисов.
+// Позволяет единому таймеру знать, когда ближайший запуск.
+type intervalHeap struct {
+	mu    sync.Mutex
+	items []intervalItem
+}
+
+type intervalItem struct {
+	service  string
+	spec     string
+	interval time.Duration
+	nextRun  time.Time
+}
+
+func newIntervalHeap() *intervalHeap {
+	h := &intervalHeap{items: make([]intervalItem, 0)}
+	return h
+}
+
+func (h *intervalHeap) Push(item intervalItem) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.items = append(h.items, item)
+	h.siftUp(len(h.items) - 1)
+}
+
+func (h *intervalHeap) Pop() (intervalItem, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.items) == 0 {
+		return intervalItem{}, false
+	}
+	item := h.items[0]
+	last := h.items[len(h.items)-1]
+	h.items = h.items[:len(h.items)-1]
+	if len(h.items) > 0 {
+		h.items[0] = last
+		h.siftDown(0)
+	}
+	return item, true
+}
+
+func (h *intervalHeap) Peek() (intervalItem, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.items) == 0 {
+		return intervalItem{}, false
+	}
+	return h.items[0], true
+}
+
+func (h *intervalHeap) Len() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.items)
+}
+
+func (h *intervalHeap) Remove(service string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, item := range h.items {
+		if item.service == service {
+			h.items[i] = h.items[len(h.items)-1]
+			h.items = h.items[:len(h.items)-1]
+			if i < len(h.items) {
+				h.siftDown(i)
+				h.siftUp(i)
+			}
+			break
+		}
+	}
+}
+
+func (h *intervalHeap) siftUp(i int) {
+	for i > 0 {
+		parent := (i - 1) / 2
+		if h.items[i].nextRun.After(h.items[parent].nextRun) {
+			break
+		}
+		h.items[i], h.items[parent] = h.items[parent], h.items[i]
+		i = parent
+	}
+}
+
+func (h *intervalHeap) siftDown(i int) {
+	for {
+		smallest := i
+		left := 2*i + 1
+		right := 2*i + 2
+		if left < len(h.items) && h.items[left].nextRun.Before(h.items[smallest].nextRun) {
+			smallest = left
+		}
+		if right < len(h.items) && h.items[right].nextRun.Before(h.items[smallest].nextRun) {
+			smallest = right
+		}
+		if smallest == i {
+			break
+		}
+		h.items[i], h.items[smallest] = h.items[smallest], h.items[i]
+		i = smallest
+	}
+}
+
+// intervalRunner — единая горутина, которая просыпается на ближайшем nextRun,
+// диспетчерит сервис и перепланирует его.
+func (s *Scheduler) intervalRunner(ctx context.Context) {
+	defer s.wg.Done()
+	for {
+		var nextRun time.Time
+		var hasItem bool
+		var item intervalItem
+
+		// Берём ближайший элемент
+		s.intervalHeap.mu.Lock()
+		if len(s.intervalHeap.items) > 0 {
+			item = s.intervalHeap.items[0]
+			nextRun = item.nextRun
+			hasItem = true
+		}
+		s.intervalHeap.mu.Unlock()
+
+		if !hasItem {
+			// Нет интервальных сервисов — ждём добавления или отмены
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+				continue
+			}
+		}
+
+		now := time.Now()
+		wait := nextRun.Sub(now)
+		if wait <= 0 {
+			// Время вышло — извлекаем, диспетчерим, перепланируем
+			popped, ok := s.intervalHeap.Pop()
+			if !ok {
+				continue
+			}
+			s.dispatch(ctx, popped.service, popped.spec)
+			// Перепланируем на следующий интервал
+			popped.nextRun = time.Now().Add(popped.interval)
+			s.intervalHeap.Push(popped)
+			continue
+		}
+
+		// Ждём до следующего запуска или отмены
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			// Таймер сработал, цикл повторится
+		}
+	}
 }
 
 func ValidSpec(spec string) bool {

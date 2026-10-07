@@ -724,16 +724,15 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 	telegramBotMu.Lock()
 	defer telegramBotMu.Unlock()
 
-	// Останавливаем текущий бот через отмену контекста
+	// Останавливаем текущий бот через отмену контекста и ждём завершения
 	if botCancel != nil {
 		botCancel()
-		botCancel = nil
 	}
-
-	// Ждём завершения текущей горутины бота
 	if telegramBot != nil {
+		telegramBot.Wait()
 		telegramBot = nil
 	}
+	botCancel = nil
 
 	// Создаём новый бот только если включён
 	if !cfg.Telegram.Enabled || cfg.Telegram.BotToken == "" {
