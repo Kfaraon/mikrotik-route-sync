@@ -2611,6 +2611,13 @@
   function init() {
     bindEvents();
     loadAll(true);
+    // На телефоне фильтры стартуют свёрнутыми (как на других страницах).
+    try {
+      if (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) {
+        var disc = document.getElementById("svcFilterDisclosure");
+        if (disc) disc.removeAttribute("open");
+      }
+    } catch (e) { /* без matchMedia — раскрыто */ }
   }
 
   init();

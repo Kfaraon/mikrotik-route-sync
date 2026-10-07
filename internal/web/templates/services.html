@@ -68,7 +68,9 @@
             </form>
         </div>
 
-        <!-- Панель инструментов -->
+        <!-- Панель инструментов: на телефоне свёрнута (как на других страницах) -->
+        <details class="svc-filter-disclosure" id="svcFilterDisclosure" open>
+            <summary>Фильтры</summary>
         <div class="svc-toolbar">
             <div class="svc-toolbar-main">
                 <input type="search" id="svc-search" placeholder="Поиск по имени, статусу или группе…">
@@ -99,6 +101,7 @@
                 <button type="button" id="svc-bulk-clear" class="btn btn-small btn-outline">Сбросить выбор</button>
             </div>
         </div>
+        </details>
 
         <!-- Таблица сервисов -->
         <div class="svc-table-wrap">
