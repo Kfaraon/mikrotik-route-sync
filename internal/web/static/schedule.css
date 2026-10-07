@@ -273,39 +273,8 @@
 }
 
 @media (max-width: 768px) {
-  .sched-table thead {
-    display: none;
-  }
-
-  .sched-table,
-  .sched-table tbody,
-  .sched-table tr,
-  .sched-table td {
-    display: block;
-    width: 100%;
-  }
-
-  .sched-table tr {
-    margin-bottom: 1rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.5rem;
-  }
-
-  .sched-table td {
-    border: none;
-    padding: 0.5rem;
-    text-align: left;
-  }
-
-  .sched-table td:before {
-    content: attr(data-label);
-    font-weight: 600;
-    display: block;
-    margin-bottom: 0.25rem;
-    color: var(--muted);
-    font-size: 0.875rem;
-  }
+  /* Карточки таблицы — общий паттерн .mrs-cards из app.css */
+  .edit-buttons { flex-wrap: wrap; }
 }
 
 /* Ячейки */

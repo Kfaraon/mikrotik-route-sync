@@ -557,52 +557,9 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   .svc-add-form { flex-direction: column; }
   .svc-add-form input { width: 100%; }
   .svc-add-form select { width: 100%; min-width: 0; }
-  .svc-table thead { display: none; }
-  .svc-table, .svc-table tbody, .svc-table tr, .svc-table td { display: block; width: 100%; }
-  .svc-table tr { position: relative; margin-bottom: 0.75rem; border: 1px solid var(--border, #e0e0e0); border-radius: var(--radius, 8px); padding: 0.5rem 0.75rem; }
-  /* Имя — заголовок карточки во всю ширину, место под чекбокс справа */
-  .svc-table td[data-label="Сервис"] { padding: 0.3rem 2.5rem 0.3rem 0; font-size: 1.05rem; }
-  .svc-table td[data-label="Сервис"]:before { content: none; }
-  /* Подпись и значение в одну строку (подпись слева, всё содержимое справа) */
-  .svc-table td[data-label="Состояние"],
-  .svc-table td[data-label="Расписание"],
-  .svc-table td[data-label="Записей"],
-  .svc-table td[data-label="Последняя синхр."] {
-    display: grid;
-    grid-template-columns: 7rem 1fr;
-    gap: 0 0.5rem;
-    align-items: start;
-    border: none;
-    padding: 0.3rem 0;
-    text-align: left;
-  }
-  .svc-table td[data-label="Состояние"]:before,
-  .svc-table td[data-label="Расписание"]:before,
-  .svc-table td[data-label="Записей"]:before,
-  .svc-table td[data-label="Последняя синхр."]:before {
-    content: attr(data-label);
-    font-weight: 600;
-    margin: 0;
-    color: var(--muted, #666);
-    font-size: 0.75rem;
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .svc-table td[data-label="Состояние"] > *,
-  .svc-table td[data-label="Расписание"] > *,
-  .svc-table td[data-label="Записей"] > *,
-  .svc-table td[data-label="Последняя синхр."] > * {
-    grid-column: 2;
-    min-width: 0;
-  }
-  .svc-table td .svc-badge { justify-self: start; }
-  /* Кнопки — один ряд из четырёх вместо двух рядов */
-  .svc-table td[data-label="Действия"] { border: none; padding: 0.4rem 0 0.2rem; }
-  .svc-table td[data-label="Действия"]:before { content: none; }
-  /* Чекбокс не прячем (bulk-операции нужны и на телефоне): плашкой в углу карточки */
-  .svc-table td[data-label="Выбор"] { position: absolute; top: 0.25rem; right: 0.25rem; width: auto; padding: 0.5rem; }
-  .svc-table td[data-label="Выбор"]:before { content: ""; display: none; }
-  .svc-table td[data-label="Выбор"] input[type="checkbox"] { width: 22px; height: 22px; }
+  /* Карточки таблицы — общий паттерн .mrs-cards из app.css;
+     здесь только своё: крупный чекбокс и кнопки в один ряд */
+  .svc-table td.mrs-corner input[type="checkbox"] { width: 22px; height: 22px; }
   .svc-actions { justify-content: flex-start; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; }
   .svc-actions button { min-width: 0; min-height: 44px; padding: 0.4rem 0.2rem; font-size: 0.8rem; }
   .svc-tabs {

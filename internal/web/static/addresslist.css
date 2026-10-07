@@ -111,65 +111,8 @@
         width: 100%;
     }
 
-    .address-table th,
-    .address-table td {
-        padding: 4px 6px;
-        font-size: 12px;
-    }
-
-    .address-table tbody tr {
-        height: 28px;
-    }
-
-    /* Карточки вместо горизонтального скролла */
-    .address-table thead {
-        display: none;
-    }
-
-    .address-table,
-    .address-table tbody,
-    .address-table tr,
-    .address-table td {
-        display: block;
-        width: 100%;
-    }
-
-    .address-table tbody tr {
-        height: auto;
-        margin-bottom: 0.5rem;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 0.25rem 0.75rem;
-        background: var(--bg);
-    }
-
-    /* Подпись и значение в одну строку (подпись слева, значение справа) —
-       карточка вдвое короче, пустого места справа нет. */
-    .address-table td {
-        display: grid;
-        grid-template-columns: 7rem 1fr;
-        gap: 0.5rem;
-        align-items: baseline;
-        border: none;
-        padding: 0.3rem 0;
-        text-align: left;
-        white-space: normal;
-        overflow-wrap: anywhere;
-    }
-
-    .address-table td:before {
-        content: attr(data-label);
-        font-weight: 600;
-        display: block;
-        margin-bottom: 0;
-        color: var(--muted, #666);
-        font-size: 0.75rem;
-    }
-
-    /* Бейдж — grid-элемент, по умолчанию тянется на всю колонку */
-    .address-table td .badge {
-        justify-self: start;
-    }
+    /* Карточки таблицы — общий паттерн .mrs-cards из app.css
+       (старые компактные height/padding строк тут только мешали бы) */
 }
 
 /* Бейджи (базовый .badge — в app.css) */

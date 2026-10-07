@@ -1097,8 +1097,8 @@
     if (item.group) badges += '<span class="svc-badge svc-badge-group">' + esc(item.group) + "</span>";
 
     return '<tr class="' + selectedClass + '" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '">' +
-      '<td data-label="Выбор"><input type="checkbox" class="svc-row-check" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '"' + checked + "></td>" +
-      '<td data-label="Сервис">' +
+      '<td data-label="Выбор" class="mrs-corner"><input type="checkbox" class="svc-row-check" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '"' + checked + "></td>" +
+      '<td data-label="Сервис" class="mrs-title">' +
         '<div class="svc-name"><strong>' + esc(item.name) + "</strong>" + badges + "</div>" +
         '<div class="svc-progress" hidden>' +
           '<div class="svc-progress-track"><div class="svc-progress-fill"></div></div>' +
@@ -1111,7 +1111,7 @@
       "</td>" +
       '<td data-label="Записей">' + esc(String(item.routes)) + "</td>" +
       '<td data-label="Последняя синхр.">' + lastHtml + "</td>" +
-      '<td data-label="Действия">' +
+      '<td data-label="Действия" class="mrs-flat">' +
         '<div class="svc-actions">' +
           '<button type="button" class="svc-outline" data-action="details" data-service="' + esc(item.name) + '">Детали</button>' +
           '<button type="button" data-action="dry" title="Тестовый запуск" data-service="' + esc(item.name) + '">Тест</button>' +

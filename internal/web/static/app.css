@@ -1390,3 +1390,89 @@ button.btn.btn-secondary.log-pause.paused:hover:not(:disabled) {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
+
+/* Мобильные карточки из таблицы — единый паттерн.
+   Таблица с классом .mrs-cards на ≤768px: шапка прячется, строка —
+   карточка, подпись (data-label) слева, значение справа.
+   Модификаторы ячеек: .mrs-title (заголовок во всю ширину),
+   .mrs-flat (без подписи), .mrs-corner (плашка в углу карточки). */
+@media (max-width: 768px) {
+  .mrs-cards thead { display: none; }
+
+  .mrs-cards,
+  .mrs-cards tbody,
+  .mrs-cards tr,
+  .mrs-cards td {
+    display: block;
+    width: 100%;
+  }
+
+  /* table. — вес выше правил страниц (`.address-table tbody tr`), иначе
+     фиксированная высота десктопных строк схлопывает карточки */
+  table.mrs-cards tbody tr {
+    position: relative;
+    height: auto;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.75rem;
+    background: var(--bg);
+  }
+
+  .mrs-cards td[data-label] {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    border: none;
+    padding: 0.3rem 0;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .mrs-cards td[data-label]:before {
+    content: attr(data-label);
+    flex: none;
+    width: 7rem;
+    font-weight: 600;
+    color: var(--muted, #666);
+    font-size: 0.75rem;
+  }
+
+  .mrs-cards td[data-label] > * {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mrs-cards td[data-label] > .badge {
+    flex: none;
+    max-width: 100%;
+  }
+
+  .mrs-cards td.mrs-title {
+    display: block;
+    padding: 0.3rem 2.5rem 0.3rem 0;
+    font-size: 1.05rem;
+  }
+
+  .mrs-cards td.mrs-title:before,
+  .mrs-cards td.mrs-flat:before,
+  .mrs-cards td.mrs-corner:before {
+    content: none;
+  }
+
+  .mrs-cards td.mrs-flat {
+    display: block;
+    border: none;
+    padding: 0.4rem 0 0.2rem;
+  }
+
+  .mrs-cards td.mrs-corner {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    width: auto;
+    padding: 0.5rem;
+    border: none;
+  }
+}
