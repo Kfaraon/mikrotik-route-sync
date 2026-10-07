@@ -530,6 +530,23 @@
   }
 
   function buildDerived() {
+    // Только активные сервисы: история хранит и удалённые (для страницы
+    // логов), но в здоровье/внимание они попадать не должны.
+    var active = {};
+    for (var a = 0; a < state.services.length; a++) {
+      var an = lower(serviceName(state.services[a]));
+      if (an) active[an] = true;
+    }
+    function isActive(name) {
+      // Пока список сервисов не загружен — не фильтруем, иначе при ошибке
+      // /api/v1/services дашборд покажет «Всё в норме» вместо проблем.
+      // Пустое имя — пропускаем (такие записи и так отсекаются выше).
+      if (!state.services.length) return true;
+      var n = lower(name);
+      if (!n) return true;
+      return !!active[n];
+    }
+
     var degraded = {};
     var deg = state.status && state.status.degraded;
 
@@ -545,7 +562,7 @@
         }
 
         name = lower(name);
-        if (name) degraded[name] = true;
+        if (name && isActive(name)) degraded[name] = true;
       }
     }
 
@@ -556,7 +573,7 @@
       var entry = state.logs[j];
       var svc = lower(logService(entry));
 
-      if (!svc) continue;
+      if (!svc || !isActive(svc)) continue;
 
       var level = logLevel(entry);
 
@@ -581,7 +598,7 @@
       var rec = sortedHistory[k];
       var recService = lower(historyService(rec));
 
-      if (recService && !latestByService[recService]) {
+      if (recService && isActive(recService) && !latestByService[recService]) {
         latestByService[recService] = rec;
       }
     }
@@ -615,12 +632,21 @@
       routes += serviceRoutes(state.services[s]);
     }
 
+    var latestActive = null;
+    for (var li = 0; li < sortedHistory.length; li++) {
+      // Новейшая запись активного сервиса (история хранит и удалённые).
+      if (isActive(historyService(sortedHistory[li]))) {
+        latestActive = sortedHistory[li];
+        break;
+      }
+    }
+
     state.derived = {
       degraded: degraded,
       errorSvc: errorSvc,
       warnSvc: warnSvc,
       latestByService: latestByService,
-      latestHistory: sortedHistory[0] || null,
+      latestHistory: latestActive,
       totalRoutes: routes,
       problemCount: objKeys(problem).length
     };

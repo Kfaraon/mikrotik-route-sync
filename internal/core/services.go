@@ -161,6 +161,15 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	s.cfg.Services = newServices
 	delete(s.cfg.Overrides, name)
 
+	// Расписание сервиса: удалённый сервис не должен оставаться
+	// в schedules.services (иначе светится на странице расписаний).
+	var prevSched config.ServiceSchedule
+	hadSched := false
+	if s.cfg.Schedules.Services != nil {
+		prevSched, hadSched = s.cfg.Schedules.Services[name]
+		delete(s.cfg.Schedules.Services, name)
+	}
+
 	if err := s.cfg.Save(); err != nil {
 		// Откат состояния в памяти: файл конфигурации не изменился —
 		// сервис должен остаться и в памяти, и в файле, иначе после
@@ -168,6 +177,12 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 		s.cfg.Services = prevServices
 		if hadOverride {
 			s.cfg.Overrides[name] = prevOverride
+		}
+		if hadSched {
+			if s.cfg.Schedules.Services == nil {
+				s.cfg.Schedules.Services = map[string]config.ServiceSchedule{}
+			}
+			s.cfg.Schedules.Services[name] = prevSched
 		}
 		return fmt.Errorf("config not saved, сервис НЕ удалён: %w", err)
 	}
@@ -179,6 +194,10 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 			_ = s.cache.DeleteSnapshot(name, info.ID)
 		}
 	}
+
+	// Флаг деградации сбрасывается: удалённый сервис не должен светиться
+	// в дашборде и боте. История при этом сохраняется (для страницы логов).
+	s.ClearDegraded(name)
 
 	s.audit.LogServiceDelete("", "core", name)
 	s.emit("service_removed", map[string]any{"service": name})

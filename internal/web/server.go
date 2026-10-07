@@ -881,8 +881,14 @@ func (s *Server) statusData(r *http.Request) map[string]any {
 	managed := 0
 	if entries, err := s.syncer.ListGlobalEntries(ctx); err == nil {
 		prefix := s.cfg.Firewall.CommentPrefix
+		active := make(map[string]bool, len(s.cfg.Services))
+		for _, sv := range s.cfg.Services {
+			active[sv] = true
+		}
 		for _, e := range entries {
-			if _, ok := addresslist.ServiceFromComment(e.Comment, prefix); ok && !e.IsDynamic() {
+			// Только активные сервисы: записи удалённых (purge=false)
+			// остаются на роутере, но управляемыми уже не считаются.
+			if svc, ok := addresslist.ServiceFromComment(e.Comment, prefix); ok && !e.IsDynamic() && active[svc] {
 				managed++
 			}
 		}

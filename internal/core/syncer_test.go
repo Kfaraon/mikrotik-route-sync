@@ -148,6 +148,33 @@ func TestRemoveServicePurgeFailsLoud(t *testing.T) {
 	}
 }
 
+func TestRemoveServiceClearsDegradedAndSchedule(t *testing.T) {
+	m := &mockRouter{t: t}
+	s, cfg := newTestSyncer(t, m.serve(nil, false))
+
+	// Персональное расписание + флаг деградации для сервиса.
+	if cfg.Schedules.Services == nil {
+		cfg.Schedules.Services = map[string]config.ServiceSchedule{}
+	}
+	cfg.Schedules.Services["yt"] = config.ServiceSchedule{Schedule: "daily at 03:00"}
+	s.MarkDegraded("yt")
+
+	if err := s.RemoveService(context.Background(), "yt", false); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if s.IsDegraded("yt") {
+		t.Fatal("degraded flag survives service removal")
+	}
+	if _, ok := cfg.Schedules.Services["yt"]; ok {
+		t.Fatal("per-service schedule survives service removal")
+	}
+	for _, sv := range cfg.Services {
+		if sv == "yt" {
+			t.Fatal("service still in config")
+		}
+	}
+}
+
 func TestListGlobalEntriesParsesEntries(t *testing.T) {
 	m := &mockRouter{t: t}
 	s, _ := newTestSyncer(t, m.serve([]addresslist.Entry{
