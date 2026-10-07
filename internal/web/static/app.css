@@ -638,6 +638,27 @@ code {
   to { background-position: -200% 0; }
 }
 
+/* Skip-ссылка: скрыта, показывается только фокусом с клавиатуры */
+.mrs-skip {
+  position: fixed;
+  top: -100px;
+  left: 1rem;
+  z-index: 2000;
+  background: var(--primary, #007bff);
+  color: #fff;
+  padding: 0.75rem 1.25rem;
+  border-radius: var(--radius, 8px);
+  text-decoration: none;
+  font-weight: 600;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.mrs-skip:focus-visible {
+  top: 1rem;
+}
+
 /* Видимый фокус с клавиатуры (мышь не задевает) */
 a:focus-visible,
 button:focus-visible,
@@ -686,6 +707,10 @@ summary:focus-visible {
     padding: 0.5rem 0.75rem;
     font-size: 0.875rem;
     flex: none;
+    /* Тач-таргет 44px без визуального раздувания навбара */
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
   }
 
   /* Липкий правый край поверх горизонтального скролла меню:
@@ -714,8 +739,8 @@ summary:focus-visible {
   }
 
   .theme-toggle {
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     font-size: 1.1rem;
   }
 
@@ -1472,6 +1497,11 @@ button.btn.btn-secondary.log-pause.paused:hover:not(:disabled) {
     top: 0.25rem;
     right: 0.25rem;
     width: auto;
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     padding: 0.5rem;
     border: none;
   }

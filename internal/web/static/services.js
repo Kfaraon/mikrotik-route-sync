@@ -1672,7 +1672,14 @@
   }
 
   // ---------- Drawer ----------
+  var drawerOpener = null;
+
   function openDrawer(name) {
+    if (document.activeElement && document.activeElement !== document.body) {
+      drawerOpener = document.activeElement;
+    } else {
+      drawerOpener = null;
+    }
     state.details.open = true;
     state.details.name = name;
     state.details.tab = "overview";
@@ -1697,6 +1704,11 @@
   function closeDrawer() {
     state.details.open = false;
     state.details.name = null;
+
+    if (drawerOpener && drawerOpener.focus && document.contains(drawerOpener)) {
+      drawerOpener.focus();
+    }
+    drawerOpener = null;
 
     if (els.drawer) {
       els.drawer.hidden = true;
@@ -2603,6 +2615,32 @@
           closeDiff();
         } else if (isDrawerOpen()) {
           closeDrawer();
+        }
+      }
+
+      // Ловушка фокуса в drawer: Tab циклируется внутри панели,
+      // наружу (за затемнение) не уходит.
+      if (e.key === "Tab" && isDrawerOpen() && els.drawer) {
+        var focusables = els.drawer.querySelectorAll(
+          'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'
+        );
+        var list = [];
+        each(focusables, function (el) {
+          if (!el || el.disabled || el.hidden) return;
+          if (typeof el.getClientRects === "function" && el.getClientRects().length === 0) return;
+          list.push(el);
+        });
+        if (list.length) {
+          var first = list[0];
+          var last = list[list.length - 1];
+          var active = document.activeElement;
+          if (e.shiftKey && (active === first || active === document.body || !els.drawer.contains(active))) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && active === last) {
+            e.preventDefault();
+            first.focus();
+          }
         }
       }
     });

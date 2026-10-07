@@ -568,7 +568,7 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
     -webkit-mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent);
     mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent);
   }
-  .svc-tab { white-space: nowrap; padding: 0.6rem 0.9rem; font-size: 0.85rem; }
+  .svc-tab { white-space: nowrap; padding: 0.75rem 0.9rem; font-size: 0.85rem; }
   .svc-icon-btn { min-width: 44px; min-height: 44px; }
   /* Компактная шапка drawer: заголовок и табы занимают меньше высоты */
   .svc-drawer-header { padding: 0.75rem 1rem; gap: 0.5rem; }
