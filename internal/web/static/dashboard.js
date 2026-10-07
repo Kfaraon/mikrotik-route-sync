@@ -746,7 +746,7 @@
     });
 
     if (!items.length) {
-      els.next.innerHTML = '<div class="empty-state">Нет запланированных запусков.</div>';
+      els.next.innerHTML = '<div class="empty-state">Нет запланированных запусков. <a href="/schedules">Настроить расписания</a>.</div>';
       return;
     }
 

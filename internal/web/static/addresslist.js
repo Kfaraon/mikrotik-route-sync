@@ -13,6 +13,8 @@
     };
 
     var clearBtn = document.getElementById("btnClearFilters");
+    var emptyBox = document.getElementById("address-empty");
+    var emptyResetBtn = document.getElementById("btnResetFiltersEmpty");
 
     function applyFilters() {
         var rows = document.querySelectorAll("#addressTable tbody tr");
@@ -46,6 +48,11 @@
         if (countEl) {
             countEl.textContent = "Показано " + visibleCount + " из " + rows.length + " записей";
         }
+
+        // Пусто после фильтрации — подсказка со сбросом вместо голой таблицы.
+        if (emptyBox) {
+            emptyBox.hidden = visibleCount !== 0;
+        }
     }
 
     function clearFilters() {
@@ -59,6 +66,10 @@
 
     if (clearBtn) {
         clearBtn.addEventListener("click", clearFilters);
+    }
+
+    if (emptyResetBtn) {
+        emptyResetBtn.addEventListener("click", clearFilters);
     }
 
     for (var key in filters) {

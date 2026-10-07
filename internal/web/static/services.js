@@ -1209,9 +1209,13 @@
     if (!visible.length) {
       els.body.innerHTML = "";
       els.empty.hidden = false;
-      els.empty.textContent = state.items.length
-        ? "Ничего не найдено. Измените поиск или фильтр."
-        : "Нет сервисов. Добавьте первый сервис выше.";
+      if (state.items.length) {
+        els.empty.innerHTML = "Ничего не найдено. Измените поиск или фильтр. " +
+          '<button type="button" class="btn btn-small btn-outline" data-svc-empty-reset>Сбросить поиск и фильтр</button>';
+      } else {
+        els.empty.innerHTML = "Нет сервисов. " +
+          '<button type="button" class="btn btn-small btn-primary" data-svc-add-focus>Добавить первый сервис</button>';
+      }
       updateSelectionUI();
       return;
     }
@@ -2322,6 +2326,27 @@
   }
 
   function bindEvents() {
+    // Кнопки в пустом состоянии таблицы (делегирование: контент пересоздаётся).
+    if (els.empty) {
+      els.empty.addEventListener("click", function (e) {
+        var t = e.target;
+        if (t && t.getAttribute && t.getAttribute("data-svc-add-focus") !== null) {
+          if (els.addInput) {
+            els.addInput.focus();
+            if (els.addInput.scrollIntoView) {
+              els.addInput.scrollIntoView({ block: "nearest" });
+            }
+          }
+        }
+        if (t && t.getAttribute && t.getAttribute("data-svc-empty-reset") !== null) {
+          if (els.search) els.search.value = "";
+          if (els.filter) els.filter.value = "all";
+          renderTable();
+          if (els.search) els.search.focus();
+        }
+      });
+    }
+
     if (els.search) {
       var searchTimer = null;
       els.search.addEventListener("input", function () {

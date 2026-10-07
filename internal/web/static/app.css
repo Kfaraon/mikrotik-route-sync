@@ -638,6 +638,9 @@ code {
   to { background-position: -200% 0; }
 }
 
+.skel + .skel { margin-top: 0.75rem; }
+.skel.w60 { max-width: 60%; }
+
 /* Skip-ссылка: скрыта, показывается только фокусом с клавиатуры */
 .mrs-skip {
   position: fixed;
