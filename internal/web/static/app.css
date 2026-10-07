@@ -33,7 +33,7 @@
   --badge-group-bg: #e0e7ff;
   --badge-group-text: #3730a3;
   --badge-muted-bg: #f3f4f6;
-  --badge-muted-text: #6b7280;
+  --badge-muted-text: #5f6672; /* контраст 5.26 вместо 4.39 (WCAG AA) */
 
   /* Консоль логов — светлая */
   --log-bg: #f9fafb;
@@ -67,7 +67,7 @@
   --shadow: rgba(0, 0, 0, 0.4);
 
   --code-bg: #374151;
-  --code-text: #60a5fa;
+  --code-text: #7caefb; /* контраст 4.57 вместо 4.05 (WCAG AA) */
 
   --badge-ok-bg: #064e3b;
   --badge-ok-text: #6ee7b7;
@@ -84,7 +84,7 @@
   --badge-group-bg: #312e81;
   --badge-group-text: #a5b4fc;
   --badge-muted-bg: #374151;
-  --badge-muted-text: #9ca3af;
+  --badge-muted-text: #b9c1cd; /* контраст 5.68 вместо 4.06 (WCAG AA) */
 
   /* Консоль логов — тёмная */
   --log-bg: #1f2937;

@@ -631,5 +631,45 @@
     });
   })();
 
+  // Навигация с клавиатуры: g, затем буква страницы.
+  // Игнорируется в полях ввода и с модификаторами; Esc отменяет ожидание.
+  // Работает и в русской раскладке (те же физические клавиши).
+  (function () {
+    var pages = {
+      d: "/", s: "/services", a: "/address-list",
+      r: "/schedules", l: "/logs", n: "/settings"
+    };
+    // Русская раскладка: физические позиции латинских D S A R L N.
+    var ru = { "в": "d", "ы": "s", "ф": "a", "к": "r", "д": "l", "т": "n" };
+    var armed = false, timer = null;
+    function disarm() {
+      armed = false;
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
+    document.addEventListener("keydown", function (e) {
+      if (e.ctrlKey || e.metaKey || e.altKey) { disarm(); return; }
+      var ae = document.activeElement;
+      var tag = ae && ae.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
+          (ae && ae.isContentEditable)) {
+        return;
+      }
+      if (e.key === "Escape") { disarm(); return; }
+      var k = (e.key || "").toLowerCase();
+      if (!armed) {
+        if (k === "g" || k === "п") {
+          armed = true;
+          timer = setTimeout(disarm, 1200);
+        }
+        return;
+      }
+      disarm();
+      if (ru[k]) k = ru[k];
+      if (k && k.length === 1 && pages[k]) {
+        window.location.href = pages[k];
+      }
+    });
+  })();
+
 })();
 
