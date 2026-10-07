@@ -73,11 +73,45 @@ func (c *wsClient) writeLoop(done chan struct{}) {
 }
 
 type Hub struct {
-	mu      sync.RWMutex
-	clients map[*wsClient]bool
+	mu         sync.RWMutex
+	clients    map[*wsClient]bool
+	reaperDone chan struct{}
 }
 
-func NewHub() *Hub { return &Hub{clients: map[*wsClient]bool{}} }
+func NewHub() *Hub {
+	h := &Hub{clients: map[*wsClient]bool{}, reaperDone: make(chan struct{})}
+	go h.reaperLoop()
+	return h
+}
+
+func (h *Hub) Stop() {
+	close(h.reaperDone)
+}
+
+// reaperLoop периодически чистит мёртвых клиентов: тех, у кого send канал
+// забит (backpressure) или соединение закрыто. Запускается каждые 30 сек.
+func (h *Hub) reaperLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.reaperDone:
+			return
+		case <-ticker.C:
+			h.mu.Lock()
+			for c := range h.clients {
+				// Неблокирующая проверка: если send канал полон, клиент не успевает читать — удаляем.
+				select {
+				case c.send <- nil: // nil как ping — если прошло, канал не полон
+				default:
+					delete(h.clients, c)
+					_ = c.conn.Close()
+				}
+			}
+			h.mu.Unlock()
+		}
+	}
+}
 
 func (h *Hub) Broadcast(event string, data any) {
 	payload, err := json.Marshal(map[string]any{"event": event, "data": data, "time": time.Now().Format(time.RFC3339)})
@@ -90,6 +124,8 @@ func (h *Hub) Broadcast(event string, data any) {
 		select {
 		case c.send <- payload:
 		default:
+			// Клиент не успевает читать — помечаем на удаление репером.
+			// Не удаляем здесь под RLock, чтобы не удерживать блокировку.
 		}
 	}
 }
@@ -290,10 +326,12 @@ func (c *ipChecker) clientIP(r *http.Request) net.IP {
 }
 
 type ipLimiter struct {
-	mu       sync.Mutex
-	limiters map[string]*ipEntry
-	rate     rate.Limit
-	burst    int
+	mu          sync.Mutex
+	limiters    map[string]*ipEntry
+	rate        rate.Limit
+	burst       int
+	evictTicker *time.Ticker
+	evictDone   chan struct{}
 }
 
 type ipEntry struct {
@@ -312,7 +350,9 @@ func newIPLimiter(rps int) *ipLimiter {
 	if rps <= 0 {
 		rps = 50
 	}
-	return &ipLimiter{limiters: map[string]*ipEntry{}, rate: rate.Limit(rps), burst: rps * 2}
+	l := &ipLimiter{limiters: map[string]*ipEntry{}, rate: rate.Limit(rps), burst: rps * 2}
+	l.StartEvictTicker(5 * time.Minute)
+	return l
 }
 
 func (l *ipLimiter) allow(ip string) bool {
@@ -346,6 +386,49 @@ func (l *ipLimiter) evictLocked() {
 				break
 			}
 		}
+	}
+}
+
+// StartEvictTicker запускает периодическую чистку неактивных лимитеров.
+// interval — период чистки (рекомендуется 5 мин). Безопасно вызывать многократно.
+func (l *ipLimiter) StartEvictTicker(interval time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.evictTicker != nil {
+		l.evictTicker.Stop()
+	}
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+
+	l.evictDone = make(chan struct{})
+	l.evictTicker = time.NewTicker(interval)
+
+	go func() {
+		for {
+			select {
+			case <-l.evictTicker.C:
+				l.evictLocked()
+			case <-l.evictDone:
+				return
+			}
+		}
+	}()
+}
+
+// StopEvictTicker останавливает тикер чистки.
+func (l *ipLimiter) StopEvictTicker() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.evictTicker != nil {
+		l.evictTicker.Stop()
+		l.evictTicker = nil
+	}
+	if l.evictDone != nil {
+		close(l.evictDone)
+		l.evictDone = nil
 	}
 }
 
@@ -1727,11 +1810,15 @@ func (s *Server) Start(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		s.log.Info("shutting down web server")
-		defer s.sessions.Stop()
+		s.hub.Stop()
+		s.limiter.StopEvictTicker()
+		s.sessions.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return s.httpSrv.Shutdown(shutdownCtx)
 	case err := <-errCh:
+		s.hub.Stop()
+		s.limiter.StopEvictTicker()
 		s.sessions.Stop()
 		return err
 	}

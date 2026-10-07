@@ -27,8 +27,10 @@ var (
 
 // Cache — обёртка над bbolt для кэша и хранения состояния.
 type Cache struct {
-	db *bolt.DB
-	mu sync.RWMutex
+	db          *bolt.DB
+	mu          sync.RWMutex
+	purgeTicker *time.Ticker
+	purgeDone   chan struct{}
 }
 
 // SnapshotInfo — метаинформация о снапшоте.
@@ -86,9 +88,54 @@ func Open(path string) (*Cache, error) {
 
 // Close закрывает базу.
 func (c *Cache) Close() error {
+	c.StopPurgeTicker()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.db.Close()
+}
+
+// StartPurgeTicker запускает фоновый тикер для автоматической чистки
+// просроченных записей. interval — период чистки (рекомендуется 5-10 мин).
+// Безопасно вызывать многократно: перезапускает тикер.
+func (c *Cache) StartPurgeTicker(interval time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.purgeTicker != nil {
+		c.purgeTicker.Stop()
+	}
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+
+	c.purgeDone = make(chan struct{})
+	c.purgeTicker = time.NewTicker(interval)
+
+	go func() {
+		for {
+			select {
+			case <-c.purgeTicker.C:
+				_ = c.PurgeExpired()
+			case <-c.purgeDone:
+				return
+			}
+		}
+	}()
+}
+
+// StopPurgeTicker останавливает фоновый тикер чистки.
+func (c *Cache) StopPurgeTicker() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.purgeTicker != nil {
+		c.purgeTicker.Stop()
+		c.purgeTicker = nil
+	}
+	if c.purgeDone != nil {
+		close(c.purgeDone)
+		c.purgeDone = nil
+	}
 }
 
 // get читает значение из бакета с проверкой TTL.

@@ -1193,6 +1193,9 @@ func bootstrap() (*config.Config, *storage.Cache, *slog.Logger, error) {
 	if err != nil {
 		return cfg, nil, log, fmt.Errorf("open cache: %w", err)
 	}
+	// Запускаем фоновый тикер авто-чистки просроченных записей кэша.
+	// Интервал можно вынести в конфиг позже; 5 минут — безопасный дефолт.
+	cache.StartPurgeTicker(5 * time.Minute)
 	return cfg, cache, log, nil
 }
 
