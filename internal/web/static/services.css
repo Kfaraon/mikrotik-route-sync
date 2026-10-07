@@ -545,7 +545,11 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
 
 /* Адаптивность */
 @media (max-width: 768px) {
-  .svc-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .svc-kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
+  .svc-kpi-card { padding: 0.75rem; }
+  .svc-kpi-label { font-size: 0.7rem; }
+  .svc-kpi-value { font-size: 1.25rem; }
+  .svc-kpi-note { font-size: 0.75rem; }
   .svc-toolbar-main, .svc-toolbar-actions { flex-direction: column; align-items: stretch; }
   .svc-toolbar-main > * { width: 100%; }
   .svc-diff-toolbar { flex-direction: column; align-items: stretch; }
@@ -601,7 +605,12 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   .svc-table td[data-label="Выбор"] input[type="checkbox"] { width: 22px; height: 22px; }
   .svc-actions { justify-content: flex-start; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; }
   .svc-actions button { min-width: 0; min-height: 44px; padding: 0.4rem 0.2rem; font-size: 0.8rem; }
-  .svc-tabs { overflow-x: auto; }
+  .svc-tabs {
+    overflow-x: auto;
+    /* Хинт свайпа: обрезанный край таба гаснет */
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent);
+    mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent);
+  }
   .svc-tab { white-space: nowrap; padding: 0.6rem 0.9rem; font-size: 0.85rem; }
   .svc-icon-btn { min-width: 44px; min-height: 44px; }
   /* Компактная шапка drawer: заголовок и табы занимают меньше высоты */
@@ -615,12 +624,12 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   .svc-right { text-align: left; }
 }
 
-/* Компактные KPI на маленьких телефонах (карточек уже 6) */
+/* Компактные KPI на маленьких телефонах: 3 колонки вместо 2 */
 @media (max-width: 480px) {
-  .svc-kpi-grid { gap: 0.5rem; }
-  .svc-kpi-card { padding: 0.75rem; }
-  .svc-kpi-value { font-size: 1.5rem; }
-  .svc-kpi-label { font-size: 0.75rem; }
+  .svc-kpi-grid { grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+  .svc-kpi-card { padding: 0.5rem 0.25rem; }
+  .svc-kpi-value { font-size: 1.1rem; }
+  .svc-kpi-label { font-size: 0.65rem; }
 }
 
 /* Тосты — общие из app.css (.mrs-toast-msg через window.mrsToast). */

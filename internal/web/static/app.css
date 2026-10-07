@@ -706,6 +706,13 @@ summary:focus-visible {
     transition: background var(--transition);
   }
 
+  /* Хинт свайпа: крайние 10px ленты гаснут. Зона уже, чем сплошная
+     часть клина (padding-right 0.75rem), — кнопки не задевает. */
+  .bar {
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 10px), transparent);
+    mask-image: linear-gradient(to right, black calc(100% - 10px), transparent);
+  }
+
   .theme-toggle {
     width: 38px;
     height: 38px;
