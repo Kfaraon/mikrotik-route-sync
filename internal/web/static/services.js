@@ -794,20 +794,6 @@
     return "";
   }
 
-  // Компактный маркер качества в колонке «Состояние»: детали — в health-бейдже
-  // и drawer, точка — быстрый скан взглядом.
-  function qualityDot(rec) {
-    if (!rec) return "";
-    var qp = qualityProblem(rec);
-    if (qp) {
-      return '<span class="svc-qdot svc-qdot-warn" title="Качество: ' + esc(qp) + '"></span>';
-    }
-    if (numField(rec, ["cov_checked"]) > 0) {
-      return '<span class="svc-qdot svc-qdot-ok" title="Качество: покрытие полное"></span>';
-    }
-    return "";
-  }
-
   function historySubtitle(rec) {
     if (!rec) return "нет данных";
 
@@ -1105,7 +1091,7 @@
           '<div class="svc-progress-label"></div>' +
         "</div>" +
       "</td>" +
-      '<td data-label="Состояние"><span class="svc-badge ' + esc(item.health.cls) + '">' + esc(item.health.label) + "</span>" + qualityDot(item.last) + "</td>" +
+      '<td data-label="Состояние"><span class="svc-badge ' + esc(item.health.cls) + '">' + esc(item.health.label) + "</span></td>" +
       '<td data-label="Расписание">' +
         "<div>" + esc(humanSchedule(item.effective)) + "</div>" + nextHtml +
       "</td>" +

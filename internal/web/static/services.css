@@ -610,18 +610,6 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
 .svc-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .svc-add-form select { min-width: 140px; }
 
-/* Маркер качества в колонке «Состояние» */
-.svc-qdot {
-  display: inline-block;
-  width: 0.6em;
-  height: 0.6em;
-  border-radius: 50%;
-  margin-left: 0.4em;
-  vertical-align: baseline;
-}
-.svc-qdot-ok { background: var(--success, #28a745); }
-.svc-qdot-warn { background: var(--warning, #ffc107); }
-
 /* Свочиваемые секции drawer («Качество», «Источник», CDN) */
 .svc-collapsible { margin-top: 14px; }
 .svc-collapsible > summary {
