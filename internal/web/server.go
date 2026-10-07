@@ -100,11 +100,12 @@ func (h *Hub) reaperLoop() {
 		case <-ticker.C:
 			h.mu.Lock()
 			for c := range h.clients {
-				// Неблокирующая проверка: если send канал полон, клиент не успевает читать — удаляем.
-				select {
-				case c.send <- nil: // nil как ping — если прошло, канал не полон
-				default:
+				// Канал забит под завязку — клиент не успевает читать,
+				// удаляем. Проверяем длину, ничего не пишем: лишние
+				// фреймы живым клиентам не нужны.
+				if len(c.send) == cap(c.send) {
 					delete(h.clients, c)
+					close(c.send)
 					_ = c.conn.Close()
 				}
 			}
