@@ -274,7 +274,8 @@
 
 @media (max-width: 768px) {
   /* Карточки таблицы — общий паттерн .mrs-cards из app.css */
-  .edit-buttons { flex-wrap: wrap; }
+  .edit-buttons { flex-direction: column; }
+  .edit-buttons button { width: 100%; white-space: nowrap; }
 }
 
 /* Ячейки */
