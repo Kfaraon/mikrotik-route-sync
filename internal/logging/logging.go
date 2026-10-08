@@ -1,7 +1,7 @@
 package logging
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
@@ -58,6 +59,32 @@ func SetLevel(level string) {
 	levelVar.Set(parseLevel(level))
 }
 
+// rotators — активные lumberjack-логгеры по пути файла: нужны, чтобы
+// «Очистить логи» шла через механизм ротации, а не truncate мимо счётчика.
+var (
+	rotMu    sync.Mutex
+	rotators = map[string]*lumberjack.Logger{}
+)
+
+func registerRotator(path string, lj *lumberjack.Logger) {
+	rotMu.Lock()
+	defer rotMu.Unlock()
+	rotators[path] = lj
+}
+
+// RotateLogFile ротирует активный лог (текущий уходит в бэкап, начинается
+// пустой): состояние lumberjack остаётся консистентным, в отличие от
+// прямого truncate файла.
+func RotateLogFile(path string) error {
+	rotMu.Lock()
+	lj := rotators[path]
+	rotMu.Unlock()
+	if lj == nil {
+		return fmt.Errorf("no active rotator for %s", path)
+	}
+	return lj.Rotate()
+}
+
 // Setup настраивает глобальное логирование на основе конфигурации.
 func Setup(cfg *config.Config) (*slog.Logger, error) {
 	levelVar.Set(parseLevel(cfg.Logging.Level))
@@ -84,6 +111,7 @@ func Setup(cfg *config.Config) (*slog.Logger, error) {
 			MaxBackups: maxFiles,
 			Compress:   cfg.Logging.Compress,
 		}
+		registerRotator(cfg.Logging.File, lj)
 		writers = append(writers, lj)
 	}
 
@@ -220,47 +248,108 @@ func LogSyncSummary(logger *slog.Logger, results []SyncResult) {
 	}
 }
 
-// TailLogFile читает последние строки лог-файла и парсит их как JSON.
+// maxTailScan — предел сканирования с конца файла (8 МБ): дальше выборка
+// считается усечённой, вместо чтения всего файла в память.
+const maxTailScan = 8 << 20
+
+// tailChunk — размер чанка обратного чтения.
+const tailChunk = 64 << 10
+
+// TailLogFile читает последние limit строк лог-файла и парсит их как JSON.
 func TailLogFile(path string, limit int) ([]map[string]any, error) {
+	entries, _, err := TailLogFileFiltered(path, limit, nil)
+	return entries, err
+}
+
+// TailLogFileFiltered читает файл с конца, возвращая до limit записей,
+// удовлетворяющих match (nil — все). Порядок — как в файле (старые первыми).
+// truncated=true, если сканирование упёрлось в maxTailScan раньше начала
+// файла: при активных фильтрах выборка может быть неполной.
+func TailLogFileFiltered(path string, limit int, match func(map[string]any) bool) ([]map[string]any, bool, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return []map[string]any{}, nil
+		return []map[string]any{}, false, nil
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open log: %w", err)
+		return nil, false, fmt.Errorf("open log: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			lines = append(lines, line)
-		}
+	st, err := file.Stat()
+	if err != nil {
+		return nil, false, fmt.Errorf("stat log: %w", err)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read log: %w", err)
-	}
+	size := st.Size()
 
-	start := len(lines) - limit
+	start := size - maxTailScan
+	truncated := false
 	if start < 0 {
 		start = 0
+	} else {
+		truncated = true
 	}
 
-	var result []map[string]any
-	for i := start; i < len(lines); i++ {
-		var entry map[string]any
-		if err := json.Unmarshal([]byte(lines[i]), &entry); err != nil {
-			result = append(result, map[string]any{"raw": lines[i]})
-			continue
+	// newest-first: разворачиваем в конце под контракт TailLogFile.
+	found := make([]map[string]any, 0, limit)
+	accept := func(raw []byte) bool {
+		raw = bytes.TrimSpace(raw)
+		if len(raw) == 0 {
+			return len(found) < limit
 		}
-		result = append(result, entry)
+		var entry map[string]any
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			entry = map[string]any{"raw": string(raw)}
+		}
+		if match != nil && !match(entry) {
+			return len(found) < limit
+		}
+		found = append(found, entry)
+		return len(found) < limit
 	}
-	return result, nil
+
+	var pending []byte // неполная строка на границе чанков (голова)
+	off := size
+	for off > start && len(found) < limit {
+		n := int64(tailChunk)
+		if n > off-start {
+			n = off - start
+		}
+		buf := make([]byte, n)
+		if _, err := file.ReadAt(buf, off-n); err != nil {
+			return nil, false, fmt.Errorf("read log: %w", err)
+		}
+		off -= n
+
+		data := buf
+		if len(pending) > 0 {
+			data = append(buf, pending...)
+			pending = nil
+		}
+		// data покрывает [off, конец]; segs[0] — оборванная голова,
+		// остальные строки полные (завершены \n справа или концом файла).
+		segs := bytes.Split(data, []byte{'\n'})
+		for i := len(segs) - 1; i >= 1; i-- {
+			if !accept(segs[i]) {
+				goto done
+			}
+		}
+		if off == start {
+			// Дошли до начала сканирования: segs[0] полон только если
+			// это начало файла, иначе это оборванный кусок — выбросить.
+			if start == 0 {
+				accept(segs[0])
+			}
+		} else {
+			pending = segs[0]
+		}
+	}
+done:
+	// Разворот в порядок файла (старые первыми).
+	for i, j := 0, len(found)-1; i < j; i, j = i+1, j-1 {
+		found[i], found[j] = found[j], found[i]
+	}
+	return found, truncated, nil
 }

@@ -856,7 +856,7 @@ func (s *Syncer) RestartTelegramBot() error {
 	s.telegramRestartMu.Unlock()
 
 	if fn == nil {
-		s.log.Debug("telegram restart function not registered, skipping bot restart")
+		s.log.Warn("telegram restart skipped: no bot running in this mode (web), restart the daemon to apply telegram settings")
 		return nil
 	}
 
@@ -864,20 +864,30 @@ func (s *Syncer) RestartTelegramBot() error {
 	return fn()
 }
 
-func (s *Syncer) GetLogs(ctx context.Context, limit int) ([]map[string]any, error) {
+// TelegramRestartAvailable сообщает, обслуживается ли бот в этом режиме:
+// в web-режиме бота нет, и смена telegram.* требует перезапуска демона.
+func (s *Syncer) TelegramRestartAvailable() bool {
+	s.telegramRestartMu.Lock()
+	defer s.telegramRestartMu.Unlock()
+	return s.telegramRestartFunc != nil
+}
+
+func (s *Syncer) GetLogs(ctx context.Context, limit int, match func(map[string]any) bool) ([]map[string]any, bool, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	logFile := s.cfg.Logging.File
 	if logFile == "" {
-		return []map[string]any{}, nil
+		return []map[string]any{}, false, nil
 	}
-	entries, err := logging.TailLogFile(logFile, limit)
+	// Фильтр применяется при чтении с конца файла (а не после жёсткого
+	// лимита): старые записи при активных фильтрах не теряются.
+	entries, truncated, err := logging.TailLogFileFiltered(logFile, limit, match)
 	if err != nil {
 		s.log.Warn("failed to read log file", "err", err, "limit", limit)
-		return []map[string]any{}, nil
+		return []map[string]any{}, false, nil
 	}
-	return entries, nil
+	return entries, truncated, nil
 }
 
 func EntryToAudit(res Result) audit.Entry {

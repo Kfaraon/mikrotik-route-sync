@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1007,5 +1008,60 @@ func TestAPIServiceAddressListDown(t *testing.T) {
 	}
 	if data["service"] != "testsvc" || data["count"] != float64(0) {
 		t.Fatalf("bad payload: %+v", data)
+	}
+}
+
+// TestSessionReuseOrCreate — клиенты без cookie (Basic-auth, curl) не плодят
+// сессии: повторный вход того же пользователя возвращает ту же запись.
+func TestSessionReuseOrCreate(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	id1, s1 := srv.sessions.reuseOrCreate("admin")
+	id2, s2 := srv.sessions.reuseOrCreate("admin")
+	if id1 != id2 || s1 != s2 {
+		t.Fatal("same user must reuse live session")
+	}
+	id3, _ := srv.sessions.reuseOrCreate("other")
+	if id3 == id1 {
+		t.Fatal("different users must not share session")
+	}
+	srv.sessions.mu.RLock()
+	n := len(srv.sessions.data)
+	srv.sessions.mu.RUnlock()
+	if n != 2 {
+		t.Fatalf("want 2 sessions, got %d", n)
+	}
+}
+
+// TestSessionStoreCap — хранилище ограничено: переполнение чистит
+// просроченные и лишние записи вместо бесконечного роста.
+func TestSessionStoreCap(t *testing.T) {
+	srv, _ := newTestServer(t)
+	for i := 0; i < maxSessions+10; i++ {
+		srv.sessions.reuseOrCreate("user" + strconv.Itoa(i))
+	}
+	srv.sessions.mu.RLock()
+	n := len(srv.sessions.data)
+	srv.sessions.mu.RUnlock()
+	if n > maxSessions {
+		t.Fatalf("session store grew past cap: %d > %d", n, maxSessions)
+	}
+}
+
+// TestServicesJSRemovedAlias — контракт бэкенд/фронт: Result.Removed и
+// history.Record сериализуются как "removed", JS обязан его читать.
+func TestServicesJSRemovedAlias(t *testing.T) {
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+	start := strings.Index(js, "function historyCounts")
+	if start < 0 {
+		t.Fatal("historyCounts not found in services.js")
+	}
+	block := js[start : start+400]
+	if !strings.Contains(block, `"removed"`) {
+		t.Fatalf("historyCounts must read backend field \"removed\": %s", block)
 	}
 }

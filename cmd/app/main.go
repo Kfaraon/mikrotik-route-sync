@@ -528,8 +528,11 @@ func restoreCmd() *cobra.Command {
 						return fmt.Errorf("get snapshot: %w", err)
 					}
 				} else {
+					if fromFile == "" {
+						return fmt.Errorf("restore requires --from-file <path> or --from-snapshot <id>")
+					}
 					var backup core.BackupFile
-					data, err := os.ReadFile(args[1])
+					data, err := os.ReadFile(fromFile)
 					if err != nil {
 						return fmt.Errorf("read backup file: %w", err)
 					}

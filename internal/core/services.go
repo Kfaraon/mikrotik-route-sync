@@ -189,9 +189,13 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 
 	// Снапшоты удаляются только после успешного сохранения конфигурации.
 	ids, err := s.cache.ListSnapshots(name)
-	if err == nil {
+	if err != nil {
+		s.log.Warn("failed to list snapshots for removed service", "service", name, "err", err)
+	} else {
 		for _, info := range ids {
-			_ = s.cache.DeleteSnapshot(name, info.ID)
+			if err := s.cache.DeleteSnapshot(name, info.ID); err != nil {
+				s.log.Warn("failed to delete snapshot of removed service", "service", name, "snapshot", info.ID, "err", err)
+			}
 		}
 	}
 

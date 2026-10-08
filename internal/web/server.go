@@ -246,12 +246,45 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func (st *sessionStore) create(username string) (string, *session) {
+// maxSessions — предел записей: клиенты без cookie (curl, мониторинг)
+// создавали бы новую сессию на каждый запрос без ограничений.
+const maxSessions = 10000
+
+// evictLocked вычищает просроченные, а при переполнении — лишние.
+// Вызывать под st.mu.
+func (st *sessionStore) evictLocked() {
+	if len(st.data) < maxSessions {
+		return
+	}
+	now := time.Now()
+	for k, v := range st.data {
+		if now.After(v.expires) {
+			delete(st.data, k)
+		}
+	}
+	for k := range st.data {
+		if len(st.data) < maxSessions {
+			break
+		}
+		delete(st.data, k)
+	}
+}
+
+// reuseOrCreate возвращает живую сессию пользователя вместо новой:
+// клиенты с Basic-auth без cookie не плодят записи на каждый запрос.
+func (st *sessionStore) reuseOrCreate(username string) (string, *session) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	now := time.Now()
+	for id, s := range st.data {
+		if s.username == username && now.Before(s.expires) {
+			return id, s
+		}
+	}
 	id := randomHex(16)
-	s := &session{username: username, csrf: randomHex(16), expires: time.Now().Add(st.ttl)}
+	s := &session{username: username, csrf: randomHex(16), expires: now.Add(st.ttl)}
 	st.data[id] = s
+	st.evictLocked()
 	return id, s
 }
 
@@ -627,7 +660,8 @@ func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) maxBodyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost || r.Method == http.MethodPut {
+		// Лимит тела для всех методов: DELETE/GET с телом тоже ограничены.
+		if r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		}
 		next.ServeHTTP(w, r)
@@ -661,7 +695,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		id, sess := s.sessions.create(user)
+		id, sess := s.sessions.reuseOrCreate(user)
 		http.SetCookie(w, &http.Cookie{
 			Name:     "mrs_session",
 			Value:    id,
@@ -907,9 +941,11 @@ func (s *Server) statusData(r *http.Request) map[string]any {
 }
 
 func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
-	data := s.statusData(r)
-	data["Services"] = s.cfg.Services
-	s.render(w, r, "dashboard.html", data)
+	// Без statusData: шаблону нужны только CSRF/Dot*, всё остальное
+	// досчитывает JS через API (иначе лишние обращения к MikroTik).
+	s.render(w, r, "dashboard.html", map[string]any{
+		"Services": s.cfg.Services,
+	})
 }
 
 func (s *Server) partialStatus(w http.ResponseWriter, r *http.Request) {
@@ -930,9 +966,9 @@ type serviceRow struct {
 }
 
 func (s *Server) pageServices(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "services.html", map[string]any{
-		"Services": s.serviceRows(r),
-	})
+	// Без serviceRows: шаблон их не читает, строки грузит JS через
+	// /api/v1/services (иначе обращение к MikroTik на каждый рендер).
+	s.render(w, r, "services.html", map[string]any{})
 }
 
 func (s *Server) serviceRows(r *http.Request) []serviceRow {
@@ -1212,12 +1248,9 @@ func (s *Server) pageLogs(w http.ResponseWriter, r *http.Request) {
 // ============================================================================
 
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	s.mtRefresh(ctx)
-	s.mtMu.Lock()
-	mtOK, mtKnown := s.mtOK, s.mtKnown
-	s.mtMu.Unlock()
+	// Состояние роутера — из кэша с TTL (mikrotikHealth): синхронный ping
+	// на каждый полл вкладок держал бы коннекты по 3с.
+	mtOK, mtKnown := s.mikrotikHealth(r.Context())
 	writeOK(w, map[string]any{
 		"version":     version.Version,
 		"uptime":      time.Since(s.syncer.StartTime()).String(),
@@ -1452,31 +1485,36 @@ func (s *Server) apiLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	entries, err := s.syncer.GetLogs(r.Context(), limit*3)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	filtered := make([]map[string]any, 0, limit)
-	for i := len(entries) - 1; i >= 0 && len(filtered) < limit; i-- {
-		e := entries[i]
+	match := func(e map[string]any) bool {
 		if level != "" && !strings.EqualFold(fmt.Sprint(e["level"]), level) {
-			continue
+			return false
 		}
 		if service != "" && fmt.Sprint(e["service"]) != service {
-			continue
+			return false
 		}
 		if !since.IsZero() {
 			if ts, ok := e["time"].(string); ok {
 				if t, err := time.Parse(time.RFC3339, ts); err == nil && t.Before(since) {
-					continue
+					return false
 				}
 			}
 		}
-		filtered = append(filtered, e)
+		return true
 	}
-	writeOK(w, filtered)
+
+	entries, truncated, err := s.syncer.GetLogs(r.Context(), limit, match)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if truncated {
+		w.Header().Set("X-Logs-Truncated", "1")
+	}
+	// Контракт API — новые первыми (история хранится старыми первыми).
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	writeOK(w, entries)
 }
 
 func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
@@ -1734,8 +1772,19 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.applyRuntimeChanges()
 
 	s.log.Info("settings updated", "user", user, "changed_keys", len(updates))
+	telegramChanged := false
+	for _, u := range updates {
+		if strings.HasPrefix(u.key, "telegram.") {
+			telegramChanged = true
+			break
+		}
+	}
+	resp := map[string]any{"updated": len(updates)}
+	if telegramChanged && !s.syncer.TelegramRestartAvailable() {
+		resp["warning"] = "настройки Telegram сохранены, но бот в web-режиме не запущен — перезапустите демона для применения"
+	}
 	w.Header().Set("HX-Refresh", "true")
-	writeOK(w, map[string]any{"updated": len(updates)})
+	writeOK(w, resp)
 }
 
 func (s *Server) cloneConfig() (*config.Config, error) {
@@ -1777,9 +1826,14 @@ func (s *Server) actionLogsClear(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "logging to file is disabled", http.StatusBadRequest)
 		return
 	}
-	if err := os.WriteFile(file, nil, 0o600); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	// Через механизм ротации: прямое truncate оставляло счётчик размера
+	// lumberjack прежним (преждевременный rotate) и меняло права файла.
+	if err := logging.RotateLogFile(file); err != nil {
+		s.log.Warn("log rotate on clear failed, falling back to truncate", "err", err)
+		if terr := os.WriteFile(file, nil, 0o600); terr != nil {
+			http.Error(w, terr.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	writeOK(w, map[string]bool{"cleared": true})
 }

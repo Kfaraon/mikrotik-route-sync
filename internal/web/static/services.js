@@ -743,7 +743,8 @@
   function historyCounts(rec) {
     return {
       added: numField(rec, ["added", "routes_added", "add", "Added"]),
-      deleted: numField(rec, ["deleted", "routes_deleted", "del", "Deleted"]),
+      // Контракт бэкенда — поле removed (Result.Removed, history.Record.Removed).
+      deleted: numField(rec, ["removed", "Removed", "deleted", "routes_deleted", "del", "Deleted"]),
       unchanged: numField(rec, ["unchanged", "same", "unchanged_count", "Unchanged"])
     };
   }

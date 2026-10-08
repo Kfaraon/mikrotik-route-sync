@@ -115,7 +115,7 @@ func resolverParseASN(s string) (int, error) {
 	return resolver.ParseASN(s)
 }
 
-const rdapVerifySample = 32
+const rdapVerifySample = 100
 
 // rdapVerifyFullSize — наборы до этого размера проверяются целиком:
 // whois-наборы типично 20–100 префиксов, и семплирование пропускало бы

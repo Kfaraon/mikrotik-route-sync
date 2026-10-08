@@ -18,7 +18,7 @@ func TestRdapVerifyStep(t *testing.T) {
 		n, want int
 	}{
 		{0, 1}, {1, 1}, {32, 1}, {100, 1},
-		{101, 3}, {1000, 31},
+		{101, 1}, {1000, 10},
 	}
 	for _, c := range cases {
 		if got := rdapVerifyStep(c.n); got != c.want {

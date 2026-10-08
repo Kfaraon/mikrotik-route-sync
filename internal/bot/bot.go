@@ -78,8 +78,37 @@ func (b *Bot) limiter(id int64) *rate.Limiter {
 }
 
 func (b *Bot) send(id int64, text string) {
-	msg := tgbotapi.NewMessage(id, text)
-	_, _ = b.api.Send(msg)
+	// Telegram режет сообщения длиннее 4096 символов — шлём чанками.
+	for _, part := range splitMessage(text, 4000) {
+		msg := tgbotapi.NewMessage(id, part)
+		if _, err := b.api.Send(msg); err != nil {
+			b.log.Warn("telegram send failed", "chat_id", id, "err", err)
+			return
+		}
+	}
+}
+
+// splitMessage режет текст на чанки по рунам, не разрывая UTF-8.
+func splitMessage(text string, chunk int) []string {
+	if chunk <= 0 {
+		return []string{text}
+	}
+	var out []string
+	var cur []rune
+	for _, r := range text {
+		cur = append(cur, r)
+		if len(cur) >= chunk {
+			out = append(out, string(cur))
+			cur = nil
+		}
+	}
+	if len(cur) > 0 {
+		out = append(out, string(cur))
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
 }
 
 func (b *Bot) menu(id int64) {
@@ -97,7 +126,9 @@ func (b *Bot) menu(id int64) {
 	msg := tgbotapi.NewMessage(id,
 		"MikroTik Route Sync\n\nКоманды: /status /sync /schedule /help")
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
-	_, _ = b.api.Send(msg)
+	if _, err := b.api.Send(msg); err != nil {
+		b.log.Warn("telegram send failed", "chat_id", id, "err", err)
+	}
 }
 
 func (b *Bot) statusText(ctx context.Context) string {
@@ -141,7 +172,9 @@ func (b *Bot) schedulesText() string {
 
 // startSync запускает синхронизацию в фоне (уведомления шлёт SyncService).
 func (b *Bot) startSync(ctx context.Context, services []string) {
+	b.wg.Add(1)
 	go func() {
+		defer b.wg.Done()
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 		defer cancel()
 		_ = b.syncer.SyncMany(sctx, services, false, false)
@@ -167,7 +200,8 @@ func (b *Bot) Run(ctx context.Context) error {
 			switch {
 			case up.Message != nil:
 				id = up.Message.Chat.ID
-			case up.CallbackQuery != nil:
+			case up.CallbackQuery != nil && up.CallbackQuery.Message != nil:
+				// Message бывает nil (старое/inline-сообщение) — без проверки паника.
 				id = up.CallbackQuery.Message.Chat.ID
 			default:
 				continue
@@ -182,11 +216,16 @@ func (b *Bot) Run(ctx context.Context) error {
 			}
 
 			if up.CallbackQuery != nil {
-				_, _ = b.api.Request(tgbotapi.NewCallback(up.CallbackQuery.ID, ""))
+				if _, err := b.api.Request(tgbotapi.NewCallback(up.CallbackQuery.ID, "")); err != nil {
+					b.log.Warn("telegram callback answer failed", "chat_id", id, "err", err)
+				}
 				b.handleCallback(ctx, id, up.CallbackQuery.Data)
 				continue
 			}
 
+			if up.Message == nil {
+				continue
+			}
 			switch up.Message.Command() {
 			case "start", "menu":
 				b.menu(id)
