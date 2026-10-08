@@ -102,7 +102,8 @@ func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOv
 // сервиса (его ещё нет в конфиге) пропускаем — детект и так всё проверил.
 // Best-effort: сбой сбора качество не подменяет.
 func (s *Syncer) fillQuality(ctx context.Context, name string, ov config.ServiceOverride, adv *CDNAdvice) {
-	s.serviceMu.Lock()
+	// Короткое чтение под cfgMu (было serviceMu на всю функцию).
+	s.cfg.RLock()
 	_, inCfg := s.cfg.Overrides[name]
 	if !inCfg {
 		for _, p := range s.cfg.Services {
@@ -112,21 +113,24 @@ func (s *Syncer) fillQuality(ctx context.Context, name string, ov config.Service
 			}
 		}
 	}
-	s.serviceMu.Unlock()
+	maxASN := s.cfg.Safety.MaxASNPrefixes
+	warnBroad := s.cfg.Safety.WarnBroadV4
+	verifySNI := s.cfg.Safety.VerifySNIEnabled()
+	s.cfg.RUnlock()
 	if !inCfg || len(adv.Domains) == 0 {
 		return
 	}
-	prefixes, _, err := s.collectOrStub(ctx, name, ov)
+	prefixes, _, err := s.collectOrStub(ctx, name, ov, maxASN)
 	if err != nil {
 		return
 	}
 	adv.Coverage = s.checkServiceCoverage(ctx, name, adv.Domains, prefixes)
 	// Широкие префиксы текущего сбора (кроме cdn — см. SyncService).
 	if !hasMethod(splitMethods(currentMethodName(name, ov)), "cdn") {
-		adv.Broad = validator.BroadPrefixes(prefixes, s.cfg.Safety.WarnBroadV4)
+		adv.Broad = validator.BroadPrefixes(prefixes, warnBroad)
 	}
 	// SNI-проба текущего набора (только если включена).
-	if s.cfg.Safety.VerifySNIEnabled() {
+	if verifySNI {
 		adv.Verification = s.verifyServiceSNI(ctx, adv.Domains)
 	}
 }
@@ -141,6 +145,9 @@ func (s *Syncer) adviseProbe(ctx context.Context, name string, domains []string)
 
 // probeCDN — реальный пробник: DNS/ASN через resolver, списки через registry.
 func (s *Syncer) probeCDN(ctx context.Context, name string, domains []string) *CDNAdvice {
+	s.cfg.RLock()
+	maxASN := s.cfg.Safety.MaxASNPrefixes
+	s.cfg.RUnlock()
 	deps := &cdnProbeDeps{
 		resolveDomain: func(ctx context.Context, d string) ([]string, error) {
 			return s.resolver().ResolveDomain(ctx, d)
@@ -159,7 +166,7 @@ func (s *Syncer) probeCDN(ctx context.Context, name string, domains []string) *C
 			res, err := s.registry().Collect(ctx, "whois", &collectors.Params{
 				Service:     name,
 				Domains:     doms,
-				MaxPrefixes: s.cfg.Safety.MaxASNPrefixes,
+				MaxPrefixes: maxASN,
 			}, collectors.Options{})
 			if err != nil {
 				return 0, err
@@ -289,9 +296,8 @@ func (s *Syncer) ApplyCDNRecommendation(ctx context.Context, name string, adv *C
 	}
 	name = strings.ToLower(strings.TrimSpace(name))
 
-	s.serviceMu.Lock()
-	defer s.serviceMu.Unlock()
-
+	// Фаза 0: быстрая проверка (короткое чтение) — понятная ошибка раньше сети.
+	s.cfg.RLock()
 	found := false
 	for _, p := range s.cfg.Services {
 		if p == name {
@@ -299,27 +305,27 @@ func (s *Syncer) ApplyCDNRecommendation(ctx context.Context, name string, adv *C
 			break
 		}
 	}
+	orig := s.cfg.Overrides[name]
+	s.cfg.RUnlock()
 	if !found {
 		return 0, fmt.Errorf("service %s not found — add it first (CDN is detected automatically on add)", name)
 	}
-
-	orig := s.cfg.Overrides[name]
-	prev := orig
-	if prev.Method == "cdn" {
+	if orig.Method == "cdn" {
 		return 0, fmt.Errorf("service %s already uses method cdn", name)
 	}
-	if prev.Method == "static_url" && (prev.StaticURL == "" || prev.StaticURL == adv.URL) {
+	if orig.Method == "static_url" && (orig.StaticURL == "" || orig.StaticURL == adv.URL) {
 		return 0, fmt.Errorf("service %s already uses official CDN list via static_url", name)
 	}
 
-	// Смена источника: старые AUTO-записи (whois-набор) covered-ветка не
-	// удаляет, поэтому чистим их явно ДО переключения; при ошибке purge
-	// конфигурация не меняется.
+	// Фаза 1: purge сети БЕЗ блокировок (было под serviceMu — вешало всё).
+	// При ошибке конфигурация не меняется (как раньше).
 	purged, perr := s.RemoveServiceEntries(ctx, name)
 	if perr != nil {
 		return 0, fmt.Errorf("purge failed, override unchanged: %w", perr)
 	}
 
+	// Фаза 2: мутация под Lock (коротко, без сети).
+	prev := orig
 	prevMethod := prev.Method
 	if prevMethod == "" {
 		prevMethod = "(auto)"
@@ -330,15 +336,31 @@ func (s *Syncer) ApplyCDNRecommendation(ctx context.Context, name string, adv *C
 	if len(prev.Domains) == 0 && len(adv.Domains) > 0 {
 		prev.Domains = append([]string(nil), adv.Domains...)
 	}
+	s.cfg.Lock()
 	if s.cfg.Overrides == nil {
 		s.cfg.Overrides = make(map[string]config.ServiceOverride)
 	}
+	// Сервис могли удалить, пока шёл purge, — перепроверяем.
+	stillThere := false
+	for _, p := range s.cfg.Services {
+		if p == name {
+			stillThere = true
+			break
+		}
+	}
+	if !stillThere {
+		s.cfg.Unlock()
+		return 0, fmt.Errorf("service %s was removed during purge, override unchanged", name)
+	}
+	cur := s.cfg.Overrides[name]
 	s.cfg.Overrides[name] = prev
 
 	if err := s.cfg.Save(); err != nil {
-		s.cfg.Overrides[name] = orig
+		s.cfg.Overrides[name] = cur
+		s.cfg.Unlock()
 		return 0, fmt.Errorf("config not saved, override unchanged: %w", err)
 	}
+	s.cfg.Unlock()
 
 	s.audit.LogConfigChange("", "core", map[string]string{
 		"service": name,

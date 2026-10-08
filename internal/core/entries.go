@@ -20,8 +20,14 @@ type OrphanEntry struct {
 }
 
 func (s *Syncer) DiffService(ctx context.Context, name string) (*addresslist.Diff, error) {
+	// Снапшот конфига: дальше — сеть и расчёты без блокировок.
+	safety := s.cfg.SnapshotSafety()
+	s.cfg.RLock()
 	list := s.cfg.Firewall.AddressList
 	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
+	ov := s.cfg.Overrides[name]
+	maxASN := s.cfg.Safety.MaxASNPrefixes
+	s.cfg.RUnlock()
 
 	all, err := s.mt().ListEntries(ctx, list)
 	if err != nil {
@@ -30,13 +36,12 @@ func (s *Syncer) DiffService(ctx context.Context, name string) (*addresslist.Dif
 	existing := addresslist.FilterManaged(all, list, comment)
 	foreign := addresslist.ForeignEntries(all, list, comment)
 
-	ov := s.cfg.Overrides[name]
-	raw, _, err := s.collectOrStub(ctx, name, ov)
+	raw, _, err := s.collectOrStub(ctx, name, ov, maxASN)
 	if err != nil {
 		return nil, fmt.Errorf("collect: %w", err)
 	}
 
-	v := validator.Validator{Safety: s.cfg.Safety}
+	v := validator.Validator{Safety: safety}
 	prefixes, rej, err := v.ValidateWithStats(prefixesToStrings(raw), ov)
 	if err != nil {
 		return nil, fmt.Errorf("validate: %w", err)
@@ -103,12 +108,18 @@ func applyForeignExclusions(desired []string, foreign []addresslist.Entry, log *
 }
 
 func (s *Syncer) ListGlobalEntries(ctx context.Context) ([]addresslist.Entry, error) {
-	return s.mt().ListEntries(ctx, s.cfg.Firewall.AddressList)
+	s.cfg.RLock()
+	list := s.cfg.Firewall.AddressList
+	s.cfg.RUnlock()
+	return s.mt().ListEntries(ctx, list)
 }
 
 func (s *Syncer) ListServiceEntries(ctx context.Context, name string) ([]addresslist.Entry, error) {
-	return s.mt().ListServiceEntries(ctx,
-		s.cfg.Firewall.AddressList, s.cfg.Firewall.CommentPrefix, name)
+	s.cfg.RLock()
+	list := s.cfg.Firewall.AddressList
+	prefix := s.cfg.Firewall.CommentPrefix
+	s.cfg.RUnlock()
+	return s.mt().ListServiceEntries(ctx, list, prefix, name)
 }
 
 func (s *Syncer) AuditAddressList(ctx context.Context) ([]OrphanEntry, error) {
@@ -117,11 +128,13 @@ func (s *Syncer) AuditAddressList(ctx context.Context) ([]OrphanEntry, error) {
 		return nil, err
 	}
 
+	s.cfg.RLock()
 	prefix := s.cfg.Firewall.CommentPrefix
 	active := make(map[string]bool, len(s.cfg.Services))
 	for _, sv := range s.cfg.Services {
 		active[sv] = true
 	}
+	s.cfg.RUnlock()
 
 	var orphans []OrphanEntry
 	for _, e := range entries {

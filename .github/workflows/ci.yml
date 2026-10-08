@@ -1,0 +1,57 @@
+name: CI
+
+workflow_dispatch:
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-vet-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.1
+      - name: Install dependencies
+        run: go mod download
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -count=1 ./...
+
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.1
+      - name: Install dependencies
+        run: go mod download
+      - name: Race test
+        run: go test -race -count=1 ./internal/web/ ./internal/core/ ./internal/config/ ./internal/storage/
+
+  lint:
+    if: file_exists('.golangci.yml')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.1
+      - name: Check for golangci-lint config
+        run: |
+          if [ -f .golangci.yml ]; then
+            echo "config_exists=true" >> $GITHUB_ENV
+          else
+            echo "skipping_lint=true" >> $GITHUB_ENV
+          fi
+      - name: Run golangci-lint
+        run: golangci-lint run ./...

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -42,10 +43,16 @@ func (d Duration) Duration() time.Duration {
 }
 
 // Config — корневая структура конфигурации приложения.
+//
+// Потокобезопасность: все обращения к полям идут под mu (RLock для чтения,
+// Lock для записи). Правило: мьютекс берут только точки входа (веб-хендлеры,
+// методы Syncer/Scheduler/Bot, SIGHUP), но никогда — вложенные хелперы,
+// иначе возможен дедлок при ожидающем писателе (рекурсивный RLock).
 type Config struct {
-	path      string `yaml:"-"`
-	Timezone  string `yaml:"timezone"`
-	CachePath string `yaml:"cache_path"`
+	mu        sync.RWMutex `yaml:"-"`
+	path      string       `yaml:"-"`
+	Timezone  string       `yaml:"timezone"`
+	CachePath string       `yaml:"cache_path"`
 
 	Logging   LoggingConfig   `yaml:"logging"`
 	MikroTik  MikroTikConfig  `yaml:"mikrotik"`
@@ -382,6 +389,53 @@ func setDefaults(c *Config) {
 	if c.MikroTik.Timeout.Duration() == 0 {
 		c.MikroTik.Timeout = Duration(30 * time.Second)
 	}
+}
+
+// RLock/RUnlock — чтение полей под разделяемой блокировкой.
+// Lock/Unlock — запись. См. правило в комментарии к Config.
+func (c *Config) RLock()   { c.mu.RLock() }
+func (c *Config) RUnlock() { c.mu.RUnlock() }
+func (c *Config) Lock()    { c.mu.Lock() }
+func (c *Config) Unlock()  { c.mu.Unlock() }
+
+// ReplaceFrom заменяет содержимое конфига содержимым src (для SIGHUP):
+// попольное копирование под Lock вместо `*c = *src` (копировать мьютекс
+// запрещено — go vet copylocks). src должен быть приватным (свежий Load).
+func (c *Config) ReplaceFrom(src *Config) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Timezone = src.Timezone
+	c.CachePath = src.CachePath
+	c.Logging = src.Logging
+	c.MikroTik = src.MikroTik
+	c.Firewall = src.Firewall
+	c.Telegram = src.Telegram
+	c.Web = src.Web
+	c.Scheduler = src.Scheduler
+	c.Safety = src.Safety
+	c.Retry = src.Retry
+	c.External = src.External
+	c.Snapshots = src.Snapshots
+	c.Schedules = src.Schedules
+	c.Services = src.Services
+	c.Overrides = src.Overrides
+}
+
+// SnapshotSafety возвращает копию Safety с собственными флагами:
+// Set пишет в pointee напрямую, поэтому сами указатели копировать нельзя.
+func (c *Config) SnapshotSafety() SafetyConfig {
+	c.RLock()
+	defer c.RUnlock()
+	out := c.Safety
+	if c.Safety.AllowHostRoutes != nil {
+		v := *c.Safety.AllowHostRoutes
+		out.AllowHostRoutes = &v
+	}
+	if c.Safety.VerifySNI != nil {
+		v := *c.Safety.VerifySNI
+		out.VerifySNI = &v
+	}
+	return out
 }
 
 // Validate проверяет корректность конфигурации.

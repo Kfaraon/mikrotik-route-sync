@@ -33,16 +33,19 @@ type BackupFile struct {
 }
 
 func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, error) {
+	// Lock-free: вызывающие держат чтение конфига сами (бот — секцией,
+	// веб — секцией serviceRows, CLI однопоточен).
 	list := s.cfg.Firewall.AddressList
+	commentPrefix := s.cfg.Firewall.CommentPrefix
 	info := &ServiceInfo{
 		Name:     name,
 		List:     list,
-		Comment:  addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
+		Comment:  addresslist.CommentFor(commentPrefix, name),
 		Schedule: s.cfg.EffectiveSchedule(name),
 		Override: s.cfg.Overrides[name],
 	}
 
-	entries, err := s.mt().ListServiceEntries(ctx, list, s.cfg.Firewall.CommentPrefix, name)
+	entries, err := s.mt().ListServiceEntries(ctx, list, commentPrefix, name)
 	if err != nil {
 		s.log.Warn("failed to list entries for info", "service", name, "err", err)
 	} else {
@@ -98,11 +101,10 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 		}
 	}
 
-	s.serviceMu.Lock()
-	defer s.serviceMu.Unlock()
-
+	s.cfg.Lock()
 	for _, p := range s.cfg.Services {
 		if p == name {
+			s.cfg.Unlock()
 			return fmt.Errorf("service %s already exists", name)
 		}
 	}
@@ -112,11 +114,29 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	if s.cfg.Overrides == nil {
 		s.cfg.Overrides = make(map[string]config.ServiceOverride)
 	}
+	prevOv, hadOv := s.cfg.Overrides[name]
 	s.cfg.Overrides[name] = override
 
 	if err := s.cfg.Save(); err != nil {
+		// Откат: файл не изменился — память тоже не должна.
+		kept := s.cfg.Services[:0]
+		for _, p := range s.cfg.Services {
+			if p != name {
+				kept = append(kept, p)
+			}
+		}
+		s.cfg.Services = kept
+		if hadOv {
+			s.cfg.Overrides[name] = prevOv
+		} else {
+			delete(s.cfg.Overrides, name)
+		}
+		s.cfg.Unlock()
 		return err
 	}
+	s.cfg.Unlock()
+
+	// Уведомления и аудит — вне блокировки (сеть).
 	s.audit.LogServiceAdd("", "core", name)
 	s.emit("service_added", map[string]any{"service": name})
 
@@ -131,11 +151,37 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 }
 
 func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes bool) error {
-	s.serviceMu.Lock()
-	defer s.serviceMu.Unlock()
-
 	name = strings.ToLower(strings.TrimSpace(name))
+
+	// Фаза 0: быстрая проверка наличия (короткое чтение).
+	s.cfg.RLock()
 	found := false
+	for _, p := range s.cfg.Services {
+		if p == name {
+			found = true
+			break
+		}
+	}
+	s.cfg.RUnlock()
+	if !found {
+		return fmt.Errorf("service %s not found", name)
+	}
+
+	// Фаза 1: purge записей на роутере — БЕЗ блокировок (сеть на минуты
+	// вешала всё управление). При ошибке сервис НЕ удаляется (как раньше).
+	// Гоночное окно: синк, стартовавший во время purge, может вернуть записи
+	// обратно — они останутся сиротами (управляемость уже снята).
+	if purgeRoutes {
+		n, err := s.RemoveServiceEntries(ctx, name)
+		if err != nil {
+			return fmt.Errorf("purge address-list entries failed, сервис НЕ удалён из конфигурации: %w", err)
+		}
+		s.log.Info("purged service address entries", "service", name, "count", n)
+	}
+
+	// Фаза 2: мутация конфига под Lock (коротко, без сети).
+	s.cfg.Lock()
+	found = false
 	var newServices []string
 	for _, p := range s.cfg.Services {
 		if p == name {
@@ -145,17 +191,9 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 		newServices = append(newServices, p)
 	}
 	if !found {
+		s.cfg.Unlock()
 		return fmt.Errorf("service %s not found", name)
 	}
-
-	if purgeRoutes {
-		n, err := s.RemoveServiceEntries(ctx, name)
-		if err != nil {
-			return fmt.Errorf("purge address-list entries failed, сервис НЕ удалён из конфигурации: %w", err)
-		}
-		s.log.Info("purged service address entries", "service", name, "count", n)
-	}
-
 	prevServices := s.cfg.Services
 	prevOverride, hadOverride := s.cfg.Overrides[name]
 	s.cfg.Services = newServices
@@ -184,9 +222,12 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 			}
 			s.cfg.Schedules.Services[name] = prevSched
 		}
+		s.cfg.Unlock()
 		return fmt.Errorf("config not saved, сервис НЕ удалён: %w", err)
 	}
+	s.cfg.Unlock()
 
+	// Фаза 3: чистка производного состояния — у каждого свои мьютексы.
 	// Снапшоты удаляются только после успешного сохранения конфигурации.
 	ids, err := s.cache.ListSnapshots(name)
 	if err != nil {
@@ -223,8 +264,10 @@ func (s *Syncer) UpdateServiceOverride(ctx context.Context, name string, method 
 		return config.ServiceOverride{}, fmt.Errorf("invalid service name: %s", name)
 	}
 
-	s.serviceMu.Lock()
-	defer s.serviceMu.Unlock()
+	// Только конфиг: serviceMu не трогаем (порядок cfgMu → serviceMu,
+	// обратного захвата нигде нет).
+	s.cfg.Lock()
+	defer s.cfg.Unlock()
 
 	found := false
 	for _, p := range s.cfg.Services {

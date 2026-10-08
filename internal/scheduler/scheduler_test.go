@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"context"
+	"log/slog"
 	"testing"
 	"time"
 )
@@ -49,4 +51,14 @@ func TestPurgeInterval(t *testing.T) {
 	if _, ok := purgeInterval(""); ok {
 		t.Fatal("empty spec must be not ok")
 	}
+}
+
+func TestRunRecoversPanic(t *testing.T) {
+	// nil syncer вызовет панику при вызове SyncOneResult — recover должен её поймать.
+	s := &Scheduler{
+		log:    slog.Default(),
+		syncer: nil,
+	}
+	// Не должно паниковать — recover внутри run ловит панику.
+	s.run(context.Background(), "test-service", "every 1h")
 }

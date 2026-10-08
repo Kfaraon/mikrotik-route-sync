@@ -495,6 +495,10 @@ func backupCmd() *cobra.Command {
 					if err := os.WriteFile(outputFile, data, 0o600); err != nil {
 						return err
 					}
+					// Маршруты — не секреты: открываем чтение группе/всем,
+					// иначе файл, созданный внутри контейнера (nobody 0600),
+					// не прочитать с хоста (бэкап хост↔контейнер).
+					_ = os.Chmod(outputFile, 0o644)
 					fmt.Printf("Backup saved to %s (%d entries)\n", outputFile, len(routes.Entries))
 					return nil
 				}
@@ -534,6 +538,9 @@ func restoreCmd() *cobra.Command {
 					var backup core.BackupFile
 					data, err := os.ReadFile(fromFile)
 					if err != nil {
+						if os.IsPermission(err) {
+							return fmt.Errorf("read backup file: %w (если файл создан на хосте с 0600 — дайте контейнеру чтение: chmod 0644 %s)", err, fromFile)
+						}
 						return fmt.Errorf("read backup file: %w", err)
 					}
 					if err := json.Unmarshal(data, &backup); err != nil {
@@ -797,7 +804,7 @@ func daemonCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("reload config: %w", err)
 				}
-				*cfg = *newCfg
+				cfg.ReplaceFrom(newCfg)
 				return sched.Reload()
 			})
 

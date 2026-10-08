@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1063,5 +1065,287 @@ func TestServicesJSRemovedAlias(t *testing.T) {
 	block := js[start : start+400]
 	if !strings.Contains(block, `"removed"`) {
 		t.Fatalf("historyCounts must read backend field \"removed\": %s", block)
+	}
+}
+
+// TestCSRFBasicauthOrigin — Basic без cookie: программный клиент без Origin
+// проходит, браузерный кросс-сайт с чужим Origin режется (403).
+func TestCSRFBasicauthOrigin(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// Без cookie и без Origin: доходит до хендлера (400 от битого JSON,
+	// а не 401/403) — программные клиенты работают как раньше.
+	req, _ := http.NewRequest("POST", ts.URL+"/api/v1/services", strings.NewReader("{oops"))
+	req.SetBasicAuth("admin", "secret-pass")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		t.Fatalf("programmatic basic client rejected: %d", resp.StatusCode)
+	}
+
+	// Тот же запрос с чужим Origin: 403 до хендлера.
+	req2, _ := http.NewRequest("POST", ts.URL+"/api/v1/services", strings.NewReader("{oops"))
+	req2.SetBasicAuth("admin", "secret-pass")
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Origin", "http://evil.example")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	if resp2.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin basic must be 403, got %d", resp2.StatusCode)
+	}
+}
+
+// TestSameOrigin — строгая сверка Origin с Host.
+func TestSameOrigin(t *testing.T) {
+	req, _ := http.NewRequest("GET", "http://mrs.local/", nil)
+	req.Host = "mrs.local"
+	for _, ok := range []string{"", "http://mrs.local", "https://mrs.local", "HTTP://MRS.LOCAL"} {
+		if !sameOrigin(req, ok) {
+			t.Fatalf("must accept %q", ok)
+		}
+	}
+	for _, bad := range []string{"http://mrs.local.evil.com", "http://evil.com", "http://mrs.local:9999", "://", "http://"} {
+		if sameOrigin(req, bad) {
+			t.Fatalf("must reject %q", bad)
+		}
+	}
+}
+
+// TestClientIPForwarded — разбор XFF справа налево.
+func TestClientIPForwarded(t *testing.T) {
+	c, err := newIPChecker(&config.WebConfig{
+		AllowedCIDRs:   []string{"10.0.0.0/8"},
+		TrustedProxies: []string{"10.9.0.0/16"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkreq := func(remote, xff string) *http.Request {
+		req, _ := http.NewRequest("GET", "http://x/", nil)
+		req.RemoteAddr = remote
+		if xff != "" {
+			req.Header.Set("X-Forwarded-For", xff)
+		}
+		return req
+	}
+	// Прокси дописал реальный IP: берём его, а не поддельный первый.
+	// XFF "9.9.9.9, 1.2.3.4": 9.9.9.9 подделал клиент, 1.2.3.4 дописал прокси.
+	if got := c.clientIP(mkreq("10.9.0.1:123", "9.9.9.9, 1.2.3.4")); got.String() != "1.2.3.4" {
+		t.Fatalf("want rightmost untrusted 1.2.3.4, got %v", got)
+	}
+	// Доверенный hop справа пропускается.
+	if got := c.clientIP(mkreq("10.9.0.1:123", "1.2.3.4, 10.9.0.9")); got.String() != "1.2.3.4" {
+		t.Fatalf("want client past trusted hop, got %v", got)
+	}
+	// Напрямую без прокси: XFF игнорируется.
+	if got := c.clientIP(mkreq("1.2.3.4:123", "10.99.99.99")); got.String() != "1.2.3.4" {
+		t.Fatalf("want remote addr, got %v", got)
+	}
+	// Вся цепочка доверенная: верим самому левому.
+	if got := c.clientIP(mkreq("10.9.0.1:123", "10.1.0.5, 10.9.0.2")); got.String() != "10.1.0.5" {
+		t.Fatalf("want leftmost of trusted chain, got %v", got)
+	}
+}
+
+// TestReadyzOpenFast — /readyz без авторизации и без ping роутера.
+func TestReadyzOpenFast(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("readyz: %d", resp.StatusCode)
+	}
+	var v apiEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil || !v.OK {
+		t.Fatalf("bad envelope: %+v %v", v, err)
+	}
+}
+
+// TestHTTPSNow — Secure/HSTS только при прямом TLS или https от доверенного.
+func TestHTTPSNow(t *testing.T) {
+	srv, _ := newTestServer(t)
+	mkreq := func(remote, proto string) *http.Request {
+		req, _ := http.NewRequest("GET", "http://x/", nil)
+		req.RemoteAddr = remote
+		if proto != "" {
+			req.Header.Set("X-Forwarded-Proto", proto)
+		}
+		return req
+	}
+	// В тестовом конфиге доверенных прокси нет — только прямой TLS.
+	if srv.httpsNow(mkreq("127.0.0.1:1", "")) {
+		t.Fatal("plain http must not be https")
+	}
+	if srv.httpsNow(mkreq("127.0.0.1:1", "https")) {
+		t.Fatal("untrusted proto header must not enable secure")
+	}
+}
+
+// TestSettingsSecretClear — маркер clear:<key> очищает секрет, без него
+// пустое/маска пропускаются (значение сохраняется).
+func TestSettingsSecretClear(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+	start := strings.Index(page, `name="csrf-token" content="`)
+	rest := page[start+len(`name="csrf-token" content="`):]
+	token := rest[:strings.Index(rest, `"`)]
+
+	_, body := doAuth(client, ts.URL, "POST", "/actions/settings", token,
+		strings.NewReader("csrf_token="+token+"&external.akamai_api_key=AKAMAITEST123"))
+	if !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("set key failed: %s", body)
+	}
+	if cfg.External.AkamaiAPIKey != "AKAMAITEST123" {
+		t.Fatalf("key not applied: %q", cfg.External.AkamaiAPIKey)
+	}
+
+	// Пустое без маркера — пропуск (остаётся AKAMAITEST123).
+	_, body = doAuth(client, ts.URL, "POST", "/actions/settings", token,
+		strings.NewReader("csrf_token="+token+"&external.akamai_api_key="))
+	if !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("empty without marker failed: %s", body)
+	}
+	if cfg.External.AkamaiAPIKey != "AKAMAITEST123" {
+		t.Fatalf("empty without marker must keep value: %q", cfg.External.AkamaiAPIKey)
+	}
+
+	// С маркером — очистка.
+	_, body = doAuth(client, ts.URL, "POST", "/actions/settings", token,
+		strings.NewReader("csrf_token="+token+"&external.akamai_api_key=&clear%3Aexternal.akamai_api_key=1"))
+	if !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("clear failed: %s", body)
+	}
+	if cfg.External.AkamaiAPIKey != "" {
+		t.Fatalf("key not cleared: %q", cfg.External.AkamaiAPIKey)
+	}
+
+	// Очистка обязательного секрета — явная ошибка валидации, а не молчание.
+	_, body = doAuth(client, ts.URL, "POST", "/actions/settings", token,
+		strings.NewReader("csrf_token="+token+"&web.auth.password=&clear%3Aweb.auth.password=1"))
+	if !strings.Contains(body, "web.auth.username/password required") {
+		t.Fatalf("clearing required secret must fail validation: %s", body)
+	}
+}
+
+// TestConcurrentReadsAndMutations — чтения и мутации конфига параллельно
+// под -race: ни fatal error, ни дедлока, конфиг консистентен.
+func TestConcurrentReadsAndMutations(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	jarClient := &http.Client{Jar: newJar(t), Timeout: 20 * time.Second}
+	_, page := doAuth(jarClient, ts.URL, "GET", "/settings", "", nil)
+	start := strings.Index(page, `name="csrf-token" content="`)
+	rest := page[start+len(`name="csrf-token" content="`):]
+	token := rest[:strings.Index(rest, `"`)]
+
+	var wg sync.WaitGroup
+	errs := make(chan string, 64)
+	stop := make(chan struct{})
+
+	readPaths := []string{"/", "/services", "/api/v1/services", "/api/v1/schedules",
+		"/api/v1/status", "/api/v1/history?limit=5", "/api/v1/logs?limit=5"}
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			c := &http.Client{Timeout: 20 * time.Second}
+			for i := 0; i < 15; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				p := readPaths[(g+i)%len(readPaths)]
+				req, _ := http.NewRequest("GET", ts.URL+p, nil)
+				req.SetBasicAuth("admin", "secret-pass")
+				resp, err := c.Do(req)
+				if err != nil {
+					errs <- "read: " + err.Error()
+					return
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					errs <- fmt.Sprintf("read %s: %d", p, resp.StatusCode)
+					return
+				}
+			}
+		}(g)
+	}
+
+	for w := 0; w < 2; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < 10; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if (i+w)%3 == 2 {
+					// Мутация overrides-карты (вторая пишущая сторона).
+					method := "dynamic,whois"
+					if (i+w)%2 == 0 {
+						method = "dynamic"
+					}
+					st, _ := doJSON(jarClient, ts.URL, "PUT", "/api/v1/services/testsvc", token, nil,
+						`{"method":`+strconv.Quote(method)+`}`)
+					if st != http.StatusOK {
+						errs <- fmt.Sprintf("override PUT: %d", st)
+						return
+					}
+					continue
+				}
+				spec := "manual"
+				if (i+w)%2 == 0 {
+					spec = "every 6h"
+				}
+				st, _ := doJSON(jarClient, ts.URL, "PUT", "/api/v1/schedules/testsvc", token, nil,
+					`{"schedule":`+strconv.Quote(spec)+`}`)
+				if st != http.StatusOK {
+					errs <- fmt.Sprintf("schedule PUT: %d", st)
+					return
+				}
+			}
+		}(w)
+	}
+
+	wg.Wait()
+	close(stop)
+	select {
+	case e := <-errs:
+		t.Fatalf("concurrent workload failed: %s", e)
+	default:
+	}
+	found := false
+	for _, sv := range cfg.Services {
+		if sv == "testsvc" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("testsvc lost after concurrent workload")
 	}
 }

@@ -970,6 +970,12 @@
   function init() {
     bindEvents();
     loadAll(true);
+    // Живой дашборд: обновление раз в 30с, на скрытой вкладке — пауза
+    // (WS-Hub сервером поднят, но фронтом не используется — интервалом дешевле).
+    setInterval(function () {
+      if (document.hidden) return;
+      loadAll(true);
+    }, 30000);
   }
 
   init();

@@ -34,16 +34,19 @@ import (
 // ============================================================================
 
 type Result struct {
-	Service      string          `json:"service"`
-	List         string          `json:"list"`
-	Comment      string          `json:"comment"`
-	Success      bool            `json:"success"`
-	Added        int             `json:"added"`
-	Removed      int             `json:"removed"`
-	Unchanged    int             `json:"unchanged"`
-	Updated      int             `json:"updated"` // re-enable выключенных управляемых записей
-	Error        string          `json:"error,omitempty"`
-	DryRun       bool            `json:"dry_run"`
+	Service   string `json:"service"`
+	List      string `json:"list"`
+	Comment   string `json:"comment"`
+	Success   bool   `json:"success"`
+	Added     int    `json:"added"`
+	Removed   int    `json:"removed"`
+	Unchanged int    `json:"unchanged"`
+	Updated   int    `json:"updated"` // re-enable выключенных управляемых записей
+	Error     string `json:"error,omitempty"`
+	DryRun    bool   `json:"dry_run"`
+	// MikroTikDown — роутер был недоступен: в dry-run результат посчитан
+	// от пустого списка (fail-open для тестов), ему нельзя доверять.
+	MikroTikDown bool            `json:"mikrotik_down,omitempty"`
 	Coverage     *CoverageReport `json:"coverage,omitempty"`
 	Broad        []string        `json:"broad,omitempty"`
 	Verification []*SNIVerdict   `json:"verification,omitempty"`
@@ -158,6 +161,10 @@ func (s *Syncer) buildDepsLocked() {
 }
 
 func (s *Syncer) ApplyConfig() error {
+	// Перестроение клиентов по текущему конфигу: чтение под RLock,
+	// вызывающие (веб, SIGHUP-путь) блокировок не держат.
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
 	mt, err := mikrotik.NewClient(s.cfg, s.log)
 	if err != nil {
 		return fmt.Errorf("rebuild mikrotik client: %w", err)
@@ -188,6 +195,12 @@ func (s *Syncer) LastSync() time.Time {
 func (s *Syncer) Version() string { return version.Version }
 
 func (s *Syncer) Config() *config.Config { return s.cfg }
+
+// RLockConfig/RUnlockConfig — чтение конфига для внешних владельцев
+// (бот, планировщик вызывает напрямую через *Config). Правило то же:
+// только точки входа, без вложенности.
+func (s *Syncer) RLockConfig()   { s.cfg.RLock() }
+func (s *Syncer) RUnlockConfig() { s.cfg.RUnlock() }
 
 func (s *Syncer) Cache() *storage.Cache { return s.cache }
 
@@ -320,8 +333,22 @@ func (s *Syncer) PingMikroTik(ctx context.Context) error {
 
 func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) (Result, error) {
 	start := time.Now()
+
+	// Снапшот конфига: дальше тело работает с локальными копиями —
+	// сохранение настроек или удаление сервиса параллельно синк не тормозит
+	// и не даёт гонок (мутации берут Lock).
+	safety := s.cfg.SnapshotSafety()
+	s.cfg.RLock()
 	list := s.cfg.Firewall.AddressList
 	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
+	ov := s.cfg.Overrides[name]
+	manageDisabled := s.cfg.Firewall.ManageDisabled
+	maxDeleteRatio := s.cfg.Safety.MaxDeleteRatio
+	requireConfirmationOver := s.cfg.Safety.RequireConfirmationOver
+	warnBroadV4 := s.cfg.Safety.WarnBroadV4
+	maxASNPrefixes := s.cfg.Safety.MaxASNPrefixes
+	verifySNI := safety.VerifySNIEnabled()
+	s.cfg.RUnlock()
 
 	res := Result{
 		Service:   name,
@@ -363,6 +390,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		if dry {
 			log.Warn("MikroTik is unavailable in DRY-RUN mode. Assuming empty list for testing.", "err", err)
 			all = nil
+			res.MikroTikDown = true
 		} else {
 			res.Error = fmt.Sprintf("list entries: %v", err)
 			log.Error("failed to list address entries", "err", err)
@@ -376,9 +404,8 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 
 	s.setProgress(name, "сбор адресов из источников", 15, dry)
 
-	// 2. Сбор IPv4 CIDR.
-	ov := s.cfg.Overrides[name]
-	raw, method, err := s.collectOrStub(ctx, name, ov)
+	// 2. Сбор IPv4 CIDR (лимит ASN — из стартового снапшота конфига).
+	raw, method, err := s.collectOrStub(ctx, name, ov, maxASNPrefixes)
 	if err != nil {
 		res.Error = fmt.Sprintf("collect: %v", err)
 		log.Error("failed to collect prefixes", "err", err)
@@ -390,7 +417,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	s.setProgress(name, "валидация адресов", 40, dry)
 
 	// 3. Валидация.
-	v := validator.Validator{Safety: s.cfg.Safety}
+	v := validator.Validator{Safety: safety}
 	prefixes, rej, err := v.ValidateWithStats(prefixesToStrings(raw), ov)
 	if err != nil {
 		res.Error = fmt.Sprintf("validate: %v", err)
@@ -436,7 +463,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// 4b. Широкие префиксы: warn-отчёт (кроме cdn — официальные списки
 	// широкие по построению, это нормально).
 	if !hasMethod(splitMethods(method), "cdn") {
-		if broad := validator.BroadPrefixes(agg, s.cfg.Safety.WarnBroadV4); len(broad) > 0 {
+		if broad := validator.BroadPrefixes(agg, warnBroadV4); len(broad) > 0 {
 			res.Broad = broad
 			log.Warn("collected set contains broad prefixes, excess traffic may go via VPN",
 				"broad", broad)
@@ -448,7 +475,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// Шумят только провалы primary-домена (первый в списке — домен самого
 	// сервиса); aux-домены (googlevideo.com и т.п.) склонны к ложным
 	// срабатываниям и видны лишь в Verification.
-	if s.cfg.Safety.VerifySNIEnabled() {
+	if verifySNI {
 		vds := s.verifyServiceSNI(ctx, svcDomains)
 		res.Verification = vds
 		if primary := primarySNIFailed(vds); len(primary) > 0 {
@@ -519,7 +546,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// firewall.manage_disabled=false — пользователь управляет полем сам:
 	// записи остаются выключенными, но не считаются unchanged.
 	toUpdate := addresslist.UpdatePlan(desired, existing)
-	if s.cfg.Firewall.ManageDisabled {
+	if manageDisabled {
 		res.Updated = len(toUpdate)
 	} else {
 		if len(toUpdate) > 0 {
@@ -540,8 +567,8 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// 7. SAFE-DIFF.
 	if !covered && len(existing) > 0 && !force {
 		if err := addresslist.CheckDeletion(len(existing), len(diff.Remove), addresslist.SafetyParams{
-			MaxDeleteRatio:          s.cfg.Safety.MaxDeleteRatio,
-			RequireConfirmationOver: s.cfg.Safety.RequireConfirmationOver,
+			MaxDeleteRatio:          maxDeleteRatio,
+			RequireConfirmationOver: requireConfirmationOver,
 		}); err != nil {
 			res.Error = err.Error()
 			log.Error("safety-check blocked sync", "err", err)
@@ -655,9 +682,10 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		"updated": res.Updated,
 	})
 
-	s.serviceMu.Lock()
+	// Финализация: rec собирается без блокировок, запись истории (bbolt I/O
+	// под своим мьютексом) — ВНЕ serviceMu, иначе каждый синк держит все
+	// операции с сервисами. lastSync под serviceMu — коротко.
 	rec := history.Record{
-		Time:       res.StartedAt,
 		Service:    name,
 		Method:     method,
 		Status:     "success",
@@ -680,6 +708,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		rec.RejectedTotal = res.Rejected.Total()
 	}
 	s.history.Add(rec)
+	s.serviceMu.Lock()
 	s.lastSync = time.Now()
 	s.serviceMu.Unlock()
 
@@ -708,7 +737,11 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 	var firstErr error
 	results := make([]Result, 0, len(services))
 
-	maxConcurrent := s.cfg.Scheduler.MaxConcurrent
+	maxConcurrent := func() int {
+		s.cfg.RLock()
+		defer s.cfg.RUnlock()
+		return s.cfg.Scheduler.MaxConcurrent
+	}()
 	if maxConcurrent <= 0 {
 		maxConcurrent = 3
 	}
@@ -876,7 +909,11 @@ func (s *Syncer) GetLogs(ctx context.Context, limit int, match func(map[string]a
 	if limit <= 0 {
 		limit = 100
 	}
-	logFile := s.cfg.Logging.File
+	logFile := func() string {
+		s.cfg.RLock()
+		defer s.cfg.RUnlock()
+		return s.cfg.Logging.File
+	}()
 	if logFile == "" {
 		return []map[string]any{}, false, nil
 	}

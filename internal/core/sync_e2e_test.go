@@ -284,6 +284,13 @@ func newE2ESyncer(t *testing.T, fr *fakeRouter, src *fakeSource, manageDisabled 
 	}
 	t.Cleanup(func() { _ = cache.Close() })
 
+	// Офлайн-инвариант: ни один E2E-тест не ходит в интернет.
+	// demo.com резолвился бы в системный DNS, а SNI-проба dial'ила бы :443.
+	// deadEndResolver быстро отказывает, SNI-проба выключена (best-effort
+	// поля coverage/verification тесты не ассертят).
+	noSNI := false
+	cfg.Safety.VerifySNI = &noSNI
+
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s, err := NewSyncer(cfg, log, cache, &notifier.NoopNotifier{})
 	if err != nil {
@@ -297,6 +304,9 @@ func newE2ESyncer(t *testing.T, fr *fakeRouter, src *fakeSource, manageDisabled 
 		return &fakeCollector{src: src}, nil
 	})
 	s.regPtr.Store(reg)
+
+	// DNS в никуда: покрытие best-effort быстро отказывает без сети.
+	s.resPtr.Store(deadEndResolver())
 
 	return s
 }

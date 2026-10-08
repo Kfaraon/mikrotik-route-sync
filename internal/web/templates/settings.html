@@ -35,7 +35,8 @@
         {{ if eq $group.Title "Общее" }}
         <div class="group-help" id="settings-help" hidden>
           Все параметры config.yaml. Секреты показаны замаскированными — чтобы оставить
-          значение без изменений, не редактируйте поле; чтобы заменить — введите новое целиком.
+          значение без изменений, не редактируйте поле; чтобы заменить — введите новое целиком;
+          чтобы очистить — поставьте галочку «очистить».
           Изменения сохраняются атомарно (config.yaml, права 0600) и применяются сразу,
           если это возможно; описание каждого поля (включая пометки о перезапуске) — под ним.
           Поля «Расписание» и «Overrides» сервисов — на страницах «Расписания» и «Сервисы».
@@ -62,6 +63,7 @@
                 <input type="password" name="{{ $row.Key }}" value="{{ $row.Value }}" autocomplete="off">
                 <button type="button" class="btn btn-outline" title="Показать на 10 секунд">👁</button>
               </span>
+              <label class="clear-secret"><input type="checkbox" name="clear:{{ $row.Key }}" value="1"> очистить</label>
             {{ else if eq $row.Type "number" }}
               <input class="is-narrow" type="number" name="{{ $row.Key }}" value="{{ $row.Value }}" step="1">
             {{ else if eq $row.Type "float" }}

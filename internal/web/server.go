@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -135,12 +136,22 @@ var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true
-		}
-		return origin == "//"+r.Host || strings.HasPrefix(origin, "http://"+r.Host) || strings.HasPrefix(origin, "https://"+r.Host)
+		return sameOrigin(r, r.Header.Get("Origin"))
 	},
+}
+
+// sameOrigin строго сравнивает Origin с Host запроса: префиксные совпадения
+// вида http://host.evil.com отвергаются. Пустой Origin — не браузер
+// (программный клиент вроде curl), пропускаем.
+func sameOrigin(r *http.Request, origin string) bool {
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 func (h *Hub) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -348,9 +359,29 @@ func (c *ipChecker) clientIP(r *http.Request) net.IP {
 	for _, tp := range c.trustedProxies {
 		if tp.Contains(ip) {
 			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-				first := strings.TrimSpace(strings.Split(xff, ",")[0])
-				if parsed := net.ParseIP(first); parsed != nil {
-					return parsed
+				// Справа налево до первого недоверенного: каждый прокси
+				// дописывает адрес в конец, левые элементы клиент подделывает.
+				// Если вся цепочка доверенная — верим самому левому.
+				parts := strings.Split(xff, ",")
+				leftmost := net.ParseIP(strings.TrimSpace(parts[0]))
+				for i := len(parts) - 1; i >= 0; i-- {
+					p := net.ParseIP(strings.TrimSpace(parts[i]))
+					if p == nil {
+						continue
+					}
+					untrusted := true
+					for _, inner := range c.trustedProxies {
+						if inner.Contains(p) {
+							untrusted = false
+							break
+						}
+					}
+					if untrusted {
+						return p
+					}
+				}
+				if leftmost != nil {
+					return leftmost
 				}
 			}
 			break
@@ -526,6 +557,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 
 	router := chi.NewRouter()
 	router.Use(middleware.Recoverer)
+	router.Use(middleware.Compress(5))
 	router.Use(s.securityHeaders)
 	router.Use(s.cidrMiddleware)
 	router.Use(s.rateLimitMiddleware)
@@ -536,19 +568,13 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	})
 
 	router.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-		mtErr := s.syncer.PingMikroTik(ctx)
-		payload := apiEnvelope{OK: mtErr == nil, Data: map[string]any{
-			"mikrotik": mtErr == nil,
-			"cache":    s.syncer.Cache() != nil,
-		}}
-		if mtErr != nil {
-			payload.Error = "mikrotik unreachable"
-			writeJSON(w, http.StatusServiceUnavailable, payload)
-			return
-		}
-		writeJSON(w, http.StatusOK, payload)
+		// Дешёвая готовность процесса без auth: тяжёлый ping роутера здесь
+		// позволял неавторизованным клиентам держать 10-секундные проверки.
+		// Глубокое состояние — в /api/v1/status (под авторизацией).
+		writeJSON(w, http.StatusOK, apiEnvelope{OK: true, Data: map[string]any{
+			"ready": true,
+			"cache": s.syncer.Cache() != nil,
+		}})
 	})
 
 	router.Route("/api/v1", func(r chi.Router) {
@@ -614,18 +640,49 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Web.SecurityHeaders {
+		s.cfg.RLock()
+		secOn := s.cfg.Web.SecurityHeaders
+		s.cfg.RUnlock()
+		if secOn {
 			w.Header().Set("Content-Security-Policy",
 				"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'")
 			w.Header().Set("X-Frame-Options", "DENY")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("Referrer-Policy", "same-origin")
-			if r.TLS != nil {
+			// За TLS-терминирующим прокси r.TLS пуст — смотрим ещё
+			// X-Forwarded-Proto от доверенного прокси.
+			if s.httpsNow(r) {
 				w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// httpsNow — соединение защищено: прямое TLS или https за доверенным прокси.
+// X-Forwarded-Proto от недоверенного источника игнорируется, иначе клиент
+// мог бы сам себе включить Secure-cookie/HSTS.
+func (s *Server) httpsNow(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if !strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, tp := range s.ips.trustedProxies {
+		if tp.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) cidrMiddleware(next http.Handler) http.Handler {
@@ -670,7 +727,12 @@ func (s *Server) maxBodyMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.cfg.Web.Auth.Enabled {
+		s.cfg.RLock()
+		authOn := s.cfg.Web.Auth.Enabled
+		authUser := s.cfg.Web.Auth.Username
+		authPass := s.cfg.Web.Auth.Password
+		s.cfg.RUnlock()
+		if !authOn {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -684,8 +746,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		user, pass, ok := r.BasicAuth()
-		userOK := subtle.ConstantTimeCompare([]byte(user), []byte(s.cfg.Web.Auth.Username)) == 1
-		passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(s.cfg.Web.Auth.Password)) == 1
+		userOK := subtle.ConstantTimeCompare([]byte(user), []byte(authUser)) == 1
+		passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(authPass)) == 1
 		if !ok || !userOK || !passOK {
 			if ok {
 				s.log.Warn("web auth failed", "user", user, "remote", r.RemoteAddr)
@@ -701,6 +763,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			Value:    id,
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   s.httpsNow(r),
 			SameSite: http.SameSiteStrictMode,
 			Expires:  sess.expires,
 		})
@@ -737,7 +800,11 @@ func sessionFrom(r *http.Request) *sessionInfo {
 
 func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.cfg.Web.CSRFEnabled || !s.cfg.Web.Auth.Enabled {
+		s.cfg.RLock()
+		csrfOn := s.cfg.Web.CSRFEnabled
+		authOn := s.cfg.Web.Auth.Enabled
+		s.cfg.RUnlock()
+		if !csrfOn || !authOn {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -747,6 +814,14 @@ func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 		}
 
 		if si := sessionFrom(r); si != nil && si.basicAuth {
+			// Программные клиенты (curl) шлют Basic без cookie и без Origin.
+			// Браузерный кросс-сайт всегда добавляет Origin (запрещённый
+			// заголовок, подменить из JS нельзя) — чужой режем.
+			if origin := r.Header.Get("Origin"); !sameOrigin(r, origin) {
+				s.log.Warn("cross-origin basic-auth request rejected", "remote", r.RemoteAddr, "origin", origin)
+				http.Error(w, `{"ok":false,"error":"cross-origin request rejected"}`, http.StatusForbidden)
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -888,7 +963,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 	data["CSRF"] = csrf
 	data["Version"] = version.Version
+	s.cfg.RLock()
 	data["Timezone"] = s.cfg.Timezone
+	s.cfg.RUnlock()
 	data["DotClass"], data["DotTitle"] = s.dotState(r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
@@ -912,13 +989,19 @@ func (s *Server) statusData(r *http.Request) map[string]any {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
+	// Снапшот читаемого: дальше сеть без блокировок.
+	s.cfg.RLock()
+	prefix := s.cfg.Firewall.CommentPrefix
+	addressList := s.cfg.Firewall.AddressList
+	serviceCount := len(s.cfg.Services)
+	active := make(map[string]bool, len(s.cfg.Services))
+	for _, sv := range s.cfg.Services {
+		active[sv] = true
+	}
+	s.cfg.RUnlock()
+
 	managed := 0
 	if entries, err := s.syncer.ListGlobalEntries(ctx); err == nil {
-		prefix := s.cfg.Firewall.CommentPrefix
-		active := make(map[string]bool, len(s.cfg.Services))
-		for _, sv := range s.cfg.Services {
-			active[sv] = true
-		}
 		for _, e := range entries {
 			// Только активные сервисы: записи удалённых (purge=false)
 			// остаются на роутере, но управляемыми уже не считаются.
@@ -930,8 +1013,8 @@ func (s *Server) statusData(r *http.Request) map[string]any {
 
 	return map[string]any{
 		"MikroTikStatus": map[bool]string{true: "ok", false: "error"}[s.syncer.PingMikroTik(ctx) == nil],
-		"AddressList":    s.cfg.Firewall.AddressList,
-		"ServiceCount":   len(s.cfg.Services),
+		"AddressList":    addressList,
+		"ServiceCount":   serviceCount,
 		"ManagedEntries": managed,
 		"Version":        version.Version,
 		"Uptime":         time.Since(s.syncer.StartTime()).Truncate(time.Second).String(),
@@ -943,8 +1026,11 @@ func (s *Server) statusData(r *http.Request) map[string]any {
 func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 	// Без statusData: шаблону нужны только CSRF/Dot*, всё остальное
 	// досчитывает JS через API (иначе лишние обращения к MikroTik).
+	s.cfg.RLock()
+	svcs := append([]string(nil), s.cfg.Services...)
+	s.cfg.RUnlock()
 	s.render(w, r, "dashboard.html", map[string]any{
-		"Services": s.cfg.Services,
+		"Services": svcs,
 	})
 }
 
@@ -974,23 +1060,36 @@ func (s *Server) pageServices(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serviceRows(r *http.Request) []serviceRow {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	rows := make([]serviceRow, 0, len(s.cfg.Services))
-	for _, name := range s.cfg.Services {
+
+	// Снапшот статики под RLock: дальше сеть (ListServiceEntries) и история
+	// без блокировок (их мьютексы свои).
+	s.cfg.RLock()
+	names := append([]string(nil), s.cfg.Services...)
+	list := s.cfg.Firewall.AddressList
+	prefix := s.cfg.Firewall.CommentPrefix
+	statics := make([]serviceRow, 0, len(names))
+	for _, name := range names {
 		row := serviceRow{
 			Name:      name,
-			List:      s.cfg.Firewall.AddressList,
-			Comment:   addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
+			List:      list,
+			Comment:   addresslist.CommentFor(prefix, name),
 			Schedule:  s.cfg.EffectiveSchedule(name),
-			Overrides: s.hasOverride(name),
+			Overrides: hasOverrideLocked(s.cfg, name),
 		}
 		if ov, ok := s.cfg.Overrides[name]; ok {
 			row.Method = ov.Method
 			row.Domains = append([]string(nil), ov.Domains...)
 		}
-		if entries, err := s.syncer.ListServiceEntries(ctx, name); err == nil {
+		statics = append(statics, row)
+	}
+	s.cfg.RUnlock()
+
+	rows := make([]serviceRow, 0, len(statics))
+	for _, row := range statics {
+		if entries, err := s.syncer.ListServiceEntries(ctx, row.Name); err == nil {
 			row.Routes = len(entries)
 		}
-		if rec, ok := s.syncer.History().Last(name); ok {
+		if rec, ok := s.syncer.History().Last(row.Name); ok {
 			status := "успех"
 			if rec.Status == "failed" || rec.Error != "" {
 				status = "ошибка"
@@ -1002,8 +1101,9 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 	return rows
 }
 
-func (s *Server) hasOverride(name string) bool {
-	_, ok := s.cfg.Overrides[name]
+// hasOverrideLocked — проверка override, вызывающий держит чтение конфига.
+func hasOverrideLocked(cfg *config.Config, name string) bool {
+	_, ok := cfg.Overrides[name]
 	return ok
 }
 
@@ -1016,24 +1116,37 @@ type scheduleRow struct {
 }
 
 func (s *Server) pageSchedules(w http.ResponseWriter, r *http.Request) {
-	rows := make([]scheduleRow, 0, len(s.cfg.Services))
-	for _, name := range s.cfg.Services {
-		row := scheduleRow{Name: name, Effective: s.cfg.EffectiveSchedule(name)}
+	// Всё читаемое — под RLock, рендер после (без вложенности).
+	s.cfg.RLock()
+	names := append([]string(nil), s.cfg.Services...)
+	global := s.cfg.Schedules.Global
+	type schedStatic struct {
+		name, effective, serviceOv, group, groupSched string
+	}
+	statics := make([]schedStatic, 0, len(names))
+	for _, name := range names {
+		st := schedStatic{name: name, effective: s.cfg.EffectiveSchedule(name)}
 		if sv, ok := s.cfg.Schedules.Services[name]; ok {
-			row.ServiceOv = sv.Schedule
+			st.serviceOv = sv.Schedule
 		}
 		for gname, g := range s.cfg.Schedules.Groups {
 			for _, gs := range g.Services {
 				if gs == name {
-					row.Group = gname
-					row.GroupSched = g.Schedule
+					st.group = gname
+					st.groupSched = g.Schedule
 				}
 			}
 		}
-		rows = append(rows, row)
+		statics = append(statics, st)
+	}
+	s.cfg.RUnlock()
+	rows := make([]scheduleRow, 0, len(statics))
+	for _, st := range statics {
+		rows = append(rows, scheduleRow{Name: st.name, Effective: st.effective,
+			ServiceOv: st.serviceOv, Group: st.group, GroupSched: st.groupSched})
 	}
 	s.render(w, r, "schedules.html", map[string]any{
-		"Global": s.cfg.Schedules.Global,
+		"Global": global,
 		"Rows":   rows,
 	})
 }
@@ -1211,6 +1324,9 @@ func (s *Server) settingValue(key string) string {
 }
 
 func (s *Server) settingGroups() []settingGroup {
+	// Чтение всего конфига под RLock (вызывающий блокировок не держит).
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
 	var groups []settingGroup
 	idx := map[string]int{}
 	for _, sp := range settingsSpec {
@@ -1251,21 +1367,25 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	// Состояние роутера — из кэша с TTL (mikrotikHealth): синхронный ping
 	// на каждый полл вкладок держал бы коннекты по 3с.
 	mtOK, mtKnown := s.mikrotikHealth(r.Context())
+	// Map'ы маршалятся внутри writeOK — держим чтение до конца записи.
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
 	writeOK(w, map[string]any{
 		"version":     version.Version,
 		"uptime":      time.Since(s.syncer.StartTime()).String(),
 		"last_sync":   s.syncer.LastSync(),
 		"mikrotik_ok": mtKnown && mtOK,
-		"services":    s.cfg.Services,
+		"services":    append([]string(nil), s.cfg.Services...),
 		"degraded":    s.syncer.DegradedServices(),
 		"schedules":   s.cfg.Schedules,
 	})
 }
 
 func (s *Server) apiServices(w http.ResponseWriter, r *http.Request) {
+	rows := s.serviceRows(r)
 	writeOK(w, map[string]any{
-		"services": s.serviceRows(r),
-		"count":    len(s.cfg.Services),
+		"services": rows,
+		"count":    len(rows),
 	})
 }
 
@@ -1317,7 +1437,10 @@ func (s *Server) apiRecommendService(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{"advice": adv}
 	if req.Apply {
-		purged, err := s.syncer.ApplyCDNRecommendation(context.WithoutCancel(r.Context()), name, adv)
+		// Предел как у одиночного синка (purge перебирает записи).
+		actx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+		purged, err := s.syncer.ApplyCDNRecommendation(actx, name, adv)
+		cancel()
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
@@ -1380,11 +1503,17 @@ func (s *Server) apiSyncMany(w http.ResponseWriter, r *http.Request) {
 	}
 	services := req.Services
 	if len(services) == 0 {
-		services = s.cfg.Services
+		// Копия под чтением: горутина живёт дольше запроса.
+		s.cfg.RLock()
+		services = append([]string(nil), s.cfg.Services...)
+		s.cfg.RUnlock()
 	}
 	runner := s.syncer
-	ctx := context.WithoutCancel(r.Context())
+	// Фоновая задача с пределом (как у планировщика/бота, но шире —
+	// сервисов много): зависший MikroTik не копит горутины вечно.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Minute)
 	go func() {
+		defer cancel()
 		_ = runner.SyncMany(ctx, services, req.DryRun, req.Force)
 	}()
 	writeOK(w, map[string]any{"started": true, "services": services, "dry_run": req.DryRun})
@@ -1402,7 +1531,9 @@ func (s *Server) apiSyncOne(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	res, err := s.syncer.SyncService(context.WithoutCancel(r.Context()), name, req.DryRun, req.Force)
+	tctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	res, err := s.syncer.SyncService(context.WithoutCancel(tctx), name, req.DryRun, req.Force)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, apiEnvelope{OK: false, Data: res, Error: err.Error()})
 		return
@@ -1412,7 +1543,11 @@ func (s *Server) apiSyncOne(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiDryRun(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	res, err := s.syncer.SyncService(r.Context(), name, true, false)
+	// Предел сверху как у одиночного синка; обрыв соединения клиентом
+	// тоже прерывает (r.Context) — ждать некого.
+	dctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	res, err := s.syncer.SyncService(dctx, name, true, false)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, apiEnvelope{OK: false, Data: res, Error: err.Error()})
 		return
@@ -1421,6 +1556,8 @@ func (s *Server) apiDryRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiSchedules(w http.ResponseWriter, r *http.Request) {
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
 	eff := map[string]string{}
 	for _, svc := range s.cfg.Services {
 		eff[svc] = s.cfg.EffectiveSchedule(svc)
@@ -1442,14 +1579,14 @@ func (s *Server) apiUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := s.applySchedule(service, req.Schedule); err != nil {
+	if err := s.applySchedule(r, service, req.Schedule); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeOK(w, map[string]string{"service": service, "schedule": req.Schedule})
 }
 
-func (s *Server) applySchedule(service, spec string) error {
+func (s *Server) applySchedule(r *http.Request, service, spec string) error {
 	service = strings.ToLower(strings.TrimSpace(service))
 	spec = strings.TrimSpace(spec)
 	if !config.ValidateServiceName(service) {
@@ -1458,11 +1595,10 @@ func (s *Server) applySchedule(service, spec string) error {
 	if spec != "" && !scheduler.ValidSpec(spec) {
 		return fmt.Errorf("некорректное расписание %q (ожидается cron, 'every 6h', 'daily at 03:00', manual/disabled/inherit)", spec)
 	}
-	s.cfg.SetServiceSchedule(service, spec)
-	if err := s.cfg.Save(); err != nil {
+	if err := s.cfg.ReplaceServiceSchedule(service, spec); err != nil {
 		return err
 	}
-	s.auditChange(nil, "web", "schedule_change", service)
+	s.auditChange(r, "web", "schedule_change", service)
 	if err := s.syncer.ReloadScheduler(); err != nil {
 		s.log.Warn("failed to reload scheduler after schedule change", "err", err)
 	}
@@ -1543,11 +1679,13 @@ type addressRow struct {
 }
 
 func (s *Server) toAddressRows(entries []addresslist.Entry) []addressRow {
+	s.cfg.RLock()
 	prefix := s.cfg.Firewall.CommentPrefix
 	active := make(map[string]bool, len(s.cfg.Services))
 	for _, sv := range s.cfg.Services {
 		active[sv] = true
 	}
+	s.cfg.RUnlock()
 
 	rows := make([]addressRow, 0, len(entries))
 	for _, e := range entries {
@@ -1559,7 +1697,11 @@ func (s *Server) toAddressRows(entries []addresslist.Entry) []addressRow {
 			Disabled: e.IsDisabled(),
 		}
 		if svc, ok := addresslist.ServiceFromComment(e.Comment, prefix); ok {
-			row.Service = svc
+			// Бейдж — только активным: удалённые сервисы видны лишь
+			// в логах, а комментарий с AUTO:имя остаётся как есть.
+			if active[svc] {
+				row.Service = svc
+			}
 			row.Managed = active[svc] && !e.IsDynamic()
 		}
 		rows = append(rows, row)
@@ -1605,17 +1747,20 @@ func (s *Server) apiAddressList(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	entries, err := s.syncer.ListGlobalEntries(ctx)
+	s.cfg.RLock()
+	listName := s.cfg.Firewall.AddressList
+	s.cfg.RUnlock()
 	if err != nil {
 		s.log.Debug("MikroTik is unavailable when listing global entries via API, returning empty list", "err", err)
 		writeOK(w, map[string]any{
-			"list":          s.cfg.Firewall.AddressList,
+			"list":          listName,
 			"entries":       []addressRow{},
 			"mikrotik_down": true,
 		})
 		return
 	}
 	writeOK(w, map[string]any{
-		"list":    s.cfg.Firewall.AddressList,
+		"list":    listName,
 		"entries": s.toAddressRows(entries),
 	})
 }
@@ -1631,13 +1776,17 @@ func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	entries, err := s.syncer.ListServiceEntries(ctx, name)
+	s.cfg.RLock()
+	listName := s.cfg.Firewall.AddressList
+	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
+	s.cfg.RUnlock()
 	if err != nil {
 		s.log.Debug("MikroTik is unavailable when listing service entries via API, returning empty list",
 			"service", name, "err", err)
 		writeOK(w, map[string]any{
 			"service":       name,
-			"list":          s.cfg.Firewall.AddressList,
-			"comment":       addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
+			"list":          listName,
+			"comment":       comment,
 			"entries":       []addresslist.Entry{},
 			"count":         0,
 			"mikrotik_down": true,
@@ -1646,8 +1795,8 @@ func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
 	}
 	writeOK(w, map[string]any{
 		"service": name,
-		"list":    s.cfg.Firewall.AddressList,
-		"comment": addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
+		"list":    listName,
+		"comment": comment,
 		"entries": entries,
 		"count":   len(entries),
 	})
@@ -1658,24 +1807,34 @@ func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
 // ============================================================================
 
 func (s *Server) actionSyncAll(w http.ResponseWriter, r *http.Request) {
-	if len(s.cfg.Services) == 0 {
+	// Копия списка: горутина живёт дольше запроса, слайс конфига — нет.
+	s.cfg.RLock()
+	services := append([]string(nil), s.cfg.Services...)
+	s.cfg.RUnlock()
+	if len(services) == 0 {
 		_, _ = w.Write([]byte("<p class=\"muted\">Нет сервисов</p>"))
 		return
 	}
-	ctx := context.WithoutCancel(r.Context())
-	go func() { _ = s.syncer.SyncMany(ctx, s.cfg.Services, false, false) }()
-	writeOK(w, map[string]any{"started": true, "services": s.cfg.Services})
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Minute)
+	go func() {
+		defer cancel()
+		_ = s.syncer.SyncMany(ctx, services, false, false)
+	}()
+	writeOK(w, map[string]any{"started": true, "services": services})
 }
 
 func (s *Server) actionSyncSelected(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
-	services := r.PostForm["service"]
+	services := append([]string(nil), r.PostForm["service"]...)
 	if len(services) == 0 {
 		writeErr(w, http.StatusBadRequest, "nothing selected")
 		return
 	}
-	ctx := context.WithoutCancel(r.Context())
-	go func() { _ = s.syncer.SyncMany(ctx, services, false, false) }()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Minute)
+	go func() {
+		defer cancel()
+		_ = s.syncer.SyncMany(ctx, services, false, false)
+	}()
 	writeOK(w, map[string]any{"started": true, "services": services})
 }
 
@@ -1709,7 +1868,7 @@ func (s *Server) actionDeleteService(w http.ResponseWriter, r *http.Request) {
 func (s *Server) actionUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	service := r.FormValue("service")
 	spec := r.FormValue("schedule")
-	if err := s.applySchedule(service, spec); err != nil {
+	if err := s.applySchedule(r, service, spec); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1730,14 +1889,25 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if key == "csrf_token" || len(values) == 0 {
 			continue
 		}
+		// Маркер очистки секрета: checkbox clear:<key> в форме.
+		if strings.HasPrefix(key, "clear:") {
+			continue
+		}
 		value := values[0]
 		if IsSecretPartial(key) && (value == "" || strings.HasPrefix(value, "\u2022")) {
-			continue
+			// Пустое/маска без маркера очистки — оставить как есть.
+			if r.PostForm.Get("clear:"+key) == "" {
+				continue
+			}
+			value = ""
 		}
 		updates = append(updates, update{key, value})
 	}
 
+	// Клон для валидации — маршалинг под чтением.
+	s.cfg.RLock()
 	cand, err := s.cloneConfig()
+	s.cfg.RUnlock()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "clone config: "+err.Error())
 		return
@@ -1758,19 +1928,45 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Применение под записью с откатом старых значений: ранний return
+	// оставлял бы полуприменённый конфиг (память != файл).
+	s.cfg.Lock()
+	type backup struct {
+		key string
+		old any
+	}
+	var backed []backup
+	applyErr := ""
 	for _, u := range updates {
-		if err := s.cfg.Set(u.key, u.value); err != nil {
-			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("apply %s: %v", u.key, err))
-			return
+		old, gerr := s.cfg.GetPath(u.key)
+		if gerr != nil {
+			applyErr = fmt.Sprintf("backup %s: %v", u.key, gerr)
+			break
+		}
+		backed = append(backed, backup{key: u.key, old: old})
+		if serr := s.cfg.Set(u.key, u.value); serr != nil {
+			applyErr = fmt.Sprintf("apply %s: %v", u.key, serr)
+			break
 		}
 	}
-	if err := s.cfg.Save(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed to save config: "+err.Error())
+	if applyErr == "" {
+		if serr := s.cfg.Save(); serr != nil {
+			applyErr = fmt.Sprintf("failed to save config: %v", serr)
+		}
+	}
+	if applyErr != "" {
+		for i := len(backed) - 1; i >= 0; i-- {
+			_ = s.cfg.Set(backed[i].key, backed[i].old)
+		}
+		s.cfg.Unlock()
+		writeErr(w, http.StatusInternalServerError, "не применено, откачено: "+applyErr)
 		return
 	}
+	s.cfg.Unlock()
 
 	s.applyRuntimeChanges()
 
+	s.auditChange(r, "web", "settings_update", fmt.Sprintf("%d keys", len(updates)))
 	s.log.Info("settings updated", "user", user, "changed_keys", len(updates))
 	telegramChanged := false
 	for _, u := range updates {
@@ -1801,14 +1997,19 @@ func (s *Server) cloneConfig() (*config.Config, error) {
 
 // ИЗМЕНЕНО: добавлен вызов RestartTelegramBot
 func (s *Server) applyRuntimeChanges() {
-	logging.SetLevel(s.cfg.Logging.Level)
+	s.cfg.RLock()
+	logLevel := s.cfg.Logging.Level
+	telegramCfg := s.cfg.Telegram
+	timezone := s.cfg.Timezone
+	s.cfg.RUnlock()
+	logging.SetLevel(logLevel)
 
 	if err := s.syncer.ApplyConfig(); err != nil {
 		s.log.Error("failed to apply config to clients", "err", err)
 	}
 
 	// Нотификатор пересоздаётся, если менялись telegram.* настройки.
-	s.syncer.SetNotifier(notifier.FromConfig(s.cfg.Telegram, s.cfg.Timezone, s.log))
+	s.syncer.SetNotifier(notifier.FromConfig(telegramCfg, timezone, s.log))
 
 	// Перезапуск Telegram-бота при изменении настроек telegram.*
 	if err := s.syncer.RestartTelegramBot(); err != nil {
@@ -1821,7 +2022,9 @@ func (s *Server) applyRuntimeChanges() {
 }
 
 func (s *Server) actionLogsClear(w http.ResponseWriter, r *http.Request) {
+	s.cfg.RLock()
 	file := s.cfg.Logging.File
+	s.cfg.RUnlock()
 	if file == "" {
 		http.Error(w, "logging to file is disabled", http.StatusBadRequest)
 		return
@@ -1835,6 +2038,7 @@ func (s *Server) actionLogsClear(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.auditChange(r, "web", "logs_clear", file)
 	writeOK(w, map[string]bool{"cleared": true})
 }
 

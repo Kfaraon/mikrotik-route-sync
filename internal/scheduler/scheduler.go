@@ -89,9 +89,11 @@ func (s *Scheduler) startLocked(quiet bool) {
 	// Инициализируем кучу для interval-based сервисов
 	s.intervalHeap = newIntervalHeap()
 
+	s.cfg.RLock()
 	for _, svc := range s.cfg.Services {
 		s.addLocked(ctx, svc, s.cfg.ScheduleFor(svc))
 	}
+	s.cfg.RUnlock()
 	s.cron.Start()
 
 	// Запускаем единую горутину для interval-based сервисов
@@ -192,20 +194,32 @@ func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
 	sem := s.sem
 	select {
 	case sem <- struct{}{}:
+		s.wg.Add(1)
 		go func(gate chan struct{}) {
+			defer s.wg.Done()
 			defer func() { <-gate }()
 			s.run(ctx, service, spec)
 		}(sem)
-	default:
+	case <-ctx.Done():
+		s.log.Warn("scheduled sync skipped: context cancelled", "service", service, "schedule", spec)
+	case <-time.After(5 * time.Minute):
 		s.log.Warn("scheduled sync skipped: concurrency limit reached", "service", service, "schedule", spec)
 	}
 }
 
 func (s *Scheduler) run(parent context.Context, service, spec string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("scheduled sync panicked", "service", service, "schedule", spec, "panic", r)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(parent, 10*time.Minute)
 	defer cancel()
 	s.log.Info("scheduled sync triggered", "service", service, "schedule", spec)
-	s.syncer.SyncOneResult(ctx, service, false)
+	res := s.syncer.SyncOneResult(ctx, service, false)
+	if !res.Success {
+		s.log.Warn("scheduled sync failed", "service", service, "error", res.Error)
+	}
 }
 
 func (s *Scheduler) stopLocked(ctx context.Context) {

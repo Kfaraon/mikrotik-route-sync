@@ -112,6 +112,8 @@ func splitMessage(text string, chunk int) []string {
 }
 
 func (b *Bot) menu(id int64) {
+	b.syncer.RLockConfig()
+	defer b.syncer.RUnlockConfig()
 	rows := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📊 Статус", "cmd:status"),
@@ -132,6 +134,8 @@ func (b *Bot) menu(id int64) {
 }
 
 func (b *Bot) statusText(ctx context.Context) string {
+	b.syncer.RLockConfig()
+	defer b.syncer.RUnlockConfig()
 	var sb strings.Builder
 	sb.WriteString("Статус (Firewall Address List):\n")
 	fmt.Fprintf(&sb, "  список: %s\n", b.syncer.Config().Firewall.AddressList)
@@ -162,6 +166,8 @@ func (b *Bot) statusText(ctx context.Context) string {
 }
 
 func (b *Bot) schedulesText() string {
+	b.syncer.RLockConfig()
+	defer b.syncer.RUnlockConfig()
 	var sb strings.Builder
 	sb.WriteString("Эффективные расписания:\n")
 	for _, svc := range b.syncer.ListServices() {

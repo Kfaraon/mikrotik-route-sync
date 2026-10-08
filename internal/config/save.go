@@ -17,6 +17,7 @@ import (
 
 // Save сохраняет текущее состояние Config в файл атомарно.
 func (c *Config) Save() error {
+	// Вызывать под c.RLock/c.Lock: маршалинг читает все поля и map'ы.
 	return AtomicWrite(c.path, c)
 }
 
@@ -147,10 +148,24 @@ func setNestedValue(v reflect.Value, parts []string, value any) error {
 // SetServiceSchedule задаёт расписание сервиса напрямую (без разбора пути
 // по '.', который ломается на именах-доменах вида youtube.com).
 func (c *Config) SetServiceSchedule(service, spec string) {
+	c.Lock()
+	defer c.Unlock()
 	if c.Schedules.Services == nil {
 		c.Schedules.Services = map[string]ServiceSchedule{}
 	}
 	c.Schedules.Services[service] = ServiceSchedule{Schedule: spec}
+}
+
+// ReplaceServiceSchedule задаёт расписание и сразу сохраняет файл —
+// всё под одной блокировкой (раздельные Set+Save гоняли бы с читателями).
+func (c *Config) ReplaceServiceSchedule(service, spec string) error {
+	c.Lock()
+	defer c.Unlock()
+	if c.Schedules.Services == nil {
+		c.Schedules.Services = map[string]ServiceSchedule{}
+	}
+	c.Schedules.Services[service] = ServiceSchedule{Schedule: spec}
+	return c.Save()
 }
 
 // GetPath читает значение параметра по точечному пути ("mikrotik.host").
@@ -346,9 +361,10 @@ func toBool(v any) (bool, error) {
 //
 // Шаги (PROMPT IX):
 //  1. Marshal полного состояния Config в YAML
-//  2. Запись во временный файл (.tmp) с правами 0600
+//  2. Запись во временный файл (.config-*.tmp, уникальное имя — параллельные
+//     Save не пересекаются) с правами 0600
 //  3. fsync для гарантии записи на диск
-//  4. os.Rename .tmp -> оригинальный путь (атомарная POSIX-операция)
+//  4. os.Rename tmp -> оригинальный путь (атомарная POSIX-операция)
 //
 // Полная сериализация гарантирует, что изменения, сделанные через
 // веб-интерфейс (настройки, расписания, overrides), реально сохраняются.
@@ -379,12 +395,13 @@ func AtomicWrite(path string, c *Config) error {
 		return fmt.Errorf("close encoder: %w", err)
 	}
 
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, buf.Bytes(), 0o600); err != nil {
+	tmpFile, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
 		// Fallback: bind-mount без права создания файлов в каталоге
 		// (Docker Desktop: /data root:root 0755, а сам файл конфига 0777 —
 		// проверено на живом контейнере: "open config.yaml.tmp: permission
-		// denied"). Пишем прямо в оригинал: truncate + запись.
+		// denied"). Пишем прямо в оригинал: truncate + запись (неатомарно,
+		// но лучше потери настроек; риск описан в доке).
 		if copyErr := os.WriteFile(path, buf.Bytes(), 0o600); copyErr != nil {
 			return fmt.Errorf("write temp: %v; in-place write: %w", err, copyErr)
 		}
@@ -393,24 +410,28 @@ func AtomicWrite(path string, c *Config) error {
 		}
 		return nil
 	}
-
-	// Fsync перед rename
-	if f, err := os.Open(tmpPath); err == nil {
-		_ = f.Sync()
-		_ = f.Close()
+	tmpPath := tmpFile.Name()
+	if _, err := tmpFile.Write(buf.Bytes()); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write temp: %w", err)
 	}
+	// Fsync перед rename
+	_ = tmpFile.Sync()
+	_ = tmpFile.Close()
 
 	// На Windows chmod(0600) делает файл read-only и блокирует последующий
-	// rename поверх него — снимаем атрибут перед заменой.
-	if _, err := os.Stat(path); err == nil {
-		_ = os.Chmod(path, 0o666)
+	// rename поверх него — снимаем атрибут перед заменой. На POSIX rename
+	// прав на файл не требует, окно 0666 не открываем вовсе.
+	if runtime.GOOS == "windows" {
+		if _, err := os.Stat(path); err == nil {
+			_ = os.Chmod(path, 0o666)
+		}
 	}
 
-	// renameFunc — точка расширения для тестов.
+	// renameFunc — точка расширения для тестов: переопределяется
+	// последовательно (тесты config не параллельные), гонки нет.
 	var renameErr error
-	if renameFunc == nil {
-		renameFunc = os.Rename
-	}
 	if renameErr = renameFunc(tmpPath, path); renameErr != nil {
 		// Fallback: rename невозможен поверх bind-mount / между устройствами
 		// (Docker: "./config.yaml:/data/config.yaml" -> "device or resource busy",
@@ -430,7 +451,7 @@ func AtomicWrite(path string, c *Config) error {
 }
 
 // renameFunc переопределяется в тестах для эмуляции недоступности rename.
-var renameFunc func(oldname, newname string) error
+var renameFunc = os.Rename
 
 // copyFileSync перезаписывает содержимое dst содержимым src
 // (используется, когда атомарный rename недоступен).

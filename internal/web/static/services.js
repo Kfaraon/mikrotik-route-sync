@@ -1540,6 +1540,10 @@
           if (parts.length) msg += ": " + parts.join(" ");
           var flags = qualityFlags(data);
           if (flags.length) msg += " · ⚠ " + flags.join(", ");
+          // Fail-open dry-run: роутер был недоступен, цифры условные.
+          if (dry && data && data.mikrotik_down) {
+            msg += " · ⚠ MikroTik недоступен, результат условный";
+          }
 
           showToast(msg);
 

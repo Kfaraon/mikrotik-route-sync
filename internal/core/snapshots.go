@@ -19,7 +19,10 @@ type SnapshotInfo struct {
 }
 
 func (s *Syncer) createSnapshot(ctx context.Context, name string, entries []addresslist.Entry) string {
-	if !s.cfg.Snapshots.Enabled {
+	s.cfg.RLock()
+	enabled := s.cfg.Snapshots.Enabled
+	s.cfg.RUnlock()
+	if !enabled {
 		return ""
 	}
 
@@ -48,7 +51,10 @@ func (s *Syncer) createSnapshot(ctx context.Context, name string, entries []addr
 }
 
 func (s *Syncer) CreateSnapshot(ctx context.Context, service string, addresses []string) (string, error) {
-	if !s.cfg.Snapshots.Enabled {
+	s.cfg.RLock()
+	enabled := s.cfg.Snapshots.Enabled
+	s.cfg.RUnlock()
+	if !enabled {
 		return "", fmt.Errorf("snapshots are disabled")
 	}
 	id, err := s.cache.CreateSnapshot(service, addresses)
@@ -65,8 +71,10 @@ func (s *Syncer) GetSnapshot(ctx context.Context, service, id string, entries *[
 		return fmt.Errorf("load snapshot: %w", err)
 	}
 
+	s.cfg.RLock()
 	list := s.cfg.Firewall.AddressList
 	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, service)
+	s.cfg.RUnlock()
 	out := make([]addresslist.Entry, 0, len(addresses))
 	for _, a := range addresses {
 		out = append(out, addresslist.Entry{Address: a, List: list, Comment: comment, Disabled: "false"})
@@ -97,6 +105,9 @@ func (s *Syncer) DeleteSnapshot(ctx context.Context, service, id string) error {
 }
 
 func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.Duration) (int, error) {
+	s.cfg.RLock()
+	maxCount := s.cfg.Snapshots.MaxCount
+	s.cfg.RUnlock()
 	ids, err := s.cache.ListSnapshots(service)
 	if err != nil {
 		return 0, fmt.Errorf("list snapshots: %w", err)
@@ -118,7 +129,6 @@ func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.
 	if err != nil {
 		return deleted, nil
 	}
-	maxCount := s.cfg.Snapshots.MaxCount
 	if maxCount > 0 && len(remaining) > maxCount {
 		sort.Slice(remaining, func(i, j int) bool {
 			return remaining[i].CreatedAt.Before(remaining[j].CreatedAt)

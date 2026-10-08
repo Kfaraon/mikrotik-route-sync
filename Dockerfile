@@ -12,6 +12,7 @@ FROM ${REGISTRY}/golang:1.27.1-alpine AS builder
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
+ARG TARGETARCH
 
 # Устанавливаем только необходимые для сборки инструменты
 RUN apk add --no-cache ca-certificates tzdata
@@ -29,7 +30,7 @@ RUN go mod download
 COPY . .
 
 # Собираем статический бинарный файл с оптимизациями и внедрением версии
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build \
     -trimpath \
     -ldflags="-s -w \
     -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Version=${VERSION} \

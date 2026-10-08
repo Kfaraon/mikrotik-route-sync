@@ -14,18 +14,18 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
 )
 
-func (s *Syncer) collectOrStub(ctx context.Context, name string, ov config.ServiceOverride) ([]netip.Prefix, string, error) {
+func (s *Syncer) collectOrStub(ctx context.Context, name string, ov config.ServiceOverride, maxASN int) ([]netip.Prefix, string, error) {
 	if s.collectFn != nil {
 		return s.collectFn(ctx, name, ov)
 	}
-	return s.collect(ctx, name, ov)
+	return s.collect(ctx, name, ov, maxASN)
 }
 
 // ============================================================================
 // Сбор префиксов
 // ============================================================================
 
-func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOverride) ([]netip.Prefix, string, error) {
+func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOverride, maxASN int) ([]netip.Prefix, string, error) {
 	class := classifier.Classify(name, ov.Method)
 
 	opts := collectors.Options{
@@ -43,7 +43,7 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 		maxPrefixes = ov.MaxASNPrefixes
 	}
 	if maxPrefixes == 0 {
-		maxPrefixes = s.cfg.Safety.MaxASNPrefixes
+		maxPrefixes = maxASN
 	}
 	asn := 0
 	if class.ASN != "" {
