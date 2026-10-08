@@ -1,0 +1,59 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: paypal
+title: PayPal
+domains:
+  - paypal.com
+  - account-paypal.info
+  - account-paypal.net
+  - account-paypal.org
+  - accountpaypal.com
+  - accountpaypal.net
+  - accountpaypal.org
+  - anfutong.cn
+  - anfutong.com
+  - anfutong.com.cn
+  - beibao.cn
+  - beibao.com
+  - beibao.com.cn
+  - bill-safe.com
+  - billmelater.com
+  - billmelater.info
+  - billmelater.net
+  - bml.info
+  - braintreegateway.com
+  - braintreegateway.tv
+  - braintreepayments.com
+  - braintreepayments.info
+  - braintreepayments.org
+  - braintreepayments.tv
+  - braintreepaymentsolutions.com
+  - braintreeps.com
+  - briantreepayments.net
+  - briantreepayments.tv
+  - buyfast-paysmart.net
+  - card.io
+  - cash2.com
+  - cashify.com
+  - cashify.net
+  - devtools-paypal.com
+  - experiencebillmelater.com
+  - filipino-music.net
+  - fundpaypal.com
+  - getbraintree.com
+  - gmoney.org
+  - i-o-u.info
+  - krakenjs.com
+  - loanbuilder.com
+  - login-paypal.com
+  - login-paypal.info
+  - mywaytopay.info
+  - mywaytopay.net
+  - pa9pal.com
+  - paaypal.com
+  - paily.net
+  - paily.org
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

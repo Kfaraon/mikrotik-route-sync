@@ -11,6 +11,7 @@ import (
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/validator"
 )
 
@@ -247,6 +248,122 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	s.audit.LogServiceDelete("", "core", name)
 	s.emit("service_removed", map[string]any{"service": name})
 	return nil
+}
+
+// maxPresetApplyDomains — предел доменов пресета при применении на сервис.
+// См. maxServiceDomains в web: bulk dynamic-конвейер не тянет физически.
+const maxPresetApplyDomains = 5000
+
+// ApplyPresetRefresh пересчитывает Domains сервиса из пресета с сохранением
+// ручных доменов: ручные = текущие Domains минус прошлый снимок Generated.
+// Возвращает diff для показа перед dry-run. Большие пресеты (rublock)
+// требуют force=true. Действующие маршруты не трогает (только конфиг).
+func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug string, force bool) (added, removed []string, err error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+
+	s.cfg.RLock()
+	ov, _ := s.cfg.Overrides[name]
+	inServices := false
+	for _, p := range s.cfg.Services {
+		if p == name {
+			inServices = true
+			break
+		}
+	}
+	s.cfg.RUnlock()
+	if !inServices {
+		return nil, nil, fmt.Errorf("service %s not found", name)
+	}
+	slug := strings.ToLower(strings.TrimSpace(presetSlug))
+	if slug == "" {
+		slug = ov.Preset
+	}
+	if slug == "" {
+		return nil, nil, fmt.Errorf("service %s has no preset bound (передайте preset явно)", name)
+	}
+	p, ok := presets.Domains(slug)
+	if !ok {
+		return nil, nil, fmt.Errorf("preset %q unavailable (зеркало не скачано?)", slug)
+	}
+	full, _ := presets.Get(slug)
+	if full.Large && !force {
+		return nil, nil, fmt.Errorf("preset %q large (%d domains): подтвердите force=true", slug, len(p))
+	}
+	if len(p) > maxPresetApplyDomains {
+		return nil, nil, fmt.Errorf("preset %q too large (%d domains, max %d)", slug, len(p), maxPresetApplyDomains)
+	}
+
+	generated := make(map[string]bool, len(ov.Generated))
+	for _, d := range ov.Generated {
+		generated[strings.ToLower(d)] = true
+	}
+	inPreset := make(map[string]bool, len(p))
+	for _, d := range p {
+		inPreset[strings.ToLower(d)] = true
+	}
+	var userAdded []string
+	for _, d := range ov.Domains {
+		if !generated[strings.ToLower(d)] && !inPreset[strings.ToLower(d)] {
+			userAdded = append(userAdded, d)
+		}
+	}
+	newDomains := append([]string(nil), p...)
+	for _, d := range userAdded {
+		if !inPreset[strings.ToLower(d)] {
+			newDomains = append(newDomains, d)
+		}
+	}
+	oldSet := make(map[string]bool, len(ov.Domains))
+	for _, d := range ov.Domains {
+		oldSet[strings.ToLower(d)] = true
+	}
+	newSet := make(map[string]bool, len(newDomains))
+	for _, d := range newDomains {
+		newSet[strings.ToLower(d)] = true
+	}
+	for _, d := range newDomains {
+		if !oldSet[strings.ToLower(d)] {
+			added = append(added, d)
+		}
+	}
+	for _, d := range ov.Domains {
+		if !newSet[strings.ToLower(d)] {
+			removed = append(removed, d)
+		}
+	}
+
+	primary := ov.Primary
+	if primary == "" && len(p) > 0 {
+		primary = p[0]
+	}
+	nov := ov
+	nov.Domains = newDomains
+	nov.Generated = append([]string(nil), p...)
+	nov.Preset = slug
+	nov.Primary = primary
+
+	s.cfg.Lock()
+	cur, hadCur := s.cfg.Overrides[name]
+	s.cfg.Overrides[name] = nov
+	if err := s.cfg.Save(); err != nil {
+		if hadCur {
+			s.cfg.Overrides[name] = cur
+		} else {
+			delete(s.cfg.Overrides, name)
+		}
+		s.cfg.Unlock()
+		return nil, nil, fmt.Errorf("config not saved, preset unchanged: %w", err)
+	}
+	s.cfg.Unlock()
+
+	s.audit.LogConfigChange("", "core", map[string]string{
+		"service": name,
+		"preset":  slug,
+	})
+	s.emit("service_updated", map[string]any{"service": name, "preset": slug})
+	s.log.Info("preset refreshed", "service", name, "preset", slug,
+		"added", len(added), "removed", len(removed))
+	return added, removed, nil
 }
 
 func (s *Syncer) ListServices() []string {

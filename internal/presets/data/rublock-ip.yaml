@@ -1,0 +1,12 @@
+# Ручной пресет (не генерируется): RU IP-лист как static_url.
+# Доменный rublock (1.7M) dynamic-способом невозможен физически
+# (годы DNS); IP-лист ~50k префиксов идёт существующим static-конвейером.
+slug: rublock-ip
+title: RU заблокированные (IP-лист)
+domains: []
+method: static_url
+static_url: https://antifilter.download/list/ip.lst
+source:
+  repo: antifilter.download
+  commit: ""
+  date: ""

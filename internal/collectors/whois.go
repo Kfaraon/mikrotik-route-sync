@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"sort"
 	"time"
 )
 
@@ -68,7 +69,15 @@ func (c *WHOISCollector) Collect(ctx context.Context, service string, opts Optio
 
 	seen := map[netip.Prefix]bool{}
 	var all []netip.Prefix
+	// Детерминированный порядок ASN: обход Go-map рандомизирован, и кап
+	// maxPrefixes резал бы случайный поднабор при каждом запуске (churn
+	// в address-list, ложные safe-diff). Сортируем — результат стабилен.
+	ordered := make([]int, 0, len(asns))
 	for asn := range asns {
+		ordered = append(ordered, asn)
+	}
+	sort.Ints(ordered)
+	for _, asn := range ordered {
 		lines, err := getASPrefixes(ctx, c.http, c.cache, c.ttl, asn)
 		if err != nil {
 			continue

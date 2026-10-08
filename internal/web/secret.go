@@ -14,10 +14,11 @@ import (
 // secretFields — список ключей конфигурации, значения которых считаются секретными.
 // Они маскируются в UI, API, CLI и никогда не логируются в открытом виде.
 var secretFields = map[string]struct{}{
-	"mikrotik.password":       {},
-	"telegram.bot_token":      {},
-	"web.auth.password":       {},
-	"external.akamai_api_key": {},
+	"mikrotik.password":        {},
+	"telegram.bot_token":       {},
+	"web.auth.password":        {},
+	"external.akamai_api_key":  {},
+	"external.urlscan_api_key": {},
 	// _FILE-варианты не содержат секретов, но тоже маскируем для единообразия
 	"mikrotik.password_file":       {},
 	"telegram.bot_token_file":      {},

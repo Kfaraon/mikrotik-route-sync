@@ -65,6 +65,8 @@ type Config struct {
 	External  ExternalConfig  `yaml:"external"`
 	Snapshots SnapshotsConfig `yaml:"snapshots"`
 	Schedules SchedulesConfig `yaml:"schedules"`
+	Suggest   SuggestConfig   `yaml:"suggest"`
+	Presets   PresetsConfig   `yaml:"presets"`
 
 	Services  []string                   `yaml:"services"`
 	Overrides map[string]ServiceOverride `yaml:"overrides"`
@@ -191,6 +193,7 @@ type ExternalConfig struct {
 	// запросов к bgp.tools (требование их API: описательный UA со способом связи).
 	BGPToolsContact string   `yaml:"bgp_tools_contact"`
 	AkamaiAPIKey    string   `yaml:"akamai_api_key"`
+	UrlscanAPIKey   string   `yaml:"urlscan_api_key"`
 	RDAPTimeout     Duration `yaml:"rdap_timeout"`
 	Resolver        string   `yaml:"resolver"`
 	// FallbackResolvers — резервные DNS при недоступности основного
@@ -223,10 +226,36 @@ type ServiceSchedule struct {
 	Schedule string `yaml:"schedule"`
 }
 
+// SuggestConfig — подбор доменов для сервисов (советник, не синк).
+type SuggestConfig struct {
+	// V2flyEnabled — каталог пресетов v2fly в выборе.
+	V2flyEnabled bool `yaml:"v2fly_enabled"`
+	// RuEnabled — RU-пресет (antifilter) в выборе (список огромный).
+	RuEnabled bool `yaml:"ru_enabled"`
+	// UrlscanMode — "off"|"key"|"anonymous" (ключ — external.urlscan_api_key).
+	UrlscanMode string `yaml:"urlscan_mode"`
+	// Sources — порядок источников: preset, urlscan (manual доступен всегда).
+	Sources []string `yaml:"sources"`
+}
+
+// PresetsConfig — локальное зеркало пресетов.
+type PresetsConfig struct {
+	// UpdateSchedule — расписание обновления зеркала (cron/every/daily,
+	// пусто — только вручную).
+	UpdateSchedule string `yaml:"update_schedule"`
+}
+
 // ServiceOverride — переопределения для конкретного сервиса.
 type ServiceOverride struct {
-	Method          string   `yaml:"method"`
-	Domains         []string `yaml:"domains"`
+	Method  string   `yaml:"method"`
+	Domains []string `yaml:"domains"`
+	// Primary — витринный домен (первый для ASN-резолва и SNI); пусто — domains[0].
+	Primary string `yaml:"primary,omitempty"`
+	// Preset — слаг пресета, из которого скопированы Generated.
+	Preset string `yaml:"preset,omitempty"`
+	// Generated — последний применённый снимок пресета (для refresh без
+	// потери ручных доменов: ручные = Domains минус Generated).
+	Generated       []string `yaml:"generated,omitempty"`
 	StaticURL       string   `yaml:"static_url"`
 	AlsoCDN         []string `yaml:"also_cdn"`
 	MaxASNPrefixes  int      `yaml:"max_asn_prefixes"`
@@ -264,6 +293,9 @@ func Load(path string) (*Config, error) {
 	}
 	if ak := os.Getenv("MRS_AKAMAI_API_KEY"); ak != "" {
 		c.External.AkamaiAPIKey = ak
+	}
+	if uk := os.Getenv("MRS_URLSCAN_API_KEY"); uk != "" {
+		c.External.UrlscanAPIKey = uk
 	}
 
 	// Проверка прав файла (обязательно 0600).
@@ -389,6 +421,14 @@ func setDefaults(c *Config) {
 	if c.MikroTik.Timeout.Duration() == 0 {
 		c.MikroTik.Timeout = Duration(30 * time.Second)
 	}
+	// Подбор доменов по умолчанию выключен: внешние вызовы (urlscan) и
+	// гигантский RU-список включаются осознанно (bool по нулям — off).
+	if c.Suggest.UrlscanMode == "" {
+		c.Suggest.UrlscanMode = "off"
+	}
+	if len(c.Suggest.Sources) == 0 {
+		c.Suggest.Sources = []string{"preset", "urlscan"}
+	}
 }
 
 // RLock/RUnlock — чтение полей под разделяемой блокировкой.
@@ -417,6 +457,8 @@ func (c *Config) ReplaceFrom(src *Config) {
 	c.External = src.External
 	c.Snapshots = src.Snapshots
 	c.Schedules = src.Schedules
+	c.Suggest = src.Suggest
+	c.Presets = src.Presets
 	c.Services = src.Services
 	c.Overrides = src.Overrides
 }
@@ -514,6 +556,19 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("service %q: static_url must be http/https", name)
 			}
 		}
+	}
+	switch c.Suggest.UrlscanMode {
+	case "", "off", "key", "anonymous":
+	default:
+		return fmt.Errorf("suggest.urlscan_mode must be off|key|anonymous, got %q", c.Suggest.UrlscanMode)
+	}
+	for _, src := range c.Suggest.Sources {
+		if src != "preset" && src != "urlscan" && src != "manual" {
+			return fmt.Errorf("suggest.sources must be preset|urlscan|manual, got %q", src)
+		}
+	}
+	if c.Suggest.UrlscanMode == "key" && c.External.UrlscanAPIKey == "" {
+		return fmt.Errorf("suggest.urlscan_mode=key requires external.urlscan_api_key")
 	}
 	return nil
 }

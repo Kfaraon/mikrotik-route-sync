@@ -19,6 +19,10 @@ config.yaml
 # === Данные, кэш и состояние (bbolt) ===
 *.db
 data/
+# Вендоренные пресеты коммитим, КРОМЕ тяжёлого rublock (38МБ):
+# он качается зеркалом в рантайме и читается с диска.
+!internal/presets/data/
+internal/presets/data/rublock.yaml
 cache.db
 *.snap
 

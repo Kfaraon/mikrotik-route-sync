@@ -391,12 +391,28 @@ func (s *Syncer) GetServiceOverride(name string) config.ServiceOverride {
 // ("ASN is required", 0 префиксов).
 func serviceDomains(name string, ov config.ServiceOverride, class classifier.Result) []string {
 	if len(ov.Domains) > 0 {
-		return ov.Domains
+		return withPrimaryFirst(ov.Primary, ov.Domains)
 	}
 	if len(class.Domains) > 0 {
-		return class.Domains
+		return append([]string(nil), class.Domains...)
 	}
 	return adviseDomains(name, ov)
+}
+
+// withPrimaryFirst ставит витринный домен первым: collect() резолвит ASN
+// по domains[0], и позиция в списке влияла на весь результат молча.
+func withPrimaryFirst(primary string, domains []string) []string {
+	out := append([]string(nil), domains...)
+	if primary == "" {
+		return out
+	}
+	for i, d := range out {
+		if strings.EqualFold(d, primary) {
+			out[0], out[i] = out[i], out[0]
+			return out
+		}
+	}
+	return append([]string{primary}, out...)
 }
 
 // adviseDomains — домены для проверки: override.Domains, затем домены

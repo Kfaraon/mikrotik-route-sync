@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,7 +30,20 @@ type Resolver struct {
 	fetch       Fetcher
 	cache       Cache
 	ttl         time.Duration
+
+	// DNS-кэш A-записей: collect/whois/coverage/SNI ходят по одним доменам
+	// по 4 раза за синк. Короткий TTL — IP CDN ротируются.
+	dnsMu    sync.Mutex
+	dnsCache map[string]dnsEntry
 }
+
+type dnsEntry struct {
+	ips []string
+	exp time.Time
+}
+
+// dnsCacheTTL — время жизни A-записи в памяти.
+const dnsCacheTTL = 10 * time.Minute
 
 // DNSFallbacks — публичные DNS на случай недоступности основного резолвера.
 var DNSFallbacks = []string{"8.8.8.8:53", "1.1.1.1:53"}
@@ -82,6 +96,9 @@ func ParseASN(asn string) (int, error) {
 // ResolveDomain резолвит домен (A-записи) и возвращает IPv4-адреса.
 // IPv6 не поддерживается проектом.
 func (r *Resolver) ResolveDomain(ctx context.Context, domain string) ([]string, error) {
+	if cached, ok := r.dnsGet(domain); ok {
+		return append([]string(nil), cached...), nil
+	}
 	ips, err := r.lookupIP(ctx, domain)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", domain, err)
@@ -95,7 +112,28 @@ func (r *Resolver) ResolveDomain(ctx context.Context, domain string) ([]string, 
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no IPv4 addresses found for %s", domain)
 	}
+	r.dnsPut(domain, out)
 	return out, nil
+}
+
+// dnsGet/dnsPut — потокобезопасный TTL-кэш (мьютекс свой, сеть не блокирует).
+func (r *Resolver) dnsGet(domain string) ([]string, bool) {
+	r.dnsMu.Lock()
+	defer r.dnsMu.Unlock()
+	e, ok := r.dnsCache[domain]
+	if !ok || time.Now().After(e.exp) {
+		return nil, false
+	}
+	return e.ips, true
+}
+
+func (r *Resolver) dnsPut(domain string, ips []string) {
+	r.dnsMu.Lock()
+	defer r.dnsMu.Unlock()
+	if r.dnsCache == nil {
+		r.dnsCache = map[string]dnsEntry{}
+	}
+	r.dnsCache[domain] = dnsEntry{ips: append([]string(nil), ips...), exp: time.Now().Add(dnsCacheTTL)}
 }
 
 // ResolveASN определяет IPv4-ASN для домена через DNS + IP→ASN.

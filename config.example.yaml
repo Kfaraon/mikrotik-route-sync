@@ -72,6 +72,7 @@ external:
   # (их правила требуют описательный UA; анонимные/дефолтные агенты банятся)
   bgp_tools_contact: ""
   akamai_api_key: ""
+  urlscan_api_key: ""
   rdap_timeout: 10s
   resolver: 1.1.1.1:53
   # резервные DNS при недоступности основного (пусто — 8.8.8.8:53 и 1.1.1.1:53)
@@ -88,5 +89,15 @@ schedules:
       services: [instagram, telegram]
   services:
     cloudflare: {schedule: every 1h}
+# Подбор доменов (советник): v2fly/ru каталоги, urlscan.
+# urlscan_mode: off (кнопка скрыта) | key (полный, нужен ключ) | anonymous (разовый best-effort).
+suggest:
+  v2fly_enabled: false
+  ru_enabled: false
+  urlscan_mode: off
+  sources: [preset, urlscan]
+# Локальное зеркало пресетов: расписание докачки (пусто — только вручную).
+presets:
+  update_schedule: ""
 services: [cloudflare]
 overrides: {}

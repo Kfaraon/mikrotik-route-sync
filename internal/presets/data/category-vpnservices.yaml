@@ -1,0 +1,59 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: category-vpnservices
+title: VPN services
+domains:
+  - nordvpn.com
+  - 928.plus
+  - aaex.uk
+  - airport-gov-cn.com
+  - amytele.com
+  - ark.to
+  - baicaonetwork.com
+  - bighead.group
+  - blinkload.zone
+  - boslife.biz
+  - boslife.net
+  - cloudn.me
+  - cnix-gov-cn.com
+  - conair.me
+  - cordcloud.org
+  - ctyun.online
+  - cylink.pro
+  - cylink0122.icu
+  - dfvpn.com
+  - dlercloud.com
+  - dlercloud.me
+  - dlercloud.org
+  - dleris.best
+  - duyaoss.com
+  - duyaossr.com
+  - geph.io
+  - gfw.press
+  - hitun.io
+  - hutao.cloud
+  - justmysocks.net
+  - justmysocks1.net
+  - justmysocks2.net
+  - justmysocks4.net
+  - maying.co
+  - mocloudplus.com
+  - mray.club
+  - mudfish.net
+  - muncloud.dog
+  - n3ro.lol
+  - n3ro.net
+  - n3ro.wtf
+  - nexitally.com
+  - nexitallysafe.com
+  - nexitcore.com
+  - nordcdn.com
+  - paofu.cloud
+  - paofuyun.me
+  - renzhe.cloud
+  - shadowsocks.com
+  - shadowsocks.nl
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

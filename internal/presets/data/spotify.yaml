@@ -1,0 +1,34 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: spotify
+title: Spotify
+domains:
+  - spotify.com
+  - audio-ak-spotify-com.akamaized.net
+  - audio4-ak-spotify-com.akamaized.net
+  - byspotify.com
+  - cdn-spotify-experiments.conductrics.com
+  - heads-ak-spotify-com.akamaized.net
+  - heads4-ak-spotify-com.akamaized.net
+  - lifeatspotify.com
+  - pscdn.co
+  - scdn.co
+  - spoti.fi
+  - spotify-everywhere.com
+  - spotify.com.edgesuite.net
+  - spotify.design
+  - spotify.link
+  - spotify.map.fastly.net
+  - spotify.map.fastlylb.net
+  - spotifycdn.com
+  - spotifycdn.net
+  - spotifycharts.com
+  - spotifycodes.com
+  - spotifyforbrands.com
+  - spotifyforvendors.com
+  - spotifyjobs.com
+  - tospotify.com
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

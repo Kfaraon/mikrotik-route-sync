@@ -1,0 +1,25 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: category-proxy-tunnels
+title: Proxy / tunnel services
+domains:
+  - tailscale.com
+  - equinox.io
+  - ngrok-agent.com
+  - ngrok-free.app
+  - ngrok-free.dev
+  - ngrok-free.pizza
+  - ngrok.app
+  - ngrok.com
+  - ngrok.dev
+  - ngrok.io
+  - ngrok.pizza
+  - ngrok.pro
+  - pinggy.io
+  - pinggy.link
+  - tailscale.io
+  - ts.net
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

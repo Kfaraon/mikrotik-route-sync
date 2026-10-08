@@ -24,10 +24,12 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
 	webui "github.com/Kfaraon/mikrotik-route-sync/internal/web"
+	"github.com/robfig/cron/v3"
 )
 
 // ============================================================================
@@ -771,6 +773,45 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 	return nil
 }
 
+// startPresetsMirror запускает фоновую докачку RU-зеркала по расписанию
+// presets.update_schedule (cron/every/daily; пусто — только вручную через API).
+// Скачанное никого не трогает: домены копируются лишь явным применением.
+func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logger) {
+	cfg.RLock()
+	spec := cfg.Presets.UpdateSchedule
+	cachePath := cfg.CachePath
+	cfg.RUnlock()
+	expr, err := presets.CronExpr(spec)
+	if err != nil {
+		log.Warn("presets mirror schedule invalid, disabled", "schedule", spec, "err", err)
+		return
+	}
+	if expr == "" {
+		return
+	}
+	dir := filepath.Join(filepath.Dir(cachePath), "presets")
+	presets.DiskDir = dir
+	c := cron.New()
+	_, err = c.AddFunc(expr, func() {
+		st, err := presets.RefreshMirror(context.WithoutCancel(ctx), dir)
+		if err != nil {
+			log.Warn("presets mirror refresh failed", "err", err)
+			return
+		}
+		log.Info("presets mirror refreshed", "entries", st.Entries)
+	})
+	if err != nil {
+		log.Warn("presets mirror schedule rejected, disabled", "schedule", spec, "err", err)
+		return
+	}
+	c.Start()
+	go func() {
+		<-ctx.Done()
+		c.Stop()
+	}()
+	log.Info("presets mirror scheduled", "schedule", spec)
+}
+
 func daemonCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "daemon",
@@ -814,6 +855,9 @@ func daemonCmd() *cobra.Command {
 			})
 
 			sched.StartNow()
+
+			// Зеркало пресетов по расписанию (пусто — только вручную).
+			startPresetsMirror(ctx, cfg, log)
 
 			// SIGHUP → перечитать конфиг и перестроить расписания.
 			hup := make(chan os.Signal, 1)

@@ -58,6 +58,12 @@
                 <option value="{{ $opt }}"{{ if eq $opt $row.Value }} selected{{ end }}>{{ $opt }}</option>
                 {{ end }}
               </select>
+            {{ else if eq $row.Type "mode" }}
+              <select name="{{ $row.Key }}">
+                {{ range $opt := $row.Options }}
+                <option value="{{ $opt }}"{{ if eq $opt $row.Value }} selected{{ end }}>{{ $opt }}</option>
+                {{ end }}
+              </select>
             {{ else if eq $row.Type "secret" }}
               <span class="secret-field">
                 <input type="password" name="{{ $row.Key }}" value="{{ $row.Value }}" autocomplete="off">

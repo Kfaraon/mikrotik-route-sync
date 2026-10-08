@@ -1,0 +1,276 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+upstream:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"
+generated_at: "2026-10-08T11:28:03Z"
+generator: scripts/presets-import
+preset_count: 33
+domains: 1709989
+rublock_entries: 1709140
+presets:
+  - slug: anthropic
+    title: Anthropic (Claude)
+    method: static_url
+    count: 9
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: category-proxy-tunnels
+    title: Proxy / tunnel services
+    method: static_url
+    count: 16
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: category-vpnservices
+    title: VPN services
+    method: static_url
+    count: 50
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: cloudflare
+    title: Cloudflare
+    method: static_url
+    count: 50
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: discord
+    title: Discord
+    method: static_url
+    count: 28
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: disney
+    title: Disney+
+    method: static_url
+    count: 50
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: dropbox
+    title: Dropbox
+    method: static_url
+    count: 16
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: facebook
+    title: Facebook
+    method: static_url
+    count: 50
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: github
+    title: GitHub
+    method: static_url
+    count: 50
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: gitlab
+    title: GitLab
+    method: static_url
+    count: 5
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: google-deepmind
+    title: Google DeepMind / Gemini
+    method: static_url
+    count: 46
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: hbo
+    title: HBO Max
+    method: static_url
+    count: 50
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: instagram
+    title: Instagram
+    method: static_url
+    count: 50
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: linkedin
+    title: LinkedIn
+    method: static_url
+    count: 12
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: netflix
+    title: Netflix
+    method: static_url
+    count: 24
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: nordvpn
+    title: NordVPN
+    method: static_url
+    count: 2
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: onedrive
+    title: OneDrive
+    method: static_url
+    count: 11
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: openai
+    title: OpenAI (ChatGPT)
+    method: static_url
+    count: 19
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: paypal
+    title: PayPal
+    method: static_url
+    count: 50
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: perplexity
+    title: Perplexity AI
+    method: static_url
+    count: 5
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: primevideo
+    title: Amazon Prime Video
+    method: static_url
+    count: 23
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: protonmail
+    title: Proton Mail
+    method: static_url
+    count: 9
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: reddit
+    title: Reddit
+    method: static_url
+    count: 12
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: rublock
+    title: Antifilter blocklist (РКН)
+    method: static_url
+    large: true
+    count: 1709140
+    source:
+      repo: antifilter.download
+      commit: unpinned
+      date: "2026-10-08T11:28:02Z"
+  - slug: signal
+    title: Signal
+    method: static_url
+    count: 8
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: spotify
+    title: Spotify
+    method: static_url
+    count: 25
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: telegram
+    title: Telegram
+    method: static_url
+    count: 21
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: tiktok
+    title: TikTok
+    method: static_url
+    count: 36
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: twitch
+    title: Twitch
+    method: static_url
+    count: 34
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: twitter
+    title: Twitter (X)
+    method: static_url
+    count: 23
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: whatsapp
+    title: WhatsApp
+    method: static_url
+    count: 11
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: xai
+    title: xAI (Grok)
+    method: static_url
+    count: 4
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"
+  - slug: youtube
+    title: YouTube
+    method: static_url
+    count: 50
+    source:
+      repo: v2fly/domain-list-community
+      commit: e84921279c9142434b43cb84ec6c17f987e025df
+      date: "2026-10-08T09:30:42Z"

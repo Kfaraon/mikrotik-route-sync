@@ -1349,3 +1349,115 @@ func TestConcurrentReadsAndMutations(t *testing.T) {
 		t.Fatal("testsvc lost after concurrent workload")
 	}
 }
+
+// TestAPIPresets — каталог пресетов: youtube из embed, suggest-блок,
+// домены больших в каталог не тащим.
+func TestAPIPresets(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// Включаем каталог (дефолт off): та же память, гонки нет (сервер стартовал).
+	cfg.Lock()
+	cfg.Suggest.V2flyEnabled = true
+	cfg.Unlock()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, body := doAuth(client, ts.URL, "GET", "/api/v1/presets", "", nil)
+	var v apiEnvelope
+	if err := json.Unmarshal([]byte(body), &v); err != nil || !v.OK {
+		t.Fatalf("bad envelope: %s", body)
+	}
+	data, _ := v.Data.(map[string]any)
+	list, _ := data["presets"].([]any)
+	found := false
+	for _, p := range list {
+		m, _ := p.(map[string]any)
+		if m["slug"] == "youtube" {
+			found = true
+			if doms, _ := m["domains"].([]any); len(doms) == 0 {
+				t.Fatal("youtube preset must carry domains")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("youtube preset missing: %s", first(body, 200))
+	}
+	suggest, _ := data["suggest"].(map[string]any)
+	if suggest["mode"] != "off" {
+		t.Fatalf("default suggest mode must be off, got %v", suggest["mode"])
+	}
+}
+
+// first — безопасный префикс строки для ошибок тестов.
+func first(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// TestAPISuggestDisabled — без ключа/режима подбор выключен, а не ошибка.
+func TestAPISuggestDisabled(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+	start := strings.Index(page, `name="csrf-token" content="`)
+	token := page[start+len(`name="csrf-token" content="`):]
+	token = token[:strings.Index(token, `"`)]
+
+	st, env := doJSON(client, ts.URL, "POST", "/api/v1/services/testsvc/suggest-domains", token, nil, `{}`)
+	if st != http.StatusOK {
+		t.Fatalf("status: %d %+v", st, env)
+	}
+	data, _ := env.Data.(map[string]any)
+	if enabled, _ := data["enabled"].(bool); enabled {
+		t.Fatalf("suggest must be disabled by default: %+v", data)
+	}
+}
+
+// TestAPIAddServicePreset — создание из пресета: домены+primary+generated.
+func TestAPIAddServicePreset(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+	start := strings.Index(page, `name="csrf-token" content="`)
+	token := page[start+len(`name="csrf-token" content="`):]
+	token = token[:strings.Index(token, `"`)]
+
+	st, _ := doJSON(client, ts.URL, "POST", "/api/v1/services", token, nil,
+		`{"name":"presettest","preset":"youtube","method":"whois"}`)
+	if st != http.StatusOK {
+		t.Fatalf("add with preset failed: %d", st)
+	}
+	ov := cfg.Overrides["presettest"]
+	if ov.Preset != "youtube" || len(ov.Generated) == 0 || len(ov.Domains) == 0 {
+		t.Fatalf("preset not recorded: %+v", ov)
+	}
+	if ov.Primary == "" {
+		t.Fatal("primary not set from preset")
+	}
+	if ov.Domains[0] != ov.Primary {
+		t.Fatalf("primary must be first: %q vs %q", ov.Primary, ov.Domains[0])
+	}
+
+	// Refresh: подмешиваем ручной домен и чужой, обновляем — ручной жив,
+	// чужой (не из пресета и не ручной? нет: всё не-preset считается ручным).
+	st, env := doJSON(client, ts.URL, "POST", "/api/v1/services/presettest/refresh-preset", token, nil, `{}`)
+	if st != http.StatusOK {
+		t.Fatalf("refresh failed: %d %+v", st, env)
+	}
+
+	// Большой пресет без force — отказ с объяснением.
+	st, _ = doJSON(client, ts.URL, "POST", "/api/v1/services/presettest/refresh-preset", token, nil,
+		`{"preset":"rublock"}`)
+	if st != http.StatusBadRequest {
+		t.Fatalf("large preset without force must be 400, got %d", st)
+	}
+}

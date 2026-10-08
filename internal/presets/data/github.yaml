@@ -1,0 +1,59 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: github
+title: GitHub
+domains:
+  - github.com
+  - atom.io
+  - copilot-proxy.githubusercontent.com
+  - copilot-workspace.githubnext.com
+  - copilotprodattachments.blob.core.windows.net
+  - dependabot.com
+  - gh.io
+  - ghcr.io
+  - ghe.com
+  - git.io
+  - github-api.arkoselabs.com
+  - github-cloud.s3.amazonaws.com
+  - github-production-release-asset-2e65be.s3.amazonaws.com
+  - github-production-repository-file-5c1aeb.s3.amazonaws.com
+  - github-production-repository-image-32fea6.s3.amazonaws.com
+  - github-production-upload-manifest-file-7fdce7.s3.amazonaws.com
+  - github-production-user-asset-6210df.s3.amazonaws.com
+  - github.ai
+  - github.blog
+  - github.career
+  - github.community
+  - github.dev
+  - github.io
+  - githubapp.com
+  - githubassets.com
+  - githubcopilot.com
+  - githubhackathon.com
+  - githubnext.com
+  - githubpreview.dev
+  - githubstatus.com
+  - githubsupport.com
+  - githubuniverse.com
+  - githubusercontent.com
+  - myoctocat.com
+  - npm.community
+  - npmjs.com
+  - npmjs.org
+  - octocaptcha.com
+  - opensource.guide
+  - productionresultssa0.blob.core.windows.net
+  - productionresultssa1.blob.core.windows.net
+  - productionresultssa10.blob.core.windows.net
+  - productionresultssa11.blob.core.windows.net
+  - productionresultssa12.blob.core.windows.net
+  - productionresultssa13.blob.core.windows.net
+  - productionresultssa14.blob.core.windows.net
+  - productionresultssa15.blob.core.windows.net
+  - productionresultssa16.blob.core.windows.net
+  - productionresultssa17.blob.core.windows.net
+  - productionresultssa18.blob.core.windows.net
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,7 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
 	"github.com/go-chi/chi/v5"
@@ -551,6 +553,12 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		sessions: newSessionStore(cfg.Web.SessionTimeout.Duration()),
 	}
 
+	// Каталог runtime-зеркала пресетов (рядом с cache.db): тяжёлые списки
+	// (rublock) читаются с диска, а не из embed. Задаётся один раз при старте.
+	if dir := filepath.Dir(cfg.CachePath); dir != "" && dir != "." {
+		presets.DiskDir = filepath.Join(dir, "presets")
+	}
+
 	syncer.SetEventHook(func(event string, data any) {
 		s.hub.Broadcast(event, data)
 	})
@@ -591,6 +599,10 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Post("/services/{name}/sync", s.apiSyncOne)
 		r.Post("/services/{name}/dry-run", s.apiDryRun)
 		r.Post("/services/{name}/recommend", s.apiRecommendService)
+		r.Post("/services/{name}/suggest-domains", s.apiSuggestDomains)
+		r.Post("/services/{name}/refresh-preset", s.apiRefreshPreset)
+		r.Get("/presets", s.apiPresets)
+		r.Post("/presets/refresh", s.apiPresetsRefresh)
 		r.Get("/schedules", s.apiSchedules)
 		r.Put("/schedules/{service}", s.apiUpdateSchedule)
 		r.Get("/logs", s.apiLogs)
@@ -1049,6 +1061,10 @@ type serviceRow struct {
 	// Текущий override для редактора источника (UI): пусто — авто.
 	Method  string
 	Domains []string
+	// Пресет: слаг, витринный домен и последний снимок (для refresh).
+	Preset    string
+	Primary   string
+	Generated []string
 }
 
 func (s *Server) pageServices(w http.ResponseWriter, r *http.Request) {
@@ -1079,6 +1095,9 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 		if ov, ok := s.cfg.Overrides[name]; ok {
 			row.Method = ov.Method
 			row.Domains = append([]string(nil), ov.Domains...)
+			row.Preset = ov.Preset
+			row.Primary = ov.Primary
+			row.Generated = append([]string(nil), ov.Generated...)
 		}
 		statics = append(statics, row)
 	}
@@ -1282,6 +1301,8 @@ var settingsSpec = []settingSpec{
 		"email или 'имя проекта + контакт' — подставляется в User-Agent. bgp.tools требует описательный UA вместо дефолтного и банит анонимные скрипты. ENV MRS_BGP_TOOLS_CONTACT."},
 	{"Внешние API", "external.akamai_api_key", "Ключ Akamai", "secret",
 		"ENV MRS_AKAMAI_API_KEY. Akamai собирается методом asn; ключ не обязателен."},
+	{"Внешние API", "external.urlscan_api_key", "Ключ urlscan.io", "secret",
+		"ENV MRS_URLSCAN_API_KEY. Бесплатный ключ для подбора смежных доменов. Без него доступен только ограниченный анонимный режим."},
 	{"Внешние API", "external.rdap_timeout", "Таймаут RDAP", "duration",
 		"Проверка принадлежности префиксов ASN через RDAP (10s)."},
 	{"Внешние API", "external.resolver", "DNS-резолвер", "text",
@@ -1292,6 +1313,16 @@ var settingsSpec = []settingSpec{
 		"Снапшоты старше этого возраста удаляются при cleanup (168h = 7 дней)."},
 	{"Снапшоты", "snapshots.max_count", "Максимум на сервис", "number",
 		"Лишние (сверх 50) старые снапшоты удаляются при cleanup."},
+	{"Подбор доменов", "suggest.v2fly_enabled", "Каталог v2fly", "bool",
+		"Встроенные пресеты сервисов (youtube, telegram, …) в выборе при добавлении."},
+	{"Подбор доменов", "suggest.ru_enabled", "RU-пресет", "bool",
+		"Зеркало antifilter (заблокированные в RU). Список огромный — включается осознанно, см. large-предупреждение."},
+	{"Подбор доменов", "suggest.urlscan_mode", "Режим urlscan", "mode",
+		"off — кнопка скрыта; key — полный (нужен ключ); anonymous — разовый best-effort с длинным кэшем."},
+	{"Подбор доменов", "suggest.sources", "Порядок источников", "list",
+		"preset,urlscan через запятую. Ручной ввод доступен всегда."},
+	{"Подбор доменов", "presets.update_schedule", "Обновление зеркала", "text",
+		"Расписание докачки RU-зеркала (cron/every/daily как у синков). Пусто — только кнопкой."},
 }
 
 type settingRow struct {
@@ -1337,6 +1368,9 @@ func (s *Server) settingGroups() []settingGroup {
 		row := settingRow{Key: sp.Key, Title: sp.Title, Type: sp.Type, Value: val, Help: sp.Help}
 		if sp.Type == "level" {
 			row.Options = []string{"debug", "info", "warn", "error"}
+		}
+		if sp.Type == "mode" {
+			row.Options = []string{"off", "key", "anonymous"}
 		}
 		i, ok := idx[sp.Group]
 		if !ok {
@@ -1401,6 +1435,8 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 		Method    string   `json:"method"`
 		StaticURL string   `json:"static_url"`
 		Domains   []string `json:"domains"`
+		Preset    string   `json:"preset"`
+		Primary   string   `json:"primary"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
@@ -1415,6 +1451,47 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 		StaticURL: strings.TrimSpace(req.StaticURL),
 		Domains:   req.Domains,
 	}
+	if req.Preset != "" {
+		p, ok := presets.Get(req.Preset)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("preset %q unavailable", req.Preset))
+			return
+		}
+		if len(p.Domains) > maxServiceDomains {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("preset %q too large (%d domains, max %d)", req.Preset, len(p.Domains), maxServiceDomains))
+			return
+		}
+		seen := map[string]bool{}
+		merged := append([]string(nil), p.Domains...)
+		for _, d := range merged {
+			seen[strings.ToLower(d)] = true
+		}
+		for _, d := range req.Domains {
+			if !seen[strings.ToLower(d)] {
+				merged = append(merged, d)
+				seen[strings.ToLower(d)] = true
+			}
+		}
+		ov.Domains = merged
+		ov.Preset = p.Slug
+		ov.Generated = append([]string(nil), p.Domains...)
+		if ov.Method == "" && config.IsValidMethod(p.Method) && (p.Method != "static_url" || p.StaticURL != "") {
+			ov.Method = p.Method
+		}
+		if ov.StaticURL == "" {
+			ov.StaticURL = p.StaticURL
+		}
+		if len(p.Domains) > 0 {
+			ov.Primary = p.Domains[0]
+		}
+	}
+	if req.Primary != "" {
+		ov.Primary = strings.TrimSpace(req.Primary)
+	}
+	if len(ov.Domains) > maxServiceDomains {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("too many domains (%d, max %d)", len(ov.Domains), maxServiceDomains))
+		return
+	}
 	if err := s.syncer.AddServiceWithConfig(r.Context(), req.Name, ov); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -1423,8 +1500,114 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]string{"service": req.Name})
 }
 
+// maxServiceDomains — предел доменов на сервис: больше — это уже bulk,
+// который dynamic-конвейер физически не тянет (годы DNS),
+// а config.yaml раздувается на десятки мегабайт (маршалинг при каждом Save).
+const maxServiceDomains = 5000
+
 // apiRecommendService — проверка сервиса на обслуживание за CDN.
 // body: {"apply": true} — применить рекомендацию (purge + method=cdn).
+// apiSuggestDomains — разовый подбор смежных доменов через urlscan
+// (советник: только кандидаты, запись — обычным PUT /services/{name}).
+func (s *Server) apiSuggestDomains(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var req struct {
+		Scans int `json:"scans"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req) // пустое тело = дефолт
+	writeOK(w, s.syncer.SuggestDomains(r.Context(), name, req.Scans))
+}
+
+// apiRefreshPreset — пересчёт Domains из пресета с сохранением ручных.
+// Отвечает diff'ом: UI предлагает dry-run перед применением маршрутов.
+func (s *Server) apiRefreshPreset(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var req struct {
+		Preset string `json:"preset"`
+		Force  bool   `json:"force"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req) // пустое тело = привязанный пресет
+	added, removed, err := s.syncer.ApplyPresetRefresh(r.Context(), name, req.Preset, req.Force)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.auditChange(r, "api", "preset_refresh", name)
+	writeOK(w, map[string]any{"service": name, "added": added, "removed": removed})
+}
+
+// presetsDir — каталог runtime-зеркала (рядом с cache.db).
+func (s *Server) presetsDir() string {
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
+	if s.cfg.CachePath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(s.cfg.CachePath), "presets")
+}
+
+// apiPresets — каталог пресетов + состояние зеркала + доступность подбора.
+func (s *Server) apiPresets(w http.ResponseWriter, r *http.Request) {
+	s.cfg.RLock()
+	v2flyOn := s.cfg.Suggest.V2flyEnabled
+	ruOn := s.cfg.Suggest.RuEnabled
+	mode := s.cfg.Suggest.UrlscanMode
+	sources := append([]string(nil), s.cfg.Suggest.Sources...)
+	s.cfg.RUnlock()
+	list := presets.List()
+	if !v2flyOn || !ruOn {
+		filtered := list[:0]
+		for _, p := range list {
+			if p.Slug == "rublock" && !ruOn {
+				continue
+			}
+			if p.Slug != "rublock" && !v2flyOn {
+				continue
+			}
+			filtered = append(filtered, p)
+		}
+		list = filtered
+	}
+	// Домены больших пресетов в каталог не тащим (rublock — мегабайты).
+	for i := range list {
+		if list[i].Large {
+			list[i].Domains = nil
+		}
+	}
+	var mirror any
+	if dir := s.presetsDir(); dir != "" {
+		if m := presets.MirrorInfo(dir); m != nil {
+			mirror = m
+		}
+	}
+	writeOK(w, map[string]any{
+		"presets": list,
+		"mirror":  mirror,
+		"suggest": map[string]any{
+			"v2fly":   v2flyOn,
+			"ru":      ruOn,
+			"mode":    mode,
+			"sources": sources,
+		},
+	})
+}
+
+// apiPresetsRefresh — ручная докачка RU-зеркала (расписание — в демоне).
+func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
+	dir := s.presetsDir()
+	if dir == "" {
+		writeErr(w, http.StatusBadRequest, "cache_path not configured")
+		return
+	}
+	st, err := presets.RefreshMirror(r.Context(), dir)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	s.auditChange(r, "api", "presets_refresh", fmt.Sprintf("%d entries", st.Entries))
+	writeOK(w, st)
+}
+
 func (s *Server) apiRecommendService(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	var req struct {

@@ -1,0 +1,32 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: twitter
+title: Twitter (X)
+domains:
+  - twitter.com
+  - cms-twdigitalassets.com
+  - periscope.tv
+  - pscp.tv
+  - t.co
+  - tellapart.com
+  - tweetdeck.com
+  - twimg.com
+  - twitpic.com
+  - twitter.biz
+  - twitter.jp
+  - twitter.map.fastly.net
+  - twittercommunity.com
+  - twitterflightschool.com
+  - twitterinc.com
+  - twitteroauth.com
+  - twitterstat.us
+  - twtrdns.net
+  - twttr.com
+  - twttr.net
+  - twvid.com
+  - vine.co
+  - x.com
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

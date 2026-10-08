@@ -1,0 +1,30 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: telegram
+title: Telegram
+domains:
+  - telegram.org
+  - cdn-telegram.org
+  - comments.app
+  - contest.com
+  - fragment.com
+  - graph.org
+  - quiz.directory
+  - t.me
+  - tdesktop.com
+  - telega.one
+  - telegra.ph
+  - telegram-cdn.org
+  - telegram.dog
+  - telegram.me
+  - telegram.space
+  - telesco.pe
+  - tg.dev
+  - ton.org
+  - toncenter.com
+  - tx.me
+  - usercontent.dev
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

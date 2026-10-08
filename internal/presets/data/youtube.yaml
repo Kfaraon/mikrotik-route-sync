@@ -1,0 +1,59 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: youtube
+title: YouTube
+domains:
+  - youtube.com
+  - ggpht.cn
+  - ggpht.com
+  - googlevideo.com
+  - wide-youtube.l.google.com
+  - withyoutube.com
+  - youtu.be
+  - youtube-nocookie.com
+  - youtube-ui.l.google.com
+  - youtube.ae
+  - youtube.al
+  - youtube.am
+  - youtube.at
+  - youtube.az
+  - youtube.ba
+  - youtube.be
+  - youtube.bg
+  - youtube.bh
+  - youtube.bo
+  - youtube.by
+  - youtube.ca
+  - youtube.cat
+  - youtube.ch
+  - youtube.cl
+  - youtube.co
+  - youtube.co.ae
+  - youtube.co.at
+  - youtube.co.cr
+  - youtube.co.hu
+  - youtube.co.id
+  - youtube.co.il
+  - youtube.co.in
+  - youtube.co.jp
+  - youtube.co.ke
+  - youtube.co.kr
+  - youtube.co.ma
+  - youtube.co.nz
+  - youtube.co.th
+  - youtube.co.tz
+  - youtube.co.ug
+  - youtube.co.uk
+  - youtube.co.ve
+  - youtube.co.za
+  - youtube.co.zw
+  - youtube.com.ar
+  - youtube.com.au
+  - youtube.com.az
+  - youtube.com.bd
+  - youtube.com.bh
+  - youtube.com.bo
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

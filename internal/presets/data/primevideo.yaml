@@ -1,0 +1,32 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: primevideo
+title: Amazon Prime Video
+domains:
+  - primevideo.com
+  - aiv-cdn.net
+  - amazonprimevideo.cn
+  - amazonprimevideo.com.cn
+  - amazonprimevideos.com
+  - amazonvideo.cc
+  - amazonvideo.com
+  - d1v5ir2lpwr8os.cloudfront.net
+  - d22qjgkvxw22r6.cloudfront.net
+  - d25xi40x97liuc.cloudfront.net
+  - d27xxe7juh1us6.cloudfront.net
+  - dmqdd6hw24ucf.cloudfront.net
+  - images-eu.ssl-images-amazon.com
+  - images-fe.ssl-images-amazon.com
+  - images-na.ssl-images-amazon.com
+  - msh.amazon.co.uk
+  - prime-video.com
+  - primevideo.cc
+  - primevideo.info
+  - primevideo.org
+  - primevideo.tv
+  - prod.service.minerva.devices.a2z.com
+  - static.siege-amazon.com
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

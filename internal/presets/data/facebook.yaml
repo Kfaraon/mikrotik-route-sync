@@ -1,0 +1,59 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: facebook
+title: Facebook
+domains:
+  - facebook.com
+  - aboutfacebook.com
+  - accessfacebookfromschool.com
+  - acebooik.com
+  - acebook.com
+  - advancediddetection.com
+  - askfacebook.net
+  - askfacebook.org
+  - atdmt2.com
+  - atlasdmt.com
+  - atlasonepoint.com
+  - buyingfacebooklikes.com
+  - careersatfb.com
+  - celebgramme.com
+  - china-facebook.com
+  - click-url.com
+  - como-hackearfacebook.com
+  - crowdtangle.com
+  - dacebook.com
+  - dlfacebook.com
+  - dotfacebook.com
+  - dotfacebook.net
+  - expresswifi.com
+  - faacebok.com
+  - faacebook.com
+  - faasbook.com
+  - facbebook.com
+  - facbeok.com
+  - facboo.com
+  - facbook.com
+  - facbool.com
+  - facboox.com
+  - faccebook.com
+  - faccebookk.com
+  - facdbook.com
+  - facdebook.com
+  - face-book.com
+  - faceabook.com
+  - facebboc.com
+  - facebbook.com
+  - facebboook.com
+  - facebcook.com
+  - facebdok.com
+  - facebgook.com
+  - facebhook.com
+  - facebkkk.com
+  - facebo-ok.com
+  - faceboak.com
+  - facebock.com
+  - facebocke.com
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

@@ -1,0 +1,28 @@
+# Сгенерировано scripts/presets-import — не редактировать вручную.
+slug: openai
+title: OpenAI (ChatGPT)
+domains:
+  - openai.com
+  - chat.com
+  - chatgpt.com
+  - chatgpt.livekit.cloud
+  - chatgpt.site
+  - crixet.com
+  - host.livekit.cloud
+  - oaistatic.com
+  - oaistatsig.com
+  - oaiusercontent.com
+  - openai.com.cdn.cloudflare.net
+  - openaiapi-site.azureedge.net
+  - openaiassets.blob.core.windows.net
+  - openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net
+  - openaicom.imgix.net
+  - openaicomproductionae4b.blob.core.windows.net
+  - production-openaicom-storage.azureedge.net
+  - sora.com
+  - turn.livekit.cloud
+method: static_url
+source:
+  repo: v2fly/domain-list-community
+  commit: e84921279c9142434b43cb84ec6c17f987e025df
+  date: "2026-10-08T09:30:42Z"

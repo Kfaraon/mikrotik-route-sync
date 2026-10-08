@@ -139,6 +139,7 @@
     addForm: byId("svc-add-form"),
     addInput: byId("svc-add-name"),
     addMethod: byId("svc-add-method"),
+    addPreset: byId("svc-add-preset"),
     addBtn: byId("svc-add-btn"),
     body: byId("services-body"),
     empty: byId("services-empty"),
@@ -1481,15 +1482,39 @@
     return h;
   }
 
-  function addService(name, method) {
+  function addService(name, method, preset) {
     var body = { name: name };
     if (method) body.method = method;
+    if (preset) body.preset = preset;
     return api("/api/v1/services", {
       method: "POST",
       body: JSON.stringify(body)
     }).then(function () {
       showToast("Сервис добавлен: " + name);
       return loadAll(true);
+    });
+  }
+
+  // Каталог пресетов для формы добавления (лениво, один раз за страницу).
+  // Large-пресеты без доменов в списке — создание по ним сервер отклонит
+  // с объяснением (rublock), в option помечаем.
+  function loadPresets() {
+    if (state.presets !== undefined) return;
+    state.presets = null;
+    api("/api/v1/presets").then(function (data) {
+      var list = (data && data.presets) || [];
+      state.presets = list;
+      if (!els.addPreset) return;
+      var html = '<option value="">Пресет: нет</option>';
+      each(list, function (p) {
+        var label = text(p.title || p.slug);
+        if (p.large) label += " (большой)";
+        else if (p.domains && p.domains.length) label += " (" + p.domains.length + ")";
+        html += '<option value="' + esc(p.slug) + '">' + esc(label) + "</option>";
+      });
+      els.addPreset.innerHTML = html;
+    }).catch(function () {
+      state.presets = null;
     });
   }
 
@@ -1836,6 +1861,7 @@
     html += detailsHtml("quality", "Качество последнего сбора", lastQualityHtml(item));
     html += detailsHtml("source", "Источник сбора", sourceEditHtml(item));
     html += detailsHtml("cdn", "Подбор источника (CDN)", cdnBlockHtml());
+    html += detailsHtml("domains", "Домены и пресеты", domainsBlockHtml(item));
 
     return html;
   }
@@ -2102,6 +2128,140 @@
         showToast("Не удалось проверить CDN: " + msg, true);
       }
     );
+  }
+
+  // Блок «Домены и пресеты» во вкладке «Обзор»: текущие домены, привязка,
+  // подбор через urlscan (совет, не синк), обновление из пресета.
+  function domainsBlockHtml(item) {
+    var row = item.row || {};
+    var domains = item.ovDomains || [];
+    var h = '<div class="svc-domains">';
+    h += "<p>" + (domains.length
+      ? esc(domains.slice(0, 12).join(", ")) + (domains.length > 12 ? " …(+" + (domains.length - 12) + ")" : "")
+      : "домены не заданы (автоопределение)") + "</p>";
+    h += "<p>" + (row.Preset
+      ? 'Пресет: <span class="svc-badge svc-badge-group">' + esc(row.Preset) + "</span>"
+      : "Пресет: —") + "</p>";
+
+    var sg = state.suggest;
+    if (!sg || sg.name !== state.details.name) {
+      h += '<button class="btn btn-small btn-outline" data-suggest-run="1">Подобрать домены (urlscan)</button>';
+    } else if (sg.loading) {
+      h += '<div class="svc-cdn-loading">Ищем смежные домены…</div>';
+    } else if (sg.error) {
+      h += '<div class="svc-cdn-result"><p>Ошибка: ' + esc(sg.error) + "</p>" +
+        '<button class="btn btn-small btn-outline" data-suggest-run="1">Повторить</button></div>';
+    } else if (sg.data && !sg.data.enabled) {
+      h += '<div class="svc-cdn-result"><p>Подбор недоступен: ' + esc(sg.data.reason || "") + "</p></div>";
+    } else if (sg.data && sg.data.candidates) {
+      var cands = sg.data.candidates;
+      if (!cands.length) {
+        h += "<p>Кандидатов нет — попробуйте пресет или ручной ввод.</p>";
+      } else {
+        h += '<div class="svc-suggest-list">';
+        each(cands, function (c, i) {
+          var checked = c.confidence === "high" ? " checked" : "";
+          h += '<label class="svc-suggest-row"><input type="checkbox" data-suggest-check="' + i + '"' + checked + "> " +
+            "<code>" + esc(c.domain) + "</code> " +
+            '<span class="svc-muted">' + esc(c.confidence || "") + ", в " + (c.scans || 0) + " ск.</span></label>";
+        });
+        h += "</div>";
+        h += '<button class="btn btn-small btn-primary" data-suggest-apply="1">Применить выбранные</button>';
+      }
+      var excl = sg.data.excluded || [];
+      if (excl.length) {
+        h += '<p class="svc-muted">Отсеяно: ' + esc(excl.slice(0, 8).map(function (e) { return e.domain; }).join(", ")) + "</p>";
+      }
+    }
+
+    if (row.Preset) {
+      h += '<div class="svc-preset-refresh"><button class="btn btn-small btn-outline" data-preset-refresh="1">Обновить домены из пресета</button></div>';
+    }
+    var pr = state.presetRefresh;
+    if (pr && pr.name === state.details.name) {
+      if (pr.error) {
+        h += '<div class="svc-cdn-result"><p>Ошибка: ' + esc(pr.error) + "</p></div>";
+      } else if (pr.diff) {
+        h += '<div class="svc-cdn-result"><p>+' + pr.diff.added.length + " / −" + pr.diff.removed.length +
+          " — маршруты не тронуты, запустите тестовый прогон.</p></div>";
+      }
+    }
+    h += "</div>";
+    return h;
+  }
+
+  function runSuggest() {
+    var name = state.details.name;
+    if (!name) return;
+    state.suggest = { name: name, loading: true };
+    renderDetails();
+    api("/api/v1/services/" + encodeURIComponent(name) + "/suggest-domains", {
+      method: "POST",
+      body: JSON.stringify({ scans: 5 })
+    }).then(function (data) {
+      if (state.details.name !== name) return;
+      state.suggest = { name: name, data: data || null };
+      renderDetails();
+    }, function (err) {
+      if (state.details.name !== name) return;
+      var msg = String((err && err.message) || err);
+      state.suggest = { name: name, error: msg };
+      renderDetails();
+      showToast("Не удалось подобрать домены: " + msg, true);
+    });
+  }
+
+  function applySuggest() {
+    var name = state.details.name;
+    var sg = state.suggest;
+    if (!name || !sg || !sg.data || !sg.data.candidates) return;
+    var checked = [];
+    each(els.drawerBody.querySelectorAll("[data-suggest-check]:checked"), function (cb) {
+      var c = sg.data.candidates[Number(cb.getAttribute("data-suggest-check"))];
+      if (c && c.domain) checked.push(c.domain);
+    });
+    if (!checked.length) {
+      showToast("Ничего не выбрано");
+      return;
+    }
+    var item = findItem(name);
+    var merged = ((item && item.ovDomains) || []).slice();
+    var seen = {};
+    each(merged, function (d) { seen[lower(d)] = true; });
+    each(checked, function (d) {
+      if (!seen[lower(d)]) { merged.push(d); seen[lower(d)] = true; }
+    });
+    handlePromise(api("/api/v1/services/" + encodeURIComponent(name), {
+      method: "PUT",
+      body: JSON.stringify({ domains: merged })
+    }).then(function () {
+      showToast("Домены добавлены: +" + checked.length);
+      return loadAll(true);
+    }));
+  }
+
+  function refreshPreset(force) {
+    var name = state.details.name;
+    if (!name) return;
+    state.presetRefresh = { name: name, loading: true };
+    renderDetails();
+    api("/api/v1/services/" + encodeURIComponent(name) + "/refresh-preset", {
+      method: "POST",
+      body: JSON.stringify({ force: Boolean(force) })
+    }).then(function (data) {
+      if (state.details.name !== name) return;
+      state.presetRefresh = { name: name, diff: { added: (data && data.added) || [], removed: (data && data.removed) || [] } };
+      renderDetails();
+      showToast("Пресет применён: +" + state.presetRefresh.diff.added.length +
+        " / −" + state.presetRefresh.diff.removed.length + ". Запустите тестовый прогон.");
+      loadAll(true);
+    }, function (err) {
+      if (state.details.name !== name) return;
+      var msg = String((err && err.message) || err);
+      state.presetRefresh = { name: name, error: msg };
+      renderDetails();
+      showToast("Не удалось обновить пресет: " + msg, true);
+    });
   }
 
   function renderHistoryList(list) {
@@ -2411,9 +2571,11 @@
 
         handlePromise(withButton(els.addBtn, function () {
           var method = els.addMethod ? trim(els.addMethod.value) : "";
-          return addService(name, method).then(function () {
+          var preset = els.addPreset ? trim(els.addPreset.value) : "";
+          return addService(name, method, preset).then(function () {
             if (els.addInput) els.addInput.value = "";
             if (els.addMethod) els.addMethod.value = "";
+            if (els.addPreset) els.addPreset.value = "";
           });
         }));
       });
@@ -2498,6 +2660,18 @@
         }
         if (closest(e.target, "[data-cdn-run]")) {
           runCdnProbe(false);
+          return;
+        }
+        if (closest(e.target, "[data-suggest-run]")) {
+          runSuggest();
+          return;
+        }
+        if (closest(e.target, "[data-suggest-apply]")) {
+          applySuggest();
+          return;
+        }
+        if (closest(e.target, "[data-preset-refresh]")) {
+          refreshPreset(false);
           return;
         }
         if (closest(e.target, "[data-ov-save]")) {
@@ -2665,6 +2839,7 @@
   function init() {
     bindEvents();
     loadAll(true);
+    loadPresets();
     // На телефоне фильтры стартуют свёрнутыми (как на других страницах).
     try {
       if (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) {
