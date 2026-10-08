@@ -170,7 +170,44 @@ func List() []Preset {
 			out = append(out, p)
 		}
 	}
+	// Кастомные пресеты с диска зеркала (пользовательские файлы, генератор
+	// их не трогает — он пишет только в data/ репозитория).
+	for _, p := range listDisk() {
+		if seen[p.Slug] {
+			continue
+		}
+		seen[p.Slug] = true
+		out = append(out, p)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
+	return out
+}
+
+// listDisk — кастомные пресеты с диска зеркала (DiskDir/*.yaml, кроме
+// rublock.yaml и mirror.json): пользовательские файлы.
+func listDisk() []Preset {
+	if DiskDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(DiskDir)
+	if err != nil {
+		return nil
+	}
+	var out []Preset
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, yamlExt) {
+			continue
+		}
+		slug := strings.TrimSuffix(name, yamlExt)
+		if slug == RublockSlug || slug == "mirror" {
+			continue
+		}
+		if p, ok := getDisk(slug); ok {
+			p.Domains = nil // в каталоге только мета; домены — по Get()
+			out = append(out, p)
+		}
+	}
 	return out
 }
 
@@ -179,14 +216,23 @@ func List() []Preset {
 func listSlow() []Preset {
 	names := presetFiles()
 	out := make([]Preset, 0, len(names))
+	seen := map[string]bool{}
 	for _, name := range names {
 		p, ok := Get(name)
 		if !ok {
 			continue
 		}
+		seen[name] = true
 		if p.Large {
 			p.Domains = nil
 		}
+		out = append(out, p)
+	}
+	for _, p := range listDisk() {
+		if seen[p.Slug] {
+			continue
+		}
+		seen[p.Slug] = true
 		out = append(out, p)
 	}
 	return out

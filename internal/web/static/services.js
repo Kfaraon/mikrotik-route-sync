@@ -1495,7 +1495,34 @@
     });
   }
 
-  // Каталог пресетов для формы добавления (лениво, один раз за страницу).
+  // Автоподсказка пресета по вводимому имени (инвертированный индекс
+  // полного зеркала v2fly). Тихо: нет совпадений — нет подсказки.
+  function suggestPreset() {
+    var hint = byId("svc-preset-hint");
+    if (!hint || !els.addInput || !els.addPreset) return;
+    var q = trim(els.addInput.value);
+    if (q.length < 3 || (els.addPreset.value || "") !== "") {
+      hint.textContent = "";
+      return;
+    }
+    api("/api/v1/presets/match?domain=" + encodeURIComponent(q)).then(function (data) {
+      var list = (data && data.matches) || [];
+      if (!list.length || trim(els.addInput.value) !== q) return;
+      var m = list[0];
+      hint.innerHTML = "";
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn btn-small btn-outline";
+      b.textContent = "Похоже: " + (m.title || m.slug) + " — применить";
+      b.addEventListener("click", function () {
+        els.addPreset.value = m.slug;
+        hint.textContent = "";
+        els.addPreset.focus();
+      });
+      hint.appendChild(document.createTextNode(""));
+      hint.appendChild(b);
+    }).catch(function () { /* тихо */ });
+  }
   // Large-пресеты без доменов в списке — создание по ним сервер отклонит
   // с объяснением (rublock), в option помечаем.
   function loadPresets() {
@@ -2177,6 +2204,25 @@
     if (row.Preset) {
       h += '<div class="svc-preset-refresh"><button class="btn btn-small btn-outline" data-preset-refresh="1">Обновить домены из пресета</button></div>';
     }
+    if (domains.length) {
+      h += '<div class="svc-preset-refresh"><button class="btn btn-small btn-outline" data-blockcheck-run="1">Проверить блокировку (RU)</button>';
+      var bc = state.blockcheck;
+      if (bc && bc.name === state.details.name) {
+        if (bc.loading) {
+          h += ' <span class="svc-muted">Проверяем по блоклисту…</span>';
+        } else if (bc.error) {
+          h += ' <span class="svc-muted">Ошибка: ' + esc(bc.error) + "</span>";
+        } else if (bc.data) {
+          h += ' <span>' + bc.data.blocked_count + " из " + bc.data.total + " в блоклисте" +
+            (bc.data.cached ? " (кэш)" : "") + "</span>";
+          if ((bc.data.blocked || []).length) {
+            h += '<div class="svc-muted">' + esc(bc.data.blocked.slice(0, 12).join(", ")) +
+              (bc.data.blocked.length > 12 ? " …(+" + (bc.data.blocked.length - 12) + ")" : "") + "</div>";
+          }
+        }
+      }
+      h += "</div>";
+    }
     var pr = state.presetRefresh;
     if (pr && pr.name === state.details.name) {
       if (pr.error) {
@@ -2261,6 +2307,27 @@
       state.presetRefresh = { name: name, error: msg };
       renderDetails();
       showToast("Не удалось обновить пресет: " + msg, true);
+    });
+  }
+
+  function runBlockcheck() {
+    var name = state.details.name;
+    if (!name) return;
+    state.blockcheck = { name: name, loading: true };
+    renderDetails();
+    api("/api/v1/services/" + encodeURIComponent(name) + "/blockcheck", {
+      method: "POST",
+      body: "{}"
+    }).then(function (data) {
+      if (state.details.name !== name) return;
+      state.blockcheck = { name: name, data: data || null };
+      renderDetails();
+    }, function (err) {
+      if (state.details.name !== name) return;
+      var msg = String((err && err.message) || err);
+      state.blockcheck = { name: name, error: msg };
+      renderDetails();
+      showToast("Не удалось проверить блокировку: " + msg, true);
     });
   }
 
@@ -2559,9 +2626,16 @@
       });
     }
 
+    if (els.addInput) {
+      var presetHintTimer = null;
+      els.addInput.addEventListener("input", function () {
+        if (presetHintTimer) clearTimeout(presetHintTimer);
+        presetHintTimer = setTimeout(suggestPreset, 400);
+      });
+    }
+
     if (els.addForm) {
-      els.addForm.addEventListener("submit", function (e) {
-        e.preventDefault();
+      els.addForm.addEventListener("submit", function (e) {        e.preventDefault();
 
         var name = trim(els.addInput ? els.addInput.value : "");
         if (!name) {
@@ -2672,6 +2746,10 @@
         }
         if (closest(e.target, "[data-preset-refresh]")) {
           refreshPreset(false);
+          return;
+        }
+        if (closest(e.target, "[data-blockcheck-run]")) {
+          runBlockcheck();
           return;
         }
         if (closest(e.target, "[data-ov-save]")) {

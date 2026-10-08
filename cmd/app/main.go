@@ -793,12 +793,16 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 	presets.DiskDir = dir
 	c := cron.New()
 	_, err = c.AddFunc(expr, func() {
-		st, err := presets.RefreshMirror(context.WithoutCancel(ctx), dir)
-		if err != nil {
+		if st, err := presets.RefreshMirror(context.WithoutCancel(ctx), dir); err != nil {
 			log.Warn("presets mirror refresh failed", "err", err)
-			return
+		} else {
+			log.Info("presets mirror refreshed", "entries", st.Entries)
 		}
-		log.Info("presets mirror refreshed", "entries", st.Entries)
+		if _, err := presets.RefreshUpstream(context.WithoutCancel(ctx), dir); err != nil {
+			log.Warn("presets upstream refresh failed", "err", err)
+		} else if err := presets.RebuildUpstreamIndex(dir); err != nil {
+			log.Warn("presets upstream index rebuild failed", "err", err)
+		}
 	})
 	if err != nil {
 		log.Warn("presets mirror schedule rejected, disabled", "schedule", spec, "err", err)

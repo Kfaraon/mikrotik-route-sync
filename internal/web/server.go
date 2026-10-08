@@ -557,6 +557,9 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	// (rublock) читаются с диска, а не из embed. Задаётся один раз при старте.
 	if dir := filepath.Dir(cfg.CachePath); dir != "" && dir != "." {
 		presets.DiskDir = filepath.Join(dir, "presets")
+		if err := presets.RebuildUpstreamIndex(presets.DiskDir); err != nil {
+			log.Debug("upstream presets index not built (mirror not downloaded?)", "err", err)
+		}
 	}
 
 	syncer.SetEventHook(func(event string, data any) {
@@ -600,8 +603,10 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Post("/services/{name}/dry-run", s.apiDryRun)
 		r.Post("/services/{name}/recommend", s.apiRecommendService)
 		r.Post("/services/{name}/suggest-domains", s.apiSuggestDomains)
+		r.Post("/services/{name}/blockcheck", s.apiBlockcheck)
 		r.Post("/services/{name}/refresh-preset", s.apiRefreshPreset)
 		r.Get("/presets", s.apiPresets)
+		r.Get("/presets/match", s.apiPresetsMatch)
 		r.Post("/presets/refresh", s.apiPresetsRefresh)
 		r.Get("/schedules", s.apiSchedules)
 		r.Put("/schedules/{service}", s.apiUpdateSchedule)
@@ -1592,20 +1597,116 @@ func (s *Server) apiPresets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// apiPresetsRefresh — ручная докачка RU-зеркала (расписание — в демоне).
+// apiPresetsRefresh — ручная докачка зеркал (?source=ru|upstream|all).
 func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
 	dir := s.presetsDir()
 	if dir == "" {
 		writeErr(w, http.StatusBadRequest, "cache_path not configured")
 		return
 	}
-	st, err := presets.RefreshMirror(r.Context(), dir)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+	source := strings.ToLower(r.URL.Query().Get("source"))
+	if source == "" {
+		source = "all"
+	}
+	out := map[string]any{}
+	if source == "all" || source == "ru" {
+		st, err := presets.RefreshMirror(r.Context(), dir)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "ru: "+err.Error())
+			return
+		}
+		out["ru"] = st
+	}
+	if source == "all" || source == "upstream" {
+		st, err := presets.RefreshUpstream(r.Context(), dir)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "upstream: "+err.Error())
+			return
+		}
+		if err := presets.RebuildUpstreamIndex(dir); err != nil {
+			s.log.Warn("upstream index rebuild failed", "err", err)
+		}
+		out["upstream"] = st
+	}
+	if len(out) == 0 {
+		writeErr(w, http.StatusBadRequest, "source must be ru|upstream|all")
 		return
 	}
-	s.auditChange(r, "api", "presets_refresh", fmt.Sprintf("%d entries", st.Entries))
-	writeOK(w, st)
+	s.auditChange(r, "api", "presets_refresh", fmt.Sprintf("%v", out))
+	writeOK(w, out)
+}
+
+// apiPresetsMatch — какие пресеты содержат домен (инвертированный индекс
+// полного зеркала v2fly). Пусто — зеркало не скачано или совпадений нет.
+func (s *Server) apiPresetsMatch(w http.ResponseWriter, r *http.Request) {
+	domain := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("domain")))
+	if domain == "" {
+		writeErr(w, http.StatusBadRequest, "domain required")
+		return
+	}
+	type match struct {
+		Slug     string `json:"slug"`
+		Title    string `json:"title"`
+		Vendored bool   `json:"vendored"`
+	}
+	var out []match
+	for _, slug := range presets.MatchUpstream(domain) {
+		m := match{Slug: slug}
+		if p, ok := presets.Get(slug); ok {
+			m.Title = p.Title
+			m.Vendored = true
+		} else {
+			m.Title = slug
+		}
+		out = append(out, m)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	writeOK(w, map[string]any{"domain": domain, "matches": out})
+}
+
+// apiBlockcheck — какие домены сервиса есть в RU-блоклисте.
+// Потоковое чтение зеркала (1.7M строк в память не грузим), итог кэшируем.
+func (s *Server) apiBlockcheck(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	s.cfg.RLock()
+	ov, _ := s.cfg.Overrides[name]
+	inServices := false
+	for _, p := range s.cfg.Services {
+		if p == name {
+			inServices = true
+			break
+		}
+	}
+	s.cfg.RUnlock()
+	if !inServices {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("service %s not found", name))
+		return
+	}
+	domains := append([]string(nil), ov.Domains...)
+	if len(domains) == 0 {
+		writeOK(w, map[string]any{"service": name, "blocked": []string{}, "total": 0})
+		return
+	}
+	dir := s.presetsDir()
+	if dir == "" {
+		writeErr(w, http.StatusBadRequest, "cache_path not configured")
+		return
+	}
+	version := ""
+	if m := presets.MirrorInfo(dir); m != nil {
+		version = m.UpdatedAt
+	}
+	blocked, cached, err := presets.CheckBlockedCached(filepath.Join(dir, "rublock.yaml"), version, domains)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "blocklist unavailable (зеркало не скачано?): "+err.Error())
+		return
+	}
+	writeOK(w, map[string]any{
+		"service": name, "blocked": blocked,
+		"blocked_count": len(blocked), "total": len(domains), "cached": cached,
+	})
 }
 
 func (s *Server) apiRecommendService(w http.ResponseWriter, r *http.Request) {

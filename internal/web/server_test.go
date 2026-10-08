@@ -23,6 +23,7 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 )
 
@@ -1459,5 +1460,118 @@ func TestAPIAddServicePreset(t *testing.T) {
 		`{"preset":"rublock"}`)
 	if st != http.StatusBadRequest {
 		t.Fatalf("large preset without force must be 400, got %d", st)
+	}
+}
+
+// TestAPIPresetsMatch — инвертированный индекс: домен находит пресет.
+func TestAPIPresetsMatch(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	// Абсолютный cache_path: presetsDir endpoints и DiskDir смотрят в temp.
+	absCache := filepath.Join(t.TempDir(), "c.db")
+	cfg.Lock()
+	cfg.CachePath = absCache
+	cfg.Unlock()
+	presets.DiskDir = filepath.Join(filepath.Dir(absCache), "presets")
+	t.Cleanup(func() { presets.FlushAll() })
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// Кладём upstream-фикстуру в зеркало тестового конфига и индексируем.
+	dir := filepath.Join(filepath.Dir(absCache), "presets", "upstream")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "netflix"), []byte("nflxvideo.net\nnetflix.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := presets.RebuildUpstreamIndex(filepath.Join(filepath.Dir(absCache), "presets")); err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+
+	client := &http.Client{Jar: newJar(t)}
+	_, body := doAuth(client, ts.URL, "GET", "/api/v1/presets/match?domain=nflxvideo.net", "", nil)
+	var v apiEnvelope
+	if err := json.Unmarshal([]byte(body), &v); err != nil || !v.OK {
+		t.Fatalf("bad envelope: %s", body)
+	}
+	data, _ := v.Data.(map[string]any)
+	matches, _ := data["matches"].([]any)
+	if len(matches) == 0 {
+		t.Fatalf("no match for nflxvideo.net: %s", body)
+	}
+	m0, _ := matches[0].(map[string]any)
+	if m0["slug"] != "netflix" {
+		t.Fatalf("want netflix, got %+v", m0)
+	}
+
+	_, body = doAuth(client, ts.URL, "GET", "/api/v1/presets/match?domain=unknown-xyz-123.invalid", "", nil)
+	if !strings.Contains(body, `"matches":null`) && !strings.Contains(body, `"matches":[]`) {
+		t.Fatalf("unknown domain must match nothing: %s", body)
+	}
+}
+
+// TestAPIBlockcheck — пересечение доменов сервиса с блоклистом.
+func TestAPIBlockcheck(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	absCache := filepath.Join(t.TempDir(), "c.db")
+	cfg.Lock()
+	cfg.CachePath = absCache
+	cfg.Unlock()
+	presets.DiskDir = filepath.Join(filepath.Dir(absCache), "presets")
+	t.Cleanup(func() { presets.FlushAll() })
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// Фикстура зеркала вместо 38МБ rublock (YAML-формат как у настоящего).
+	dir := filepath.Join(filepath.Dir(absCache), "presets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fx := "slug: rublock\ntitle: RU\nmethod: static_url\nsource:\n  repo: test\n  commit: x\n  date: today\ndomains:\n  - blocked.example\n  - sub.blocked.example\n"
+	if err := os.WriteFile(filepath.Join(dir, "rublock.yaml"), []byte(fx), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+	start := strings.Index(page, `name="csrf-token" content="`)
+	token := page[start+len(`name="csrf-token" content="`):]
+	token = token[:strings.Index(token, `"`)]
+
+	st, _ := doJSON(client, ts.URL, "PUT", "/api/v1/services/testsvc", token, nil,
+		`{"domains":["blocked.example","free.example"]}`)
+	if st != http.StatusOK {
+		t.Fatalf("override PUT failed: %d", st)
+	}
+	st, env := doJSON(client, ts.URL, "POST", "/api/v1/services/testsvc/blockcheck", token, nil, `{}`)
+	if st != http.StatusOK {
+		t.Fatalf("blockcheck failed: %d %+v", st, env)
+	}
+	data, _ := env.Data.(map[string]any)
+	if c, _ := data["blocked_count"].(float64); c != 1 {
+		t.Fatalf("want 1 blocked: %+v", data)
+	}
+	blocked, _ := data["blocked"].([]any)
+	if len(blocked) != 1 || blocked[0] != "blocked.example" {
+		t.Fatalf("wrong blocked: %+v", data)
+	}
+}
+
+// TestSettingsHasSuggestRows — новые настройки видны в UI.
+func TestSettingsHasSuggestRows(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+	for _, want := range []string{
+		`suggest.v2fly_enabled`, `suggest.ru_enabled`, `suggest.urlscan_mode`,
+		`suggest.sources`, `external.urlscan_api_key`, `presets.update_schedule`,
+		`name="clear:`, `Подбор доменов`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("settings page missing %q", want)
+		}
 	}
 }

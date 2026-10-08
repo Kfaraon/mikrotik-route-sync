@@ -148,6 +148,9 @@ func write(list []presets.Preset, meta presets.Meta) error {
 	}
 
 	keep := map[string]bool{"meta.yaml": true}
+	// Ручные пресеты вне генератора (rublock-ip и др.): чистка их не трогает.
+	// Свои пресеты кладите сюда же руками — генератор их сохранит.
+	keep["rublock-ip.yaml"] = true
 	for _, p := range list {
 		raw, err := marshalPreset(p)
 		if err != nil {

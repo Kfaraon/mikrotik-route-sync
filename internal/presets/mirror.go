@@ -8,6 +8,9 @@
 package presets
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -15,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -135,4 +139,159 @@ func fetchMirror(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("mirror empty response")
 	}
 	return body, nil
+}
+
+// UpstreamTarball — полный снапшот v2fly/domain-list-community (~1МБ).
+// Пин ветки master: детерминированный коммит фиксирует генератор,
+// зеркало хранит дату скачивания (свежесть важнее пина в рантайме).
+const UpstreamTarball = "https://codeload.github.com/v2fly/domain-list-community/tar.gz/refs/heads/master"
+
+// UpstreamMeta — состояние v2fly-зеркала (upstream.json рядом).
+type UpstreamMeta struct {
+	UpdatedAt string `yaml:"updated_at" json:"updated_at"`
+	Source    string `yaml:"source" json:"source"`
+	Files     int    `yaml:"files" json:"files"`
+	Size      int64  `yaml:"size" json:"size"`
+}
+
+// maxUpstreamBytes — tarball ~1МБ, запас с головой.
+const maxUpstreamBytes = 32 << 20
+
+// RefreshUpstream качает tarball v2fly целиком в dir/upstream/ (только data/*)
+// и обновляет upstream.json. Валидация: минимум 100 файлов data/*.
+func RefreshUpstream(ctx context.Context, dir string) (UpstreamMeta, error) {
+	var st UpstreamMeta
+	body, err := fetchMirror(ctx, UpstreamTarball)
+	if err != nil {
+		return st, err
+	}
+	if int64(len(body)) > maxUpstreamBytes {
+		return st, fmt.Errorf("upstream too large: %d bytes", len(body))
+	}
+	files, err := extractDataFiles(body)
+	if err != nil {
+		return st, err
+	}
+	if len(files) < 100 {
+		return st, fmt.Errorf("upstream suspiciously small: %d files, keeping old", len(files))
+	}
+	upDir := filepath.Join(dir, "upstream")
+	if err := os.MkdirAll(upDir, 0o755); err != nil {
+		return st, fmt.Errorf("mkdir upstream: %w", err)
+	}
+	for name, content := range files {
+		tmp, err := os.CreateTemp(upDir, ".upstream-*.tmp")
+		if err != nil {
+			return st, fmt.Errorf("tmp upstream: %w", err)
+		}
+		if _, err := tmp.WriteString(content); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+			return st, fmt.Errorf("write upstream: %w", err)
+		}
+		_ = tmp.Close()
+		if err := os.Rename(tmp.Name(), filepath.Join(upDir, filepath.Base(name))); err != nil {
+			_ = os.Remove(tmp.Name())
+			return st, fmt.Errorf("rename upstream: %w", err)
+		}
+	}
+	var total int64
+	for _, c := range files {
+		total += int64(len(c))
+	}
+	meta := UpstreamMeta{
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		Source:    UpstreamTarball,
+		Files:     len(files),
+		Size:      total,
+	}
+	if mraw, err := yaml.Marshal(meta); err == nil {
+		_ = os.WriteFile(filepath.Join(dir, "upstream.json"), mraw, 0o644)
+	}
+	return meta, nil
+}
+
+// extractDataFiles достаёт файлы data/* из tar.gz (имена без каталогов).
+func extractDataFiles(body []byte) (map[string]string, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("gunzip upstream: %w", err)
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	files := map[string]string{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read tar: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		// data/<name> на любой глубине префикса tarball.
+		idx := strings.Index(hdr.Name, "/data/")
+		if idx < 0 {
+			continue
+		}
+		name := hdr.Name[idx+len("/data/"):]
+		if name == "" || strings.Contains(name, "/") {
+			continue
+		}
+		content, err := io.ReadAll(io.LimitReader(tr, maxUpstreamBytes+1))
+		if err != nil {
+			return nil, fmt.Errorf("read entry: %w", err)
+		}
+		files[name] = string(content)
+	}
+	return files, nil
+}
+
+// --- In-memory индекс полного v2fly-зеркала ("домен → пресеты") ---
+
+var (
+	ixMu sync.Mutex
+	ix   *Index
+)
+
+// RebuildUpstreamIndex строит инвертированный индекс по файлам dir/upstream/.
+// Вызывать при старте (если зеркало скачано) и после каждого обновления.
+func RebuildUpstreamIndex(dir string) error {
+	upDir := filepath.Join(dir, "upstream")
+	entries, err := os.ReadDir(upDir)
+	if err != nil {
+		return fmt.Errorf("read upstream: %w", err)
+	}
+	files := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(upDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		files[e.Name()] = string(raw)
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("upstream mirror empty: %s", upDir)
+	}
+	built := BuildIndex(files)
+	ixMu.Lock()
+	ix = built
+	ixMu.Unlock()
+	return nil
+}
+
+// MatchUpstream ищет слаги пресетов по домену (точное + apex).
+// Без индекса (зеркало не скачано) — nil.
+func MatchUpstream(domain string) []string {
+	ixMu.Lock()
+	defer ixMu.Unlock()
+	if ix == nil {
+		return nil
+	}
+	return ix.Match(domain)
 }
