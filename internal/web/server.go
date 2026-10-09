@@ -15,6 +15,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -489,27 +490,36 @@ func (l *ipLimiter) evictLocked() {
 }
 
 // StartEvictTicker запускает периодическую чистку неактивных лимитеров.
-// interval — период чистки (рекомендуется 5 мин). Безопасно вызывать многократно.
+// interval — период чистки (рекомендуется 5 мин). Безопасно вызывать многократно:
+// предыдущий тикер останавливается, его горутина завершается.
 func (l *ipLimiter) StartEvictTicker(interval time.Duration) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l.evictTicker != nil {
-		l.evictTicker.Stop()
-	}
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
 
-	l.evictDone = make(chan struct{})
-	l.evictTicker = time.NewTicker(interval)
+	l.mu.Lock()
+	// Останавливаем предыдущий тикер и будим его горутину (она владеет
+	// локальными копиями ticker/done, поэтому читать поля в select нельзя).
+	if l.evictTicker != nil {
+		l.evictTicker.Stop()
+	}
+	if l.evictDone != nil {
+		close(l.evictDone)
+	}
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+	l.evictTicker = ticker
+	l.evictDone = done
+	l.mu.Unlock()
 
 	go func() {
 		for {
 			select {
-			case <-l.evictTicker.C:
+			case <-ticker.C:
+				l.mu.Lock()
 				l.evictLocked()
-			case <-l.evictDone:
+				l.mu.Unlock()
+			case <-done:
 				return
 			}
 		}
@@ -2009,12 +2019,19 @@ func (s *Server) apiSyncMany(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	services := req.Services
-	if len(services) == 0 {
+	var services []string
+	if len(req.Services) == 0 {
 		// Копия под чтением: горутина живёт дольше запроса.
 		s.cfg.RLock()
 		services = append([]string(nil), s.cfg.Services...)
 		s.cfg.RUnlock()
+	} else {
+		var err error
+		services, err = s.configuredServices(req.Services)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	runner := s.syncer
 	// Фоновая задача с пределом (как у планировщика/бота, но шире —
@@ -2045,7 +2062,11 @@ func (s *Server) apiSyncOne(w http.ResponseWriter, r *http.Request) {
 	// дедлайн ограничивает висящий роутер (как у планировщика/бота).
 	res, err := s.syncer.SyncService(tctx, name, req.DryRun, req.Force)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, apiEnvelope{OK: false, Data: res, Error: err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, core.ErrServiceNotFound) {
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, apiEnvelope{OK: false, Data: res, Error: err.Error()})
 		return
 	}
 	writeOK(w, res)
@@ -2059,7 +2080,11 @@ func (s *Server) apiDryRun(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	res, err := s.syncer.SyncService(dctx, name, true, false)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, apiEnvelope{OK: false, Data: res, Error: err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, core.ErrServiceNotFound) {
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, apiEnvelope{OK: false, Data: res, Error: err.Error()})
 		return
 	}
 	writeOK(w, res)
@@ -2346,7 +2371,12 @@ func (s *Server) actionSyncAll(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) actionSyncSelected(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
-	services := append([]string(nil), r.PostForm["service"]...)
+	var services []string
+	var err error
+	if services, err = s.configuredServices(r.PostForm["service"]); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if len(services) == 0 {
 		writeErr(w, http.StatusBadRequest, "nothing selected")
 		return
@@ -2357,6 +2387,44 @@ func (s *Server) actionSyncSelected(w http.ResponseWriter, r *http.Request) {
 		_ = s.syncer.SyncMany(ctx, services, false, false)
 	}()
 	writeOK(w, map[string]any{"started": true, "services": services})
+}
+
+// maxSyncServices — предел числа сервисов в одном запросе на синк: веер
+// горутин (по одной на сервис до семафора) не должен расти без границ.
+const maxSyncServices = 1000
+
+// configuredServices нормализует запрошенные имена сервисов и оставляет
+// только те, что есть в конфиге. Возвращает ошибку на некорректное имя,
+// дубликат, пустой результат или превышение предела — так веер горутин
+// ограничен, а синк несуществующего сервиса не пишет AUTO:<name> на роутер.
+func (s *Server) configuredServices(requested []string) ([]string, error) {
+	if len(requested) > maxSyncServices {
+		return nil, fmt.Errorf("too many services: %d (max %d)", len(requested), maxSyncServices)
+	}
+	s.cfg.RLock()
+	known := make(map[string]struct{}, len(s.cfg.Services))
+	for _, p := range s.cfg.Services {
+		known[p] = struct{}{}
+	}
+	s.cfg.RUnlock()
+
+	out := make([]string, 0, len(requested))
+	seen := make(map[string]struct{}, len(requested))
+	for _, raw := range requested {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if !config.ValidateServiceName(name) {
+			return nil, fmt.Errorf("invalid service name %q", raw)
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		if _, ok := known[name]; !ok {
+			return nil, fmt.Errorf("service %s not found", name)
+		}
+		out = append(out, name)
+	}
+	return out, nil
 }
 
 func (s *Server) actionAddService(w http.ResponseWriter, r *http.Request) {

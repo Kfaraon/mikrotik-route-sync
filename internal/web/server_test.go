@@ -447,6 +447,46 @@ func newJar(t *testing.T) http.CookieJar {
 	return jar
 }
 
+// TestIPLimiterEvictTickerRace проверяет конкурентную безопасность эвикции:
+// фоновый тикер чистит карту, параллельно идут allow и рестарт тикера.
+// Прежняя версия вызывала evictLocked без l.mu → fatal concurrent map write.
+func TestIPLimiterEvictTickerRace(t *testing.T) {
+	l := newIPLimiter(1000)
+	defer l.StopEvictTicker()
+	// Частый тик неактивных записей: чистка заведомо пересекается с allow.
+	l.StartEvictTicker(time.Millisecond)
+
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 2000; i++ {
+				l.allow(strconv.Itoa(g) + "-" + strconv.Itoa(i))
+			}
+		}(g)
+	}
+	// Параллельные рестарты тикера: старая горутина должна завершиться,
+	// поля ticker/done не читаются из select без лока.
+	for i := 0; i < 20; i++ {
+		l.StartEvictTicker(time.Millisecond)
+	}
+	wg.Wait()
+	l.mu.Lock()
+	n := len(l.limiters)
+	l.mu.Unlock()
+	if n > maxLimiters {
+		t.Fatalf("limiters=%d, want <= %d", n, maxLimiters)
+	}
+}
+
+func TestIPLimiterStopBeforeStart(t *testing.T) {
+	// Stop без Start и повторный Stop не должны паниковать (nil-поля).
+	l := newIPLimiter(10)
+	l.StopEvictTicker()
+	l.StopEvictTicker()
+}
+
 func TestIPLimiterEvicts(t *testing.T) {
 	l := newIPLimiter(1000)
 	if !l.allow("10.0.0.1") {
@@ -708,6 +748,20 @@ func TestAPISyncMany(t *testing.T) {
 	if st != http.StatusBadRequest {
 		t.Fatalf("malformed: want 400, got %d", st)
 	}
+
+	// Несуществующий сервис в списке — 400 (E1/H13).
+	st, _ = doJSON(client, ts.URL, "POST", "/api/v1/services/sync", token,
+		map[string]any{"services": []string{"ghost"}}, "")
+	if st != http.StatusBadRequest {
+		t.Fatalf("unknown service: want 400, got %d", st)
+	}
+
+	// Некорректное имя в списке — 400.
+	st, _ = doJSON(client, ts.URL, "POST", "/api/v1/services/sync", token,
+		map[string]any{"services": []string{"Bad Name"}}, "")
+	if st != http.StatusBadRequest {
+		t.Fatalf("invalid name: want 400, got %d", st)
+	}
 }
 
 // TestAPISyncOne — синхронный синк в мёртвый MikroTik: быстрый 500
@@ -732,6 +786,13 @@ func TestAPISyncOne(t *testing.T) {
 	st, _ = doJSON(client, ts.URL, "POST", "/api/v1/services/testsvc/sync", token, nil, "{oops")
 	if st != http.StatusBadRequest {
 		t.Fatalf("malformed: want 400, got %d", st)
+	}
+
+	// Несуществующий сервис — 404, а не 500 (E1).
+	st, env = doJSON(client, ts.URL, "POST", "/api/v1/services/ghost/sync", token,
+		map[string]any{"dry_run": false}, "")
+	if st != http.StatusNotFound || env.OK {
+		t.Fatalf("unknown service: want 404+ok:false, got %d %+v", st, env)
 	}
 }
 

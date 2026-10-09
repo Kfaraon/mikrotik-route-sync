@@ -6,6 +6,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -32,6 +33,11 @@ import (
 // ============================================================================
 // Типы данных
 // ============================================================================
+
+// ErrServiceNotFound — сервиса нет в конфиге (Services). Синк такого сервиса
+// не должен выполняться: иначе на роутер писались бы записи AUTO:<name> без
+// записи в конфиге (сироты в address-list).
+var ErrServiceNotFound = errors.New("service not found")
 
 type Result struct {
 	Service   string `json:"service"`
@@ -346,6 +352,17 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	list := s.cfg.Firewall.AddressList
 	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
 	ov := s.cfg.Overrides[name]
+	// Членство в конфиге: без него синк писал бы AUTO:<name> на роутер
+	// для несуществующего сервиса (в память и в файл ничего не попадает —
+	// сироты в address-list). Проверки нет у внутренних вызовов (SyncMany
+	// берёт список из конфига, SyncOneResult — для существующего сервиса).
+	inCfg := false
+	for _, p := range s.cfg.Services {
+		if p == name {
+			inCfg = true
+			break
+		}
+	}
 	manageDisabled := s.cfg.Firewall.ManageDisabled
 	maxDeleteRatio := s.cfg.Safety.MaxDeleteRatio
 	requireConfirmationOver := s.cfg.Safety.RequireConfirmationOver
@@ -353,6 +370,16 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	maxASNPrefixes := s.cfg.Safety.MaxASNPrefixes
 	verifySNI := safety.VerifySNIEnabled()
 	s.cfg.RUnlock()
+
+	if !inCfg {
+		return Result{
+			Service:    name,
+			DryRun:     dry,
+			StartedAt:  start,
+			FinishedAt: time.Now(),
+			Version:    version.Version,
+		}, fmt.Errorf("%w: %s", ErrServiceNotFound, name)
+	}
 
 	res := Result{
 		Service:   name,

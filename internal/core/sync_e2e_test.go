@@ -16,6 +16,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -744,6 +745,31 @@ func TestE2ESyncReportsRejectedPrefixes(t *testing.T) {
 	}
 	if rec.RejectedTotal != 1 {
 		t.Fatalf("history rejected_total=%d", rec.RejectedTotal)
+	}
+}
+
+// E1: синк сервиса, которого нет в конфиге, обязан отказать до любых
+// сетевых операций — иначе на роутер ушли бы записи AUTO:<name> без записи
+// в конфиге (сироты в address-list).
+func TestE2ESyncUnknownServiceRejected(t *testing.T) {
+	fr := newFakeRouter()
+	src := &fakeSource{}
+	src.set([]string{addrA}, nil)
+	s := newE2ESyncer(t, fr, src, true)
+
+	_, err := s.SyncService(context.Background(), "ghost", false, false)
+	if err == nil {
+		t.Fatal("sync of unknown service must fail")
+	}
+	if !errors.Is(err, ErrServiceNotFound) {
+		t.Fatalf("want ErrServiceNotFound, got %v", err)
+	}
+	// Ни чтений, ни мутаций на роутере.
+	if ops := fr.takeOps(); len(ops) != 0 {
+		t.Fatalf("router touched for unknown service: %v", ops)
+	}
+	if got := fr.addresses(); len(got) != 0 {
+		t.Fatalf("entries created for unknown service: %v", got)
 	}
 }
 
