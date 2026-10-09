@@ -35,6 +35,38 @@ func TestClassifyOverrideMultiMethod(t *testing.T) {
 	}
 }
 
+// TestClassifyNoHardcodedASNForDomainServices фиксирует инвариант: у сервисов
+// с доменами ASN не вшит (определяется резолвом в рантайме через
+// core/collect.go → resolver.ResolveASN), а задан только там, где ASN —
+// идентификатор источника (CDN-список без домена, akamai → метод asn).
+// Регрессия с зашитым AS62240 у telegram вела на чужие сети Clouvider.
+func TestClassifyNoHardcodedASNForDomainServices(t *testing.T) {
+	// Доменные сервисы: ASN обязан быть пустым, домены — присутствовать.
+	for _, name := range []string{"youtube", "instagram", "facebook", "telegram"} {
+		got := Classify(name, "")
+		if got.ASN != "" {
+			t.Errorf("Classify(%q).ASN = %q, ожидалось пусто (ASN определяется рантаймом)", name, got.ASN)
+		}
+		if len(got.Domains) == 0 {
+			t.Errorf("Classify(%q).Domains пуст — рантайм-резолв ASN не сработает", name)
+		}
+	}
+
+	// Источниковые сервисы: ASN задан (ключ cdnSources / метод asn).
+	src := map[string]string{
+		"cloudflare": "AS13335",
+		"aws":        "AS16509",
+		"google":     "AS15169",
+		"fastly":     "AS54113",
+		"akamai":     "AS20940",
+	}
+	for name, want := range src {
+		if got := Classify(name, ""); got.ASN != want {
+			t.Errorf("Classify(%q).ASN = %q, ожидалось %q", name, got.ASN, want)
+		}
+	}
+}
+
 func TestClassifyASNLiteral(t *testing.T) {
 	got := Classify("as15169", "")
 	if got.ASN != "AS15169" || !reflect.DeepEqual(got.Methods, []string{"asn"}) {

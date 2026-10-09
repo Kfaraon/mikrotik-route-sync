@@ -25,6 +25,16 @@ type knownService struct {
 }
 
 // knownServices — словарь известных сервисов (PROMPT II.2).
+//
+// Поле asn заполняется только у провайдеров, где ASN — это идентификатор
+// источника: у CDN-сервисов без домена (cloudflare/aws/google/fastly) он
+// выбирает официальный список в collectors.cdnSources, у akamai — вход
+// метода asn. Для сервисов с доменами (youtube/instagram/facebook/telegram)
+// ASN НЕ вшивается: его определяет механика сбора в рантайме
+// (core/collect.go → resolver.ResolveASN), поэтому смена ASN провайдером
+// не требует правки кода (раньше зашитый AS62240 у telegram вёл на чужие
+// сети Clouvider). Если такой сервис не получит ASN из домена — это
+// сигнал о проблеме сбора, а не повод подставлять константу.
 var knownServices = map[string]knownService{
 	"cloudflare": {
 		methods: []string{"cdn"},
@@ -42,23 +52,19 @@ var knownServices = map[string]knownService{
 	"youtube": {
 		methods: []string{"dynamic", "cdn"},
 		domains: []string{"youtube.com", "googlevideo.com", "ytimg.com"},
-		asn:     "AS15169",
 	},
 	"instagram": {
 		methods: []string{"dynamic", "asn"},
 		domains: []string{"instagram.com", "cdninstagram.com"},
-		asn:     "AS32934",
 	},
 	"facebook": {
 		methods: []string{"dynamic", "asn"},
 		domains: []string{"facebook.com", "fbcdn.net"},
-		asn:     "AS32934",
 	},
 	"telegram": {
 		methods: []string{"dynamic", "asn", "static_url"},
 		domains: []string{"telegram.org", "t.me"},
 		static:  []string{"https://core.telegram.org/resources/cidr.txt"},
-		asn:     "AS62240",
 	},
 	"fastly": {
 		methods: []string{"cdn"},
