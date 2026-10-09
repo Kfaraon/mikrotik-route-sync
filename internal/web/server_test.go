@@ -1741,3 +1741,48 @@ func TestSessionExpiredNotReused(t *testing.T) {
 		t.Fatal("expired session must not be reused")
 	}
 }
+
+// TestAPIPresetsMatchVendoredFirst — вендоренные выше мусорных категорий:
+// UI применяет matches[0], им обязан быть создаваемый пресет.
+func TestAPIPresetsMatchVendoredFirst(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	absCache := filepath.Join(t.TempDir(), "c.db")
+	cfg.Lock()
+	cfg.CachePath = absCache
+	cfg.Unlock()
+	presets.DiskDir = filepath.Join(filepath.Dir(absCache), "presets")
+	t.Cleanup(func() { presets.FlushAll() })
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	dir := filepath.Join(filepath.Dir(absCache), "presets", "upstream")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// aaa-junk сортируется раньше netflix, но не вендорен.
+	if err := os.WriteFile(filepath.Join(dir, "aaa-junk"), []byte("nflxvideo.net\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "netflix"), []byte("nflxvideo.net\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := presets.RebuildUpstreamIndex(filepath.Join(filepath.Dir(absCache), "presets")); err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+
+	client := &http.Client{Jar: newJar(t)}
+	_, body := doAuth(client, ts.URL, "GET", "/api/v1/presets/match?domain=nflxvideo.net", "", nil)
+	var v apiEnvelope
+	if err := json.Unmarshal([]byte(body), &v); err != nil || !v.OK {
+		t.Fatalf("bad envelope: %s", body)
+	}
+	data, _ := v.Data.(map[string]any)
+	matches, _ := data["matches"].([]any)
+	if len(matches) < 2 {
+		t.Fatalf("want junk+netflix, got %+v", matches)
+	}
+	m0, _ := matches[0].(map[string]any)
+	if m0["slug"] != "netflix" || m0["vendored"] != true {
+		t.Fatalf("vendored must be first: %+v", matches)
+	}
+}

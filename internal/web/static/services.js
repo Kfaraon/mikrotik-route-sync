@@ -1508,19 +1508,41 @@
     api("/api/v1/presets/match?domain=" + encodeURIComponent(q)).then(function (data) {
       var list = (data && data.matches) || [];
       if (!list.length || trim(els.addInput.value) !== q) return;
-      var m = list[0];
-      hint.innerHTML = "";
-      var b = document.createElement("button");
-      b.type = "button";
-      b.className = "btn btn-small btn-outline";
-      b.textContent = "Похоже: " + (m.title || m.slug) + " — применить";
-      b.addEventListener("click", function () {
-        els.addPreset.value = m.slug;
-        hint.textContent = "";
-        els.addPreset.focus();
+      // Применяем только вендоренный (его option есть в select);
+      // невендоренные показываем текстом — их нельзя создать.
+      var vendored = null;
+      var names = [];
+      each(list, function (m) {
+        names.push(m.title || m.slug);
+        if (!vendored && m.vendored) vendored = m;
       });
-      hint.appendChild(document.createTextNode(""));
-      hint.appendChild(b);
+      hint.innerHTML = "";
+      if (vendored) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn btn-small btn-outline";
+        b.textContent = "Похоже: " + (vendored.title || vendored.slug) + " — применить";
+        b.addEventListener("click", function () {
+          // Опция обязана существовать (список пресетов уже загружен);
+          // иначе — добавляем явно, чтобы выбор был виден.
+          var found = false;
+          each(els.addPreset.options, function (o) {
+            if (o.value === vendored.slug) found = true;
+          });
+          if (!found) {
+            var opt = document.createElement("option");
+            opt.value = vendored.slug;
+            opt.textContent = vendored.title || vendored.slug;
+            els.addPreset.appendChild(opt);
+          }
+          els.addPreset.value = vendored.slug;
+          hint.textContent = "";
+          els.addPreset.focus();
+        });
+        hint.appendChild(b);
+      } else {
+        hint.textContent = "Похоже: " + names.slice(0, 3).join(", ") + " (нет в каталоге)";
+      }
     }).catch(function () { /* тихо */ });
   }
   // Large-пресеты без доменов в списке — создание по ним сервер отклонит

@@ -1743,19 +1743,24 @@ func (s *Server) apiPresetsMatch(w http.ResponseWriter, r *http.Request) {
 		Vendored bool   `json:"vendored"`
 	}
 	var out []match
+	var rest []match
 	for _, slug := range presets.MatchUpstream(domain) {
 		m := match{Slug: slug}
 		if p, ok := presets.Get(slug); ok {
 			m.Title = p.Title
 			m.Vendored = true
+			// Вендоренные — первыми: только их можно реально применить
+			// (слаг с "!" не пройдёт ValidateServiceName и Get).
+			out = append(out, m)
 		} else {
 			m.Title = slug
+			rest = append(rest, m)
 		}
-		out = append(out, m)
-		if len(out) >= 8 {
+		if len(out)+len(rest) >= 8 {
 			break
 		}
 	}
+	out = append(out, rest...)
 	writeOK(w, map[string]any{"domain": domain, "matches": out})
 }
 
