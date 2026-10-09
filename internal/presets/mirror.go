@@ -90,10 +90,27 @@ func RefreshMirror(ctx context.Context, dir string) (MirrorStatus, error) {
 		Entries:   len(p.Domains),
 	}
 	mraw, err := yaml.Marshal(meta)
-	if err == nil {
-		_ = os.WriteFile(filepath.Join(dir, "mirror.json"), mraw, 0o644)
+	if err != nil {
+		return st, fmt.Errorf("marshal mirror meta: %w", err)
+	}
+	// Атомарно тем же приёмом: иначе читатель видит обрезанный mirror.json,
+	// а версия в нём (ключ blockCheckCache) рассинхронизируется с rublock.yaml.
+	mtmp, err := os.CreateTemp(dir, ".mirror-*.tmp")
+	if err != nil {
+		return st, fmt.Errorf("tmp mirror meta: %w", err)
+	}
+	if _, err := mtmp.Write(mraw); err != nil {
+		_ = mtmp.Close()
+		_ = os.Remove(mtmp.Name())
+		return st, fmt.Errorf("write mirror meta: %w", err)
+	}
+	_ = mtmp.Close()
+	if err := os.Rename(mtmp.Name(), filepath.Join(dir, "mirror.json")); err != nil {
+		_ = os.Remove(mtmp.Name())
+		return st, fmt.Errorf("rename mirror meta: %w", err)
 	}
 	FlushAll()
+	FlushBlockCheckCache()
 	st.Entries = len(p.Domains)
 	st.UpdatedAt = meta.UpdatedAt
 	return st, nil
@@ -179,6 +196,10 @@ func RefreshUpstream(ctx context.Context, dir string) (UpstreamMeta, error) {
 	if err := os.MkdirAll(upDir, 0o755); err != nil {
 		return st, fmt.Errorf("mkdir upstream: %w", err)
 	}
+	// Чистим исчезнувшие upstream: иначе индекс вечно держит stale-слаги.
+	if err := syncUpstreamDir(upDir, files); err != nil {
+		return st, err
+	}
 	for name, content := range files {
 		tmp, err := os.CreateTemp(upDir, ".upstream-*.tmp")
 		if err != nil {
@@ -208,7 +229,38 @@ func RefreshUpstream(ctx context.Context, dir string) (UpstreamMeta, error) {
 	if mraw, err := yaml.Marshal(meta); err == nil {
 		_ = os.WriteFile(filepath.Join(dir, "upstream.json"), mraw, 0o644)
 	}
+	// Индекс сразу здесь (а не только в хендлере): прямой вызов
+	// RefreshUpstream не должен оставлять его несвежим.
+	if err := RebuildUpstreamIndex(dir); err != nil {
+		return st, err
+	}
 	return meta, nil
+}
+
+// syncUpstreamDir удаляет из upDir файлы, которых нет в свежем манифесте.
+func syncUpstreamDir(upDir string, files map[string]string) error {
+	keep := make(map[string]bool, len(files))
+	for name := range files {
+		keep[filepath.Base(name)] = true
+	}
+	entries, err := os.ReadDir(upDir)
+	if err != nil {
+		return fmt.Errorf("read upstream dir: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(e.Name(), ".upstream-") {
+			continue
+		}
+		if !keep[e.Name()] {
+			if err := os.Remove(filepath.Join(upDir, e.Name())); err != nil {
+				return fmt.Errorf("remove stale upstream %s: %w", e.Name(), err)
+			}
+		}
+	}
+	return nil
 }
 
 // extractDataFiles достаёт файлы data/* из tar.gz (имена без каталогов).
@@ -237,7 +289,9 @@ func extractDataFiles(body []byte) (map[string]string, error) {
 			continue
 		}
 		name := hdr.Name[idx+len("/data/"):]
-		if name == "" || strings.Contains(name, "/") {
+		// Явно отклоняем опасное: filepath.Join/Filepath.Base ниже спасают,
+		// но молчаливая фильтрация скрыла бы атаку в логах.
+		if name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
 			continue
 		}
 		content, err := io.ReadAll(io.LimitReader(tr, maxUpstreamBytes+1))

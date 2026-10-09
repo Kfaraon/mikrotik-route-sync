@@ -861,6 +861,11 @@ func daemonCmd() *cobra.Command {
 				}
 				cfg.ReplaceFromLocked(newCfg)
 				cfg.Unlock()
+				// Клиенты тоже пересобрать (иначе mikrotik.*/external.* старые):
+				// ApplyConfig берёт RLock сам, блокировок не держим.
+				if err := s.ApplyConfig(); err != nil {
+					log.Warn("sighup apply config failed", "err", err)
+				}
 				return sched.Reload()
 			})
 
@@ -913,9 +918,12 @@ func daemonCmd() *cobra.Command {
 				}
 			}
 
-			// Останавливаем Telegram-бот
+			// Останавливаем Telegram-бот (Wait ждёт только цикл Run — быстро).
 			if botCancel != nil {
 				botCancel()
+			}
+			if telegramBot != nil {
+				telegramBot.Wait()
 			}
 
 			sched.Stop(context.Background())

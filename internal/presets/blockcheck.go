@@ -126,16 +126,16 @@ func normalizeDomain(s string) string {
 }
 
 // CheckBlockedCached потоковая проверка с пакетным кэшем.
-// Ключ = version + "\x00" + sorted-lower-joined-domains.
+// Ключ = path + version + sorted-lower-joined-domains.
 // version дает вызывающий (дата зеркала), что позволяет инвалидировать кэш
 // сменой версии. TTL нет — кэш живет до перезапуска или смены версии.
 //
 // cached=true означает, что файл не был прочитан (результат взят из памяти).
 func CheckBlockedCached(path, version string, domains []string) (blocked []string, cached bool, err error) {
-	CheckBlockedCachedMu.Lock()
-	defer CheckBlockedCachedMu.Unlock()
+	// Блокировки точечные: скан файла идёт без мьютекса (см. ниже).
 
-	// создаем ключ: version + \x00 + sorted-lower-joined-domains
+	// создаем ключ: path + version + sorted-lower-joined-domains.
+	// Путь — часть ключа: иначе разные файлы с той же версией столкнутся.
 	normDomains := make([]string, 0, len(domains))
 	for _, d := range domains {
 		n := normalizeDomain(d)
@@ -145,26 +145,38 @@ func CheckBlockedCached(path, version string, domains []string) (blocked []strin
 	}
 	sort.Strings(normDomains)
 	joined := strings.Join(normDomains, "\x00")
-	key := version + "\x00" + joined
+	key := path + "\x00" + version + "\x00" + joined
 
-	// проверяем кэш
+	// проверяем кэш (коротко, без I/O под мьютексом)
+	CheckBlockedCachedMu.Lock()
 	if entry, ok := blockCheckCache[key]; ok {
+		CheckBlockedCachedMu.Unlock()
 		return entry.blocked, true, nil
 	}
+	CheckBlockedCachedMu.Unlock()
 
-	// кэш мисс — читаем файл
+	// кэш мисс — читаем файл БЕЗ мьютекса (скан 38МБ сериализовал бы всех)
 	blocked, scanned, err := CheckBlocked(path, domains)
 	if err != nil {
 		return nil, false, err
 	}
 
 	// сохраняем в кэш
+	CheckBlockedCachedMu.Lock()
 	blockCheckCache[key] = &cachedEntry{
 		blocked: blocked,
 		scanned: scanned,
 	}
+	CheckBlockedCachedMu.Unlock()
 
 	return blocked, false, nil
+}
+
+// FlushBlockCheckCache сбрасывает кэш пересечений (после обновления зеркала).
+func FlushBlockCheckCache() {
+	CheckBlockedCachedMu.Lock()
+	defer CheckBlockedCachedMu.Unlock()
+	blockCheckCache = map[string]*cachedEntry{}
 }
 
 // cachedEntry — запись в кэше.CheckBlockedCached.

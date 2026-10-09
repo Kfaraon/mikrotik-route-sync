@@ -203,6 +203,4 @@ func TestBlockCheckBlockedCachedIsolation(t *testing.T) {
 	// (вместо проверки v1again делаем вывод о изоляции)
 }
 
-func FlushBlockCheckCache() {
-	blockCheckCache = map[string]*cachedEntry{}
-}
+// FlushBlockCheckCache — в blockcheck.go (продакшн-версия с мьютексом).

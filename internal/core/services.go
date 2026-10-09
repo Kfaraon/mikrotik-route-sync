@@ -254,9 +254,11 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	return nil
 }
 
-// maxPresetApplyDomains — предел доменов пресета при применении на сервис.
-// См. maxServiceDomains в web: bulk dynamic-конвейер не тянет физически.
-const maxPresetApplyDomains = 5000
+// MaxServiceDomains — предел доменов на сервис: больше — это уже bulk,
+// который dynamic-конвейер физически не тянет (годы DNS),
+// а config.yaml раздувается на десятки мегабайт (маршалинг при каждом Save).
+// Проверяется и в ядре (UpdateServiceOverride), и в веб-хендлерах.
+const MaxServiceDomains = 5000
 
 // ApplyPresetRefresh пересчитывает Domains сервиса из пресета с сохранением
 // ручных доменов: ручные = текущие Domains минус прошлый снимок Generated.
@@ -293,20 +295,36 @@ func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug
 	if full.Large && !force {
 		return nil, nil, fmt.Errorf("preset %q large (%d domains): подтвердите force=true", slug, len(p))
 	}
-	if len(p) > maxPresetApplyDomains {
-		return nil, nil, fmt.Errorf("preset %q too large (%d domains, max %d)", slug, len(p), maxPresetApplyDomains)
+	if len(p) > MaxServiceDomains {
+		return nil, nil, fmt.Errorf("preset %q too large (%d domains, max %d)", slug, len(p), MaxServiceDomains)
 	}
 
-	generated := make(map[string]bool, len(ov.Generated))
-	for _, d := range ov.Generated {
-		generated[strings.ToLower(d)] = true
-	}
 	inPreset := make(map[string]bool, len(p))
 	for _, d := range p {
 		inPreset[strings.ToLower(d)] = true
 	}
+
+	// Мутация под Lock со свежим чтением: между снапшотом выше и записью
+	// параллельный PUT мог поменять override — применяем diff к актуальному.
+	s.cfg.Lock()
+	ovFresh, _ := s.cfg.Overrides[name]
+	stillThere := false
+	for _, svc := range s.cfg.Services {
+		if svc == name {
+			stillThere = true
+			break
+		}
+	}
+	if !stillThere {
+		s.cfg.Unlock()
+		return nil, nil, fmt.Errorf("service %s was removed during refresh", name)
+	}
+	generated := make(map[string]bool, len(ovFresh.Generated))
+	for _, d := range ovFresh.Generated {
+		generated[strings.ToLower(d)] = true
+	}
 	var userAdded []string
-	for _, d := range ov.Domains {
+	for _, d := range ovFresh.Domains {
 		if !generated[strings.ToLower(d)] && !inPreset[strings.ToLower(d)] {
 			userAdded = append(userAdded, d)
 		}
@@ -317,8 +335,8 @@ func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug
 			newDomains = append(newDomains, d)
 		}
 	}
-	oldSet := make(map[string]bool, len(ov.Domains))
-	for _, d := range ov.Domains {
+	oldSet := make(map[string]bool, len(ovFresh.Domains))
+	for _, d := range ovFresh.Domains {
 		oldSet[strings.ToLower(d)] = true
 	}
 	newSet := make(map[string]bool, len(newDomains))
@@ -330,23 +348,22 @@ func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug
 			added = append(added, d)
 		}
 	}
-	for _, d := range ov.Domains {
+	for _, d := range ovFresh.Domains {
 		if !newSet[strings.ToLower(d)] {
 			removed = append(removed, d)
 		}
 	}
 
-	primary := ov.Primary
+	primary := ovFresh.Primary
 	if primary == "" && len(p) > 0 {
 		primary = p[0]
 	}
-	nov := ov
+	nov := ovFresh
 	nov.Domains = newDomains
 	nov.Generated = append([]string(nil), p...)
 	nov.Preset = slug
 	nov.Primary = primary
 
-	s.cfg.Lock()
 	cur, hadCur := s.cfg.Overrides[name]
 	s.cfg.Overrides[name] = nov
 	if err := s.cfg.Save(); err != nil {
@@ -374,6 +391,18 @@ func (s *Syncer) ListServices() []string {
 	s.cfg.RLock()
 	defer s.cfg.RUnlock()
 	return append([]string(nil), s.cfg.Services...)
+}
+
+// ServiceSchedules — снимок эффективных расписаний одним чтением
+// (для бота: поштучные RLock в цикле здесь не нужны).
+func (s *Syncer) ServiceSchedules() map[string]string {
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
+	out := make(map[string]string, len(s.cfg.Services))
+	for _, svc := range s.cfg.Services {
+		out[svc] = s.cfg.EffectiveSchedule(svc)
+	}
+	return out
 }
 
 // UpdateServiceOverride меняет method и/или domains сервиса (scope Фазы 2:
@@ -425,6 +454,9 @@ func (s *Syncer) UpdateServiceOverride(ctx context.Context, name string, method 
 			if d = strings.TrimSpace(d); d != "" {
 				clean = append(clean, d)
 			}
+		}
+		if len(clean) > MaxServiceDomains {
+			return config.ServiceOverride{}, fmt.Errorf("too many domains (%d, max %d)", len(clean), MaxServiceDomains)
 		}
 		ov.Domains = clean
 	}

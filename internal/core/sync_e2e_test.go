@@ -299,7 +299,7 @@ func newE2ESyncer(t *testing.T, fr *fakeRouter, src *fakeSource, manageDisabled 
 
 	// Подменяем реестр коллекторов: метод static_url читает фейковый источник
 	// вместо HTTP (SSRF-guard блокирует loopback, сеть в тестах не нужна).
-	reg := collectors.NewRegistry(s.deps)
+	reg := collectors.NewRegistry(s.deps.Load())
 	reg.Register("static_url", func(p *collectors.Params) (collectors.Collector, error) {
 		return &fakeCollector{src: src}, nil
 	})

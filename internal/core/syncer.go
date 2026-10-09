@@ -68,7 +68,7 @@ type Syncer struct {
 
 	mtPtr  atomic.Pointer[mikrotik.Client]
 	resPtr atomic.Pointer[resolver.Resolver]
-	deps   *collectors.Deps
+	deps   atomic.Pointer[collectors.Deps]
 	regPtr atomic.Pointer[collectors.Registry]
 
 	notifyMu sync.RWMutex
@@ -155,7 +155,7 @@ func (s *Syncer) buildDepsLocked() {
 	}
 	reg := collectors.NewRegistry(deps)
 
-	s.deps = deps
+	s.deps.Store(deps)
 	s.resPtr.Store(res)
 	s.regPtr.Store(reg)
 }

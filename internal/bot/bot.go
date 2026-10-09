@@ -28,6 +28,9 @@ type Bot struct {
 	mu     sync.RWMutex
 	limits map[int64]*rate.Limiter
 	wg     sync.WaitGroup
+	// syncWg — фоновые синки отдельно от цикла Run: рестарт/остановка
+	// не должны висеть до конца 10-минутного синка (см. историю).
+	syncWg sync.WaitGroup
 }
 
 // New создаёт бота с явными зависимостями.
@@ -168,21 +171,24 @@ func (b *Bot) statusText(ctx context.Context) string {
 }
 
 func (b *Bot) schedulesText() string {
-	b.syncer.RLockConfig()
-	defer b.syncer.RUnlockConfig()
+	// Без внешнего RLock: ListServices/ServiceSchedules самодостаточны,
+	// вложенный захват под ожидающим писателем — дедлок (см. историю).
+	scheds := b.syncer.ServiceSchedules()
 	var sb strings.Builder
 	sb.WriteString("Эффективные расписания:\n")
 	for _, svc := range b.syncer.ListServices() {
-		fmt.Fprintf(&sb, "  - %s → %s\n", svc, b.syncer.Config().EffectiveSchedule(svc))
+		fmt.Fprintf(&sb, "  - %s → %s\n", svc, scheds[svc])
 	}
 	return sb.String()
 }
 
 // startSync запускает синхронизацию в фоне (уведомления шлёт SyncService).
+// Учёт в отдельном syncWg: Wait() ждёт только цикл Run, рестарт бота
+// из веб-запроса не висит до конца синка.
 func (b *Bot) startSync(ctx context.Context, services []string) {
-	b.wg.Add(1)
+	b.syncWg.Add(1)
 	go func() {
-		defer b.wg.Done()
+		defer b.syncWg.Done()
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 		defer cancel()
 		_ = b.syncer.SyncMany(sctx, services, false, false)
@@ -273,7 +279,8 @@ func (b *Bot) handleCallback(ctx context.Context, id int64, data string) {
 // Start — алиас Run для совместимости с CLI.
 func (b *Bot) Start(ctx context.Context) error { return b.Run(ctx) }
 
-// Wait блокируется до завершения Run (после отмены ctx).
+// Wait блокируется до завершения цикла Run (после отмены ctx).
+// Фоновые синки идут отдельным syncWg и не задерживают рестарт/остановку.
 func (b *Bot) Wait() {
 	b.wg.Wait()
 }

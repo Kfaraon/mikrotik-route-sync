@@ -62,14 +62,25 @@ func SetLevel(level string) {
 // rotators — активные lumberjack-логгеры по пути файла: нужны, чтобы
 // «Очистить логи» шла через механизм ротации, а не truncate мимо счётчика.
 var (
-	rotMu    sync.Mutex
-	rotators = map[string]*lumberjack.Logger{}
+	rotMu      sync.Mutex
+	rotators   = map[string]*lumberjack.Logger{}
+	activePath string
 )
 
 func registerRotator(path string, lj *lumberjack.Logger) {
 	rotMu.Lock()
 	defer rotMu.Unlock()
 	rotators[path] = lj
+	activePath = path
+}
+
+// ActivePath — файл активного логгера (куда реально пишется).
+// Может отличаться от cfg.Logging.File, если путь меняли через UI
+// без рестарта (применяется только SetLevel на лету).
+func ActivePath() string {
+	rotMu.Lock()
+	defer rotMu.Unlock()
+	return activePath
 }
 
 // RotateLogFile ротирует активный лог (текущий уходит в бэкап, начинается

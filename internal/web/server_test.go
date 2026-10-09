@@ -1302,17 +1302,27 @@ func TestConcurrentReadsAndMutations(t *testing.T) {
 				default:
 				}
 				p := readPaths[(g+i)%len(readPaths)]
-				req, _ := http.NewRequest("GET", ts.URL+p, nil)
-				req.SetBasicAuth("admin", "secret-pass")
-				resp, err := c.Do(req)
-				if err != nil {
-					errs <- "read: " + err.Error()
-					return
+				var lastCode int
+				ok := false
+				for attempt := 0; attempt < 8; attempt++ {
+					req, _ := http.NewRequest("GET", ts.URL+p, nil)
+					req.SetBasicAuth("admin", "secret-pass")
+					resp, err := c.Do(req)
+					if err != nil {
+						errs <- "read: " + err.Error()
+						return
+					}
+					_, _ = io.Copy(io.Discard, resp.Body)
+					_ = resp.Body.Close()
+					lastCode = resp.StatusCode
+					if lastCode != http.StatusTooManyRequests {
+						ok = true
+						break
+					}
+					time.Sleep(150 * time.Millisecond)
 				}
-				_, _ = io.Copy(io.Discard, resp.Body)
-				_ = resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					errs <- fmt.Sprintf("read %s: %d", p, resp.StatusCode)
+				if !ok || lastCode != http.StatusOK {
+					errs <- fmt.Sprintf("read %s: %d", p, lastCode)
 					return
 				}
 			}
@@ -1323,6 +1333,17 @@ func TestConcurrentReadsAndMutations(t *testing.T) {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
+			// 429 от rate-limit — ретраим (лимитер общий на IP теста).
+			put := func(path, raw string) (int, bool) {
+				for attempt := 0; attempt < 8; attempt++ {
+					st, _ := doJSON(jarClient, ts.URL, "PUT", path, token, nil, raw)
+					if st != http.StatusTooManyRequests {
+						return st, true
+					}
+					time.Sleep(150 * time.Millisecond)
+				}
+				return http.StatusTooManyRequests, false
+			}
 			for i := 0; i < 10; i++ {
 				select {
 				case <-stop:
@@ -1335,9 +1356,9 @@ func TestConcurrentReadsAndMutations(t *testing.T) {
 					if (i+w)%2 == 0 {
 						method = "dynamic"
 					}
-					st, _ := doJSON(jarClient, ts.URL, "PUT", "/api/v1/services/testsvc", token, nil,
+					st, ok := put("/api/v1/services/testsvc",
 						`{"method":`+strconv.Quote(method)+`}`)
-					if st != http.StatusOK {
+					if !ok || st != http.StatusOK {
 						errs <- fmt.Sprintf("override PUT: %d", st)
 						return
 					}
@@ -1347,29 +1368,45 @@ func TestConcurrentReadsAndMutations(t *testing.T) {
 				if (i+w)%2 == 0 {
 					spec = "every 6h"
 				}
-				st, _ := doJSON(jarClient, ts.URL, "PUT", "/api/v1/schedules/testsvc", token, nil,
+				st, ok := put("/api/v1/schedules/testsvc",
 					`{"schedule":`+strconv.Quote(spec)+`}`)
-				if st != http.StatusOK {
+				if !ok || st != http.StatusOK {
 					errs <- fmt.Sprintf("schedule PUT: %d", st)
 					return
 				}
+				// Тяжёлый писатель: настройки целиком (clone+Save+apply).
+				st, _ = doJSON(jarClient, ts.URL, "POST", "/actions/settings", token, nil, "")
+				_ = st
 			}
 		}(w)
 	}
 
+	// Писатель add/delete (метод задан — без сетевого CDN-детекта).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 6; i++ {
+			name := fmt.Sprintf("race%d", i%2)
+			_, _ = doJSON(jarClient, ts.URL, "POST", "/api/v1/services", token, nil,
+				`{"name":"`+name+`","method":"dynamic"}`)
+			_, _ = doJSON(jarClient, ts.URL, "DELETE", "/api/v1/services/"+name+"?purge=false", token, nil, "")
+		}
+	}()
+
 	wg.Wait()
-	close(stop)
 	select {
 	case e := <-errs:
 		t.Fatalf("concurrent workload failed: %s", e)
 	default:
 	}
+	cfg.RLock()
 	found := false
 	for _, sv := range cfg.Services {
 		if sv == "testsvc" {
 			found = true
 		}
 	}
+	cfg.RUnlock()
 	if !found {
 		t.Fatal("testsvc lost after concurrent workload")
 	}

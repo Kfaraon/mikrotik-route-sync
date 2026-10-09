@@ -438,16 +438,9 @@ func (c *Config) RUnlock() { c.mu.RUnlock() }
 func (c *Config) Lock()    { c.mu.Lock() }
 func (c *Config) Unlock()  { c.mu.Unlock() }
 
-// ReplaceFrom заменяет содержимое конфига содержимым src (для SIGHUP):
-// попольное копирование под Lock вместо `*c = *src` (копировать мьютекс
-// запрещено — go vet copylocks). src должен быть приватным (свежий Load).
-func (c *Config) ReplaceFrom(src *Config) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.replaceFromLocked(src)
-}
-
-// ReplaceFromLocked — то же без блокировки (вызывающий держит Lock).
+// ReplaceFromLocked — замена без блокировки (вызывающий держит Lock).
+// Отдельного ReplaceFrom с внутренним Lock нет специально: вызов его
+// из-под уже взятого Lock дал бы self-deadlock.
 func (c *Config) ReplaceFromLocked(src *Config) {
 	c.replaceFromLocked(src)
 }

@@ -114,6 +114,10 @@ var (
 	cache   = map[string]*Preset{} // slug -> разобранный пресет
 	metaOne *Meta
 	metaErr error
+	// loading — singleflight для холодного разбора: два параллельных
+	// Get("rublock") после FlushAll не должны парсить 38МБ дважды.
+	// Защищается тем же cacheMu (отдельный мьютекс здесь избыточен).
+	loading = map[string]chan struct{}{}
 )
 
 // DiskDir — каталог runtime-зеркала (рядом с cache.db/presets/): тяжёлые
@@ -185,7 +189,8 @@ func List() []Preset {
 }
 
 // listDisk — кастомные пресеты с диска зеркала (DiskDir/*.yaml, кроме
-// rublock.yaml и mirror.json): пользовательские файлы.
+// rublock.yaml и mirror.json): пользовательские файлы. Имя файла обязано
+// совпадать со слагом строчными (иначе Get() его не откроет).
 func listDisk() []Preset {
 	if DiskDir == "" {
 		return nil
@@ -200,8 +205,13 @@ func listDisk() []Preset {
 		if e.IsDir() || !strings.HasSuffix(name, yamlExt) {
 			continue
 		}
+		// Имя файла = слаг, строчными: Get() открывает строго <slug>.yaml,
+		// иначе каталог показывал бы неоткрываемое. Неконформные пропускаем.
 		slug := strings.TrimSuffix(name, yamlExt)
 		if slug == RublockSlug || slug == "mirror" {
+			continue
+		}
+		if slug == "" || !validSlug.MatchString(slug) {
 			continue
 		}
 		if p, ok := getDisk(slug); ok {
@@ -270,22 +280,47 @@ func Get(slug string) (Preset, bool) {
 		cacheMu.Unlock()
 		return cp, true
 	}
+	// Singleflight: первый читает+парсит, остальные ждут его результата.
+	if ch, ok := loading[slug]; ok {
+		cacheMu.Unlock()
+		<-ch
+		cacheMu.Lock()
+		p, ok := cache[slug]
+		cacheMu.Unlock()
+		if !ok {
+			return Preset{}, false
+		}
+		cp := *p
+		return cp, true
+	}
+	done := make(chan struct{})
+	loading[slug] = done
 	cacheMu.Unlock()
+	defer func() {
+		cacheMu.Lock()
+		delete(loading, slug)
+		close(done)
+		cacheMu.Unlock()
+	}()
 
 	raw, err := dataFS.ReadFile(path.Join(dataDir, slug+yamlExt))
+	var p Preset
 	if err != nil {
 		// Нет в embed — пробуем диск зеркала (rublock и обновления).
-		return getDisk(slug)
-	}
-	var p Preset
-	if err := yaml.Unmarshal(raw, &p); err != nil {
-		return Preset{}, false
-	}
-	if p.Slug == "" {
-		p.Slug = slug
-	}
-	if len(p.Domains) == 0 {
-		return Preset{}, false
+		var ok bool
+		if p, ok = getDisk(slug); !ok {
+			return Preset{}, false
+		}
+	} else {
+		if err := yaml.Unmarshal(raw, &p); err != nil {
+			return Preset{}, false
+		}
+		if p.Slug == "" {
+			p.Slug = slug
+		}
+		if len(p.Domains) == 0 {
+			return Preset{}, false
+		}
 	}
 
 	cacheMu.Lock()
@@ -296,8 +331,8 @@ func Get(slug string) (Preset, bool) {
 	return cp, true
 }
 
-// getDisk читает пресет с диска зеркала (DiskDir). Промах не кэшируется:
-// файл может появиться позже (первое скачивание зеркала).
+// getDisk читает пресет с диска зеркала (DiskDir). Не кэширует сам:
+// кэширует вызывающий Get под singleflight-gate.
 func getDisk(slug string) (Preset, bool) {
 	if DiskDir == "" {
 		return Preset{}, false
@@ -313,11 +348,7 @@ func getDisk(slug string) (Preset, bool) {
 	if p.Slug == "" {
 		p.Slug = slug
 	}
-	cacheMu.Lock()
-	cache[slug] = &p
-	cacheMu.Unlock()
-	cp := p
-	return cp, true
+	return p, true
 }
 
 // FlushAll сбрасывает кэш разобранных пресетов (после обновления зеркала).
@@ -325,6 +356,7 @@ func FlushAll() {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 	cache = map[string]*Preset{}
+	loading = map[string]chan struct{}{}
 	metaOne = nil
 	metaErr = nil
 }

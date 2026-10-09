@@ -783,9 +783,10 @@ func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) maxBodyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Лимит тела для всех методов: DELETE/GET с телом тоже ограничены.
+		// Лимит тела для всех методов: 2МБ — влезает легитимный PUT domains
+		// на 5000 доменов (~1.3МБ), DELETE/GET с телом тоже ограничены.
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -1523,8 +1524,8 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("preset %q unavailable", req.Preset))
 			return
 		}
-		if len(p.Domains) > maxServiceDomains {
-			writeErr(w, http.StatusBadRequest, fmt.Sprintf("preset %q too large (%d domains, max %d)", req.Preset, len(p.Domains), maxServiceDomains))
+		if len(p.Domains) > core.MaxServiceDomains {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("preset %q too large (%d domains, max %d)", req.Preset, len(p.Domains), core.MaxServiceDomains))
 			return
 		}
 		seen := map[string]bool{}
@@ -1554,8 +1555,8 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 	if req.Primary != "" {
 		ov.Primary = strings.TrimSpace(req.Primary)
 	}
-	if len(ov.Domains) > maxServiceDomains {
-		writeErr(w, http.StatusBadRequest, fmt.Sprintf("too many domains (%d, max %d)", len(ov.Domains), maxServiceDomains))
+	if len(ov.Domains) > core.MaxServiceDomains {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("too many domains (%d, max %d)", len(ov.Domains), core.MaxServiceDomains))
 		return
 	}
 	if err := s.syncer.AddServiceWithConfig(r.Context(), req.Name, ov); err != nil {
@@ -1565,11 +1566,6 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 	s.auditChange(r, "api", "service_add", req.Name)
 	writeOK(w, map[string]string{"service": req.Name})
 }
-
-// maxServiceDomains — предел доменов на сервис: больше — это уже bulk,
-// который dynamic-конвейер физически не тянет (годы DNS),
-// а config.yaml раздувается на десятки мегабайт (маршалинг при каждом Save).
-const maxServiceDomains = 5000
 
 // apiRecommendService — проверка сервиса на обслуживание за CDN.
 // body: {"apply": true} — применить рекомендацию (purge + method=cdn).
@@ -1713,9 +1709,6 @@ func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "upstream: "+err.Error())
 			return
-		}
-		if err := presets.RebuildUpstreamIndex(dir); err != nil {
-			s.log.Warn("upstream index rebuild failed", "err", err)
 		}
 		out["upstream"] = st
 	}
@@ -1908,7 +1901,9 @@ func (s *Server) apiSyncOne(w http.ResponseWriter, r *http.Request) {
 	}
 	tctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
-	res, err := s.syncer.SyncService(context.WithoutCancel(tctx), name, req.DryRun, req.Force)
+	// Без WithoutCancel: обрыв соединения клиентом прерывает ожидание,
+	// дедлайн ограничивает висящий роутер (как у планировщика/бота).
+	res, err := s.syncer.SyncService(tctx, name, req.DryRun, req.Force)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, apiEnvelope{OK: false, Data: res, Error: err.Error()})
 		return
@@ -2416,9 +2411,14 @@ func (s *Server) applyRuntimeChanges() {
 }
 
 func (s *Server) actionLogsClear(w http.ResponseWriter, r *http.Request) {
-	s.cfg.RLock()
-	file := s.cfg.Logging.File
-	s.cfg.RUnlock()
+	// Чистим активный файл (а не из конфига: путь могли поменять через UI
+	// без рестарта — логгер пишет в старый).
+	file := logging.ActivePath()
+	if file == "" {
+		s.cfg.RLock()
+		file = s.cfg.Logging.File
+		s.cfg.RUnlock()
+	}
 	if file == "" {
 		http.Error(w, "logging to file is disabled", http.StatusBadRequest)
 		return

@@ -198,7 +198,10 @@ func (s *Scheduler) addLocked(ctx context.Context, service, spec string) {
 }
 
 func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
+	// Снапшот семафора: startLocked пересоздаёт его под s.mu при Reload.
+	s.mu.Lock()
 	sem := s.sem
+	s.mu.Unlock()
 	select {
 	case sem <- struct{}{}:
 		s.wg.Add(1)
@@ -401,14 +404,19 @@ func (s *Scheduler) intervalRunner(ctx context.Context) {
 		var hasItem bool
 		var item intervalItem
 
+		// Снапшот указателя кучи: startLocked пересоздаёт её при Reload.
+		s.mu.Lock()
+		heap := s.intervalHeap
+		s.mu.Unlock()
+
 		// Берём ближайший элемент
-		s.intervalHeap.mu.Lock()
-		if len(s.intervalHeap.items) > 0 {
-			item = s.intervalHeap.items[0]
+		heap.mu.Lock()
+		if len(heap.items) > 0 {
+			item = heap.items[0]
 			nextRun = item.nextRun
 			hasItem = true
 		}
-		s.intervalHeap.mu.Unlock()
+		heap.mu.Unlock()
 
 		if !hasItem {
 			// Нет интервальных сервисов — ждём добавления или отмены
@@ -424,14 +432,14 @@ func (s *Scheduler) intervalRunner(ctx context.Context) {
 		wait := nextRun.Sub(now)
 		if wait <= 0 {
 			// Время вышло — извлекаем, диспетчерим, перепланируем
-			popped, ok := s.intervalHeap.Pop()
+			popped, ok := heap.Pop()
 			if !ok {
 				continue
 			}
 			s.dispatch(ctx, popped.service, popped.spec)
 			// Перепланируем на следующий интервал
 			popped.nextRun = time.Now().Add(popped.interval)
-			s.intervalHeap.Push(popped)
+			heap.Push(popped)
 			continue
 		}
 
