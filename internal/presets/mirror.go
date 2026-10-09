@@ -49,6 +49,18 @@ type MirrorStatus struct {
 	UpdatedAt string `yaml:"updated_at" json:"updated_at"`
 }
 
+// MirrorDir — каталог runtime-зеркала рядом с cache.db.
+// Единая точка расчёта (main и web): два разных вычисления разъехались бы.
+func MirrorDir(cachePath string) string {
+	if cachePath == "" {
+		return ""
+	}
+	if dir := filepath.Dir(cachePath); dir != "" && dir != "." {
+		return filepath.Join(dir, "presets")
+	}
+	return ""
+}
+
 // RefreshMirror качает antifilter-список, конвертирует через ParseRublock
 // и кладёт rublock.yaml + mirror.json в dir. При любой проблеме старое
 // не трогается (ошибка возвращается, файл не перезаписывается).

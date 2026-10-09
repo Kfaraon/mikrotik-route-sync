@@ -595,10 +595,9 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		sessions: newSessionStore(cfg.Web.SessionTimeout.Duration()),
 	}
 
-	// Каталог runtime-зеркала пресетов (рядом с cache.db): тяжёлые списки
-	// (rublock) читаются с диска, а не из embed. Задаётся один раз при старте.
-	if dir := filepath.Dir(cfg.CachePath); dir != "" && dir != "." {
-		presets.DiskDir = filepath.Join(dir, "presets")
+	// Каталог runtime-зеркала пресетов: единая формула MirrorDir.
+	if dir := presets.MirrorDir(cfg.CachePath); dir != "" {
+		presets.DiskDir = dir
 		if err := presets.RebuildUpstreamIndex(presets.DiskDir); err != nil {
 			log.Debug("upstream presets index not built (mirror not downloaded?)", "err", err)
 		}
@@ -1677,26 +1676,40 @@ func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "source must be ru|upstream|all")
 		return
 	}
-	// Дедуплика: повторный запрос того же источника, пока идёт первый, —
-	// сразу 429 вместо второй докачки десятков мегабайт.
+	// Дедуплика по операциям (не по строке source): "all" занимает обе,
+	// иначе конкурентные all+ru качают RU-зеркало дважды.
+	need := map[string]bool{}
+	switch source {
+	case "all":
+		need["ru"] = true
+		need["upstream"] = true
+	default:
+		need[source] = true
+	}
 	s.refreshMu.Lock()
 	if s.refreshOn == nil {
 		s.refreshOn = map[string]bool{}
 	}
-	if s.refreshOn[source] {
-		s.refreshMu.Unlock()
-		writeErr(w, http.StatusTooManyRequests, "refresh of "+source+" already running")
-		return
+	for op := range need {
+		if s.refreshOn[op] {
+			s.refreshMu.Unlock()
+			writeErr(w, http.StatusTooManyRequests, "refresh of "+op+" already running")
+			return
+		}
 	}
-	s.refreshOn[source] = true
+	for op := range need {
+		s.refreshOn[op] = true
+	}
 	s.refreshMu.Unlock()
 	defer func() {
 		s.refreshMu.Lock()
-		delete(s.refreshOn, source)
+		for op := range need {
+			delete(s.refreshOn, op)
+		}
 		s.refreshMu.Unlock()
 	}()
 	out := map[string]any{}
-	if source == "all" || source == "ru" {
+	if need["ru"] {
 		st, err := presets.RefreshMirror(r.Context(), dir)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "ru: "+err.Error())
@@ -1704,7 +1717,7 @@ func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
 		}
 		out["ru"] = st
 	}
-	if source == "all" || source == "upstream" {
+	if need["upstream"] {
 		st, err := presets.RefreshUpstream(r.Context(), dir)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "upstream: "+err.Error())

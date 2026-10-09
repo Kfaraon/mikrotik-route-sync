@@ -767,12 +767,8 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 	}
 	telegramBot = newBot
 
-	// Запускаем в отдельной горутине
-	go func() {
-		if err := newBot.Run(botCtx); err != nil {
-			log.Error("telegram bot stopped with error", "err", err)
-		}
-	}()
+	// Запускаем в отдельной горутине (Add внутри GoRun — до go).
+	newBot.GoRun(botCtx)
 
 	log.Info("telegram bot restarted with new configuration")
 	return nil
@@ -794,10 +790,27 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 	if expr == "" {
 		return
 	}
-	dir := filepath.Join(filepath.Dir(cachePath), "presets")
+	dir := presets.MirrorDir(cachePath)
+	if dir == "" {
+		log.Warn("presets mirror disabled: cache_path not configured")
+		return
+	}
 	presets.DiskDir = dir
-	c := cron.New()
+	// Зона — из конфига (как у планировщика), иначе daily тикает по UTC.
+	loc, err := time.LoadLocation(cfg.Timezone)
+	if err != nil {
+		log.Warn("invalid timezone, using UTC for presets mirror", "timezone", cfg.Timezone)
+		loc = time.UTC
+	}
+	c := cron.New(cron.WithLocation(loc))
 	_, err = c.AddFunc(expr, func() {
+		// recover: cron по умолчанию панику не гасит — падение джобы
+		// не должно валить демон (как в scheduler.run).
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("presets mirror job panicked", "panic", fmt.Sprintf("%v", r))
+			}
+		}()
 		if st, err := presets.RefreshMirror(context.WithoutCancel(ctx), dir); err != nil {
 			log.Warn("presets mirror refresh failed", "err", err)
 		} else {

@@ -199,6 +199,22 @@ func (b *Bot) startSync(ctx context.Context, services []string) {
 func (b *Bot) Run(ctx context.Context) error {
 	b.wg.Add(1)
 	defer b.wg.Done()
+	return b.runLoop(ctx)
+}
+
+// GoRun запускает цикл в фоне: Add до go — иначе Wait гоняет с Add
+// (restartTelegramBot ждёт сразу после старта).
+func (b *Bot) GoRun(ctx context.Context) {
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		if err := b.runLoop(ctx); err != nil {
+			b.log.Error("telegram bot stopped with error", "err", err)
+		}
+	}()
+}
+
+func (b *Bot) runLoop(ctx context.Context) error {
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 30
