@@ -490,3 +490,21 @@ func TestUpdateEntryErrorStatus(t *testing.T) {
 		t.Fatal("expected error on 400")
 	}
 }
+
+// TestTransactionSnapshot — транзакция помнит list/comment с момента создания:
+// параллельная мутация конфига среди Apply её не меняет.
+func TestTransactionSnapshot(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Firewall.AddressList = "TO-VPN"
+	cfg.Firewall.CommentPrefix = "AUTO"
+	tx := NewTransaction(nil, cfg, nil, "instagram", testLogger())
+
+	cfg.Lock()
+	cfg.Firewall.AddressList = "OTHER"
+	cfg.Firewall.CommentPrefix = "X"
+	cfg.Unlock()
+
+	if tx.list != "TO-VPN" || tx.comment != "AUTO:instagram" || tx.commentPrefix != "AUTO" {
+		t.Fatalf("snapshot lost: %+v", tx)
+	}
+}

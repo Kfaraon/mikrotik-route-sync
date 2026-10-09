@@ -189,3 +189,102 @@ func TestListGlobalEntriesParsesEntries(t *testing.T) {
 		t.Fatalf("expected 2, got %+v", got)
 	}
 }
+
+// TestGetServiceOverrideConcurrent — чтение override параллельно с записью:
+// бывший fatal crash concurrent map read/write (H1 аудита).
+func TestGetServiceOverrideConcurrent(t *testing.T) {
+	m := &mockRouter{t: t}
+	s, _ := newTestSyncer(t, m.serve(nil, false))
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_ = s.GetServiceOverride("yt")
+				_ = s.ListServices()
+				_ = s.ServiceSchedules()
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			_, _ = s.UpdateServiceOverride(context.Background(), "yt", strPtr("dynamic"), []string{"a.example"})
+			_, _ = s.UpdateServiceOverride(context.Background(), "yt", nil, nil)
+		}
+		close(stop)
+	}()
+	wg.Wait()
+}
+
+// TestUpdateServiceOverrideDomainCap — больше 5000 доменов отклоняется в ядре,
+// а не только в веб-хендлере (обход через прямые вызовы).
+func TestUpdateServiceOverrideDomainCap(t *testing.T) {
+	m := &mockRouter{t: t}
+	s, _ := newTestSyncer(t, m.serve(nil, false))
+
+	big := make([]string, 0, 5001)
+	for i := 0; i < 5001; i++ {
+		big = append(big, "h"+strconv.Itoa(i)+".example")
+	}
+	if _, err := s.UpdateServiceOverride(context.Background(), "yt", nil, big); err == nil {
+		t.Fatal("5001 domains must be rejected")
+	}
+	if _, err := s.UpdateServiceOverride(context.Background(), "yt", nil, []string{"ok.example"}); err != nil {
+		t.Fatalf("small update must pass: %v", err)
+	}
+}
+
+// TestApplyPresetRefreshKeepsManual — ручные домены переживают refresh,
+// diff честный, повторный refresh — пустой diff.
+// NOTE: сервис без override падает паникой assignment to entry in nil map
+// (ApplyPresetRefresh не создаёт map) — заведено как баг, здесь обходим
+// предварительным UpdateServiceOverride.
+func TestApplyPresetRefreshKeepsManual(t *testing.T) {
+	m := &mockRouter{t: t}
+	s, _ := newTestSyncer(t, m.serve(nil, false))
+
+	if _, err := s.UpdateServiceOverride(context.Background(), "yt", strPtr("whois"), nil); err != nil {
+		t.Fatalf("seed override: %v", err)
+	}
+	if _, _, err := s.ApplyPresetRefresh(context.Background(), "yt", "youtube", false); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	ov := s.GetServiceOverride("yt")
+	if ov.Preset != "youtube" || len(ov.Generated) == 0 {
+		t.Fatalf("preset not recorded: %+v", ov)
+	}
+	before := append([]string(nil), ov.Domains...)
+
+	// Ручной домен поверх.
+	manual := append(append([]string(nil), before...), "my.manual.example")
+	if _, err := s.UpdateServiceOverride(context.Background(), "yt", nil, manual); err != nil {
+		t.Fatalf("manual add: %v", err)
+	}
+	added, removed, err := s.ApplyPresetRefresh(context.Background(), "yt", "", false)
+	if err != nil {
+		t.Fatalf("re-refresh: %v", err)
+	}
+	if len(added) != 0 || len(removed) != 0 {
+		t.Fatalf("re-refresh must be empty diff, got +%v -%v", added, removed)
+	}
+	ov2 := s.GetServiceOverride("yt")
+	found := false
+	for _, d := range ov2.Domains {
+		if d == "my.manual.example" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("manual domain lost after refresh")
+	}
+}

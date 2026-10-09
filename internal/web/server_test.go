@@ -1673,3 +1673,71 @@ func TestMaxBodyLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestRefreshSourceValidation — мусор в source отклоняется до любой сети.
+func TestRefreshSourceValidation(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	resp, body := doAuth(client, ts.URL, "POST", "/api/v1/presets/refresh?source=xxx", "", nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d: %s", resp.StatusCode, body)
+	}
+}
+
+// TestBlockcheckNoMirror — без зеркала честный 502, а не паника/пусто.
+func TestBlockcheckNoMirror(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	absCache := filepath.Join(t.TempDir(), "c.db")
+	cfg.Lock()
+	cfg.CachePath = absCache
+	cfg.Unlock()
+	presets.DiskDir = filepath.Join(filepath.Dir(absCache), "presets")
+	t.Cleanup(func() { presets.FlushAll() })
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+	start := strings.Index(page, `name="csrf-token" content="`)
+	token := page[start+len(`name="csrf-token" content="`):]
+	token = token[:strings.Index(token, `"`)]
+
+	st, _ := doJSON(client, ts.URL, "PUT", "/api/v1/services/testsvc", token, nil,
+		`{"domains":["example.com"]}`)
+	if st != http.StatusOK {
+		t.Fatalf("override PUT failed: %d", st)
+	}
+	st, env := doJSON(client, ts.URL, "POST", "/api/v1/services/testsvc/blockcheck", token, nil, `{}`)
+	if st != http.StatusBadGateway {
+		t.Fatalf("want 502 without mirror, got %d %+v", st, env)
+	}
+}
+
+// TestMatchEmptyDomain — пустой запрос отклоняется.
+func TestMatchEmptyDomain(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	resp, _ := doAuth(client, ts.URL, "GET", "/api/v1/presets/match?domain=", "", nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestSessionExpiredNotReused — протухшая сессия не переиспользуется.
+func TestSessionExpiredNotReused(t *testing.T) {
+	srv, _ := newTestServer(t)
+	id1, _ := srv.sessions.reuseOrCreate("admin")
+	srv.sessions.mu.Lock()
+	srv.sessions.data[id1].expires = time.Now().Add(-time.Second)
+	srv.sessions.mu.Unlock()
+	id2, _ := srv.sessions.reuseOrCreate("admin")
+	if id2 == id1 {
+		t.Fatal("expired session must not be reused")
+	}
+}

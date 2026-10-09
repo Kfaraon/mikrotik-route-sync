@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func writeTempConfig(t *testing.T, body string) string {
@@ -470,4 +473,84 @@ func TestSetAllowHostRoutesPointer(t *testing.T) {
 	if !cfg.Safety.AllowHostRoutesEnabled() {
 		t.Fatal("expected host routes enabled")
 	}
+}
+
+// TestReplaceFromLockedCopiesAll — все 17 полей, mu/path не трогаем.
+func TestReplaceFromLockedCopiesAll(t *testing.T) {
+	dst := &Config{}
+	srcYAML := `
+timezone: Europe/Moscow
+cache_path: /tmp/x.db
+logging: {level: debug}
+mikrotik: {host: 10.0.0.1, port: 8728, username: u, password: p}
+firewall: {address_list: L, comment_prefix: C}
+telegram: {enabled: true, bot_token: t}
+web: {enabled: true, listen: 127.0.0.1:9999}
+scheduler: {max_concurrent: 5}
+safety: {max_delete_ratio: 0.1}
+retry: {max_attempts: 2}
+external: {resolver: 9.9.9.9:53}
+snapshots: {enabled: true}
+schedules: {global: manual}
+suggest: {v2fly_enabled: true, urlscan_mode: key}
+presets: {update_schedule: daily}
+services: [a, b]
+overrides: {a: {method: whois}}
+`
+	var src Config
+	if err := yaml.Unmarshal([]byte(srcYAML), &src); err != nil {
+		t.Fatal(err)
+	}
+	dst.ReplaceFromLocked(&src)
+	if dst.Timezone != "Europe/Moscow" || dst.CachePath != "/tmp/x.db" {
+		t.Fatal("base fields not copied")
+	}
+	if len(dst.Services) != 2 || dst.Overrides["a"].Method != "whois" {
+		t.Fatal("services/overrides not copied")
+	}
+	if !dst.Suggest.V2flyEnabled || dst.Suggest.UrlscanMode != "key" {
+		t.Fatal("suggest not copied")
+	}
+	if dst.Presets.UpdateSchedule != "daily" {
+		t.Fatal("presets not copied")
+	}
+	if dst.Scheduler.MaxConcurrent != 5 || dst.Logging.Level != "debug" {
+		t.Fatal("nested structs not copied")
+	}
+}
+
+// TestReplaceFromConcurrent — подмена параллельно с чтениями (SIGHUP-путь).
+func TestReplaceFromConcurrent(t *testing.T) {
+	dst := &Config{Services: []string{"a"}}
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				dst.RLock()
+				_ = len(dst.Services)
+				_ = dst.EffectiveSchedule("a")
+				dst.RUnlock()
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			src := &Config{Services: []string{"b"}}
+			dst.Lock()
+			dst.ReplaceFromLocked(src)
+			dst.Unlock()
+		}
+		close(stop)
+	}()
+	wg.Wait()
 }
