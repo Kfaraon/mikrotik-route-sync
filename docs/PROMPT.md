@@ -362,13 +362,19 @@ Docker/LXC:
 - `static_url`
 - комбинированные списки методов, например `[cdn, dynamic]`
 
-Известные CDN:
+Известные CDN (каталог в конфиге `cdn_sources`, редактируется в настройках;
+ASN и URL не вшиты в код):
 
 - Cloudflare AS13335 → `https://www.cloudflare.com/ips-v4`
 - AWS CloudFront AS16509 → `https://ip-ranges.amazonaws.com/ip-ranges.json`, фильтр по service и IPv4
 - Google AS15169 → `https://www.gstatic.com/ipranges/goog.json`, только IPv4
 - Fastly → `https://api.fastly.com/public-ip-list`, только IPv4
 - Akamai → официальный API, если задан ключ
+
+Для CDN-сервисов без доменов (cloudflare/aws/google/fastly) ASN берётся из
+каталога `cdn_sources` по имени сервиса; для сервисов с доменами
+(youtube/instagram/facebook/telegram) ASN определяется резолвом домена в
+рантайме.
 
 Крупные сервисы с собственным ASN:
 - метод `asn` через bgp.tools/RIPEstat.

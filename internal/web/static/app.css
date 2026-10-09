@@ -1171,6 +1171,50 @@ summary:focus-visible {
   line-height: 1.45;
 }
 
+/* Таблица источников CDN в настройках */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.cdn-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0 1rem;
+}
+
+.cdn-table th,
+.cdn-table td {
+  text-align: left;
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.cdn-table th {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cdn-table input,
+.cdn-table select {
+  width: 100%;
+  min-width: 7rem;
+}
+
+.cdn-table input.is-narrow {
+  min-width: 6rem;
+}
+
+.cdn-table .cdn-row-remove {
+  padding: 0.35rem 0.6rem;
+}
+
+#cdn-sources-form .settings-savebar {
+  gap: 0.75rem;
+}
+
 .secret-field {
   display: flex;
   gap: 0.5rem;

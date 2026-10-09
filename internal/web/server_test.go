@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -385,6 +386,55 @@ func TestSettingsRejectedKeepsLiveConfig(t *testing.T) {
 	}
 	if cfg.MikroTik.Port != 9 {
 		t.Fatalf("rejected save must not mutate live config (port flipped): %d", cfg.MikroTik.Port)
+	}
+}
+
+// TestUpdateCDNSources проверяет сохранение таблицы источников CDN:
+// валидная замена применяется, невалидная (дубль ASN) — отклоняется без
+// изменения живого конфига.
+func TestUpdateCDNSources(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+	start := strings.Index(page, `name="csrf-token" content="`)
+	rest := page[start+len(`name="csrf-token" content="`):]
+	token := rest[:strings.Index(rest, `"`)]
+
+	// Форма рендерит таблицу источников и кнопку добавления.
+	if !strings.Contains(page, `id="cdn-sources-body"`) || !strings.Contains(page, `id="cdn-sources-add"`) {
+		t.Fatalf("settings page missing CDN sources editor")
+	}
+
+	good := "csrf_token=" + token +
+		"&cdn_service=custom&cdn_name=Custom&cdn_asn=64500&cdn_url=" +
+		url.QueryEscape("https://example.com/list.txt") + "&cdn_parser=text"
+	resp, body := doAuth(client, ts.URL, "POST", "/actions/cdn-sources", token, strings.NewReader(good))
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("valid save failed: %d %s", resp.StatusCode, body)
+	}
+	cfg.RLock()
+	got := append([]config.CDNSourceConfig(nil), cfg.CDNSources...)
+	cfg.RUnlock()
+	if len(got) != 1 || got[0].ASN != 64500 || got[0].Parser != "text" {
+		t.Fatalf("cdn sources not applied: %+v", got)
+	}
+
+	// Невалидно: дубль ASN -> 400, живой конфиг не тронут.
+	bad := "csrf_token=" + token +
+		"&cdn_service=a&cdn_name=A&cdn_asn=1&cdn_url=" + url.QueryEscape("https://e.com/a") + "&cdn_parser=text" +
+		"&cdn_service=b&cdn_name=B&cdn_asn=1&cdn_url=" + url.QueryEscape("https://e.com/b") + "&cdn_parser=text"
+	resp, body = doAuth(client, ts.URL, "POST", "/actions/cdn-sources", token, strings.NewReader(bad))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for duplicate ASN, got %d: %s", resp.StatusCode, body)
+	}
+	cfg.RLock()
+	after := len(cfg.CDNSources)
+	cfg.RUnlock()
+	if after != 1 {
+		t.Fatalf("rejected save must not mutate live config, cdn_sources=%d", after)
 	}
 }
 

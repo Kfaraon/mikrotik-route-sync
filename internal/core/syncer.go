@@ -155,6 +155,10 @@ func (s *Syncer) buildDepsLocked() {
 	}
 	reg := collectors.NewRegistry(deps)
 
+	// Каталог CDN-источников живёт в конфиге: публикуем снимок для
+	// classifier-сервисов без домена и метода cdn (cloudflare/aws/...).
+	collectors.SetCDNSources(s.cfg.CDNSources)
+
 	s.deps.Store(deps)
 	s.resPtr.Store(res)
 	s.regPtr.Store(reg)

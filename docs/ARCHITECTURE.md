@@ -116,7 +116,7 @@ MikroTik Route Sync — это приложение на Go для автома�
 Собирает IPv4-диапазоны из источников:
 
 - **ASN** — bgp.tools (дамп таблицы BGP), RIPEstat (fallback), RDAP (основной метод для крупных сервисов)
-- **CDN** — Cloudflare, AWS, Google (официальные статические списки)
+- **CDN** — Cloudflare, AWS, Google, Fastly (официальные списки; каталог задаётся в конфиге `cdn_sources` и редактируется в настройках)
 - **Dynamic** — DNS-резолвинг + официальные JSON (Google, YouTube, Telegram)
 - **WHOIS** — DNS → ASN → все префиксы (для мелких сайтов)
 - **Static** — произвольные URL (antifilter, re:filter)

@@ -93,6 +93,53 @@
         <span id="settings-result" class="muted"></span>
       </div>
     </form>
+
+    <form hx-post="/actions/cdn-sources" hx-target="#cdn-sources-result" hx-swap="innerHTML" id="cdn-sources-form">
+      <input type="hidden" name="csrf_token" value="{{ .CSRF }}">
+      <article class="settings-group">
+        <h2>Источники CDN</h2>
+        <p class="setting-help">
+          Официальные списки диапазонов CDN. <code>service</code> — имя сервиса, которое
+          классификатор сопоставляет источнику (cloudflare/aws/google/fastly); по нему
+          сервис без доменов получает ASN. <code>asn</code> — ключ каталога, который
+          выбирает список официальных диапазонов. <code>parser</code> — формат ответа:
+          text (по строке CIDR), google (gstatic JSON), aws (ip-ranges JSON, только
+          CloudFront), fastly (public-ip-list JSON). Дубли service и asn недопустимы.
+        </p>
+        <div class="table-scroll">
+          <table class="cdn-table">
+            <thead>
+              <tr>
+                <th>service</th><th>Имя</th><th>asn</th><th>url</th><th>parser</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="cdn-sources-body">
+              {{ range $row := .CDNSources }}
+              <tr>
+                <td><input type="text" name="cdn_service" value="{{ $row.Service }}" placeholder="cloudflare"></td>
+                <td><input type="text" name="cdn_name" value="{{ $row.Name }}" placeholder="Cloudflare"></td>
+                <td><input class="is-narrow" type="number" name="cdn_asn" value="{{ $row.ASN }}" step="1" min="1"></td>
+                <td><input type="text" name="cdn_url" value="{{ $row.URL }}" placeholder="https://..."></td>
+                <td>
+                  <select name="cdn_parser">
+                    {{ range $p := $.CDNParsers }}
+                    <option value="{{ $p }}"{{ if eq $p $row.Parser }} selected{{ end }}>{{ $p }}</option>
+                    {{ end }}
+                  </select>
+                </td>
+                <td><button type="button" class="btn btn-outline cdn-row-remove" title="Удалить строку">✕</button></td>
+              </tr>
+              {{ end }}
+            </tbody>
+          </table>
+        </div>
+        <div class="row settings-savebar">
+          <button type="button" class="btn btn-outline" id="cdn-sources-add">Добавить источник</button>
+          <button type="submit" class="btn btn-primary">💾 Сохранить источники</button>
+          <span id="cdn-sources-result" class="muted"></span>
+        </div>
+      </article>
+    </form>
   </main>
 
   <!-- Контейнер для уведомлений -->

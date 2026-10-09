@@ -99,5 +99,16 @@ suggest:
 # Локальное зеркало пресетов: расписание докачки (пусто — только вручную).
 presets:
   update_schedule: ""
+# Официальные списки диапазонов CDN, используемые методом cdn.
+# service — имя сервиса-алиаса (cloudflare/aws/google/fastly): сервис без
+# доменов получает ASN из этого каталога. asn — ключ, по нему выбирается
+# источник. parser: text | google | aws | fastly (формат ответа url).
+# Если секция не задана, используются встроенные значения по умолчанию.
+# Редактируется в веб-настройках («Источники CDN»).
+cdn_sources:
+  - {service: cloudflare, name: Cloudflare, asn: 13335, url: "https://www.cloudflare.com/ips-v4", parser: text}
+  - {service: aws, name: AWS CloudFront, asn: 16509, url: "https://ip-ranges.amazonaws.com/ip-ranges.json", parser: aws}
+  - {service: google, name: Google, asn: 15169, url: "https://www.gstatic.com/ipranges/goog.json", parser: google}
+  - {service: fastly, name: Fastly, asn: 54113, url: "https://api.fastly.com/public-ip-list", parser: fastly}
 services: [cloudflare]
 overrides: {}

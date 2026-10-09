@@ -679,6 +679,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Post("/service-delete", s.actionDeleteService)
 		r.Post("/schedule", s.actionUpdateSchedule)
 		r.Post("/settings", s.actionUpdateSettings)
+		r.Post("/cdn-sources", s.actionUpdateCDNSources)
 		r.Post("/logs-clear", s.actionLogsClear)
 	})
 
@@ -1445,8 +1446,35 @@ func (s *Server) settingGroups() []settingGroup {
 
 func (s *Server) pageSettings(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "settings.html", map[string]any{
-		"Groups": s.settingGroups(),
+		"Groups":     s.settingGroups(),
+		"CDNSources": s.cdnSourceRows(),
+		"CDNParsers": cdnParsersList,
 	})
+}
+
+// cdnSourceRow — строка таблицы источников CDN в настройках.
+type cdnSourceRow struct {
+	Service string
+	Name    string
+	ASN     int
+	URL     string
+	Parser  string
+}
+
+// cdnParsersList — варианты парсера для выпадающего списка в UI.
+var cdnParsersList = []string{"text", "google", "aws", "fastly"}
+
+func (s *Server) cdnSourceRows() []cdnSourceRow {
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
+	rows := make([]cdnSourceRow, 0, len(s.cfg.CDNSources))
+	for _, src := range s.cfg.CDNSources {
+		rows = append(rows, cdnSourceRow{
+			Service: src.Service, Name: src.Name, ASN: src.ASN,
+			URL: src.URL, Parser: src.Parser,
+		})
+	}
+	return rows
 }
 
 func (s *Server) pageLogs(w http.ResponseWriter, r *http.Request) {
@@ -2482,6 +2510,76 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("HX-Refresh", "true")
 	writeOK(w, resp)
+}
+
+// actionUpdateCDNSources — сохранение таблицы источников CDN из настроек.
+func (s *Server) actionUpdateCDNSources(w http.ResponseWriter, r *http.Request) {
+	user := s.currentUser(r)
+	if err := r.ParseForm(); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid form body")
+		return
+	}
+	services := r.PostForm["cdn_service"]
+	names := r.PostForm["cdn_name"]
+	asns := r.PostForm["cdn_asn"]
+	urls := r.PostForm["cdn_url"]
+	parsers := r.PostForm["cdn_parser"]
+	n := len(services)
+	if len(names) != n || len(asns) != n || len(urls) != n || len(parsers) != n {
+		writeErr(w, http.StatusBadRequest, "источники: несогласованный набор полей")
+		return
+	}
+	list := make([]config.CDNSourceConfig, 0, n)
+	for i := 0; i < n; i++ {
+		svc := strings.TrimSpace(services[i])
+		nm := strings.TrimSpace(names[i])
+		asnS := strings.TrimSpace(asns[i])
+		u := strings.TrimSpace(urls[i])
+		// Полностью пустая строка — заготовка UI, пропускаем.
+		if svc == "" && nm == "" && asnS == "" && u == "" {
+			continue
+		}
+		asn, err := strconv.Atoi(asnS)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("источник %q: ASN должен быть числом", svc))
+			return
+		}
+		list = append(list, config.CDNSourceConfig{
+			Service: svc, Name: nm, ASN: asn, URL: u, Parser: strings.TrimSpace(parsers[i]),
+		})
+	}
+
+	// Клон для валидации — маршалинг под чтением.
+	s.cfg.RLock()
+	cand, err := s.cloneConfig()
+	s.cfg.RUnlock()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "clone config: "+err.Error())
+		return
+	}
+	cand.CDNSources = list
+	if err := cand.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, "не сохранено — ошибки: "+err.Error())
+		return
+	}
+
+	// Применение под записью с откатом (как в actionUpdateSettings).
+	s.cfg.Lock()
+	old := s.cfg.CDNSources
+	s.cfg.CDNSources = list
+	if serr := s.cfg.Save(); serr != nil {
+		s.cfg.CDNSources = old
+		s.cfg.Unlock()
+		writeErr(w, http.StatusInternalServerError, "не применено, откачено: "+serr.Error())
+		return
+	}
+	s.cfg.Unlock()
+
+	s.applyRuntimeChanges()
+	s.auditChange(r, "web", "cdn_sources_update", fmt.Sprintf("%d entries", len(list)))
+	s.log.Info("cdn sources updated", "user", user, "count", len(list))
+	w.Header().Set("HX-Refresh", "true")
+	writeOK(w, map[string]any{"updated": len(list)})
 }
 
 func (s *Server) cloneConfig() (*config.Config, error) {

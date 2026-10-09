@@ -35,10 +35,12 @@ func TestClassifyOverrideMultiMethod(t *testing.T) {
 	}
 }
 
-// TestClassifyNoHardcodedASNForDomainServices фиксирует инвариант: у сервисов
-// с доменами ASN не вшит (определяется резолвом в рантайме через
-// core/collect.go → resolver.ResolveASN), а задан только там, где ASN —
-// идентификатор источника (CDN-список без домена, akamai → метод asn).
+// TestClassifyNoHardcodedASNForDomainServices фиксирует инвариант: ASN не вшит
+// в classifier. У сервисов с доменами он резолвится из домена в рантайме
+// (core/collect.go → resolver.ResolveASN); у CDN-сервисов без домена —
+// берётся из каталога config.cdn_sources по имени сервиса
+// (core/collect.go → collectors.CDNSourceByName). Единственное исключение —
+// akamai: ASN задан вручную, т.к. это вход метода asn (официального списка нет).
 // Регрессия с зашитым AS62240 у telegram вела на чужие сети Clouvider.
 func TestClassifyNoHardcodedASNForDomainServices(t *testing.T) {
 	// Доменные сервисы: ASN обязан быть пустым, домены — присутствовать.
@@ -52,19 +54,30 @@ func TestClassifyNoHardcodedASNForDomainServices(t *testing.T) {
 		}
 	}
 
-	// Источниковые сервисы: ASN задан (ключ cdnSources / метод asn).
-	src := map[string]string{
-		"cloudflare": "AS13335",
-		"aws":        "AS16509",
-		"google":     "AS15169",
-		"fastly":     "AS54113",
-		"akamai":     "AS20940",
-	}
-	for name, want := range src {
-		if got := Classify(name, ""); got.ASN != want {
-			t.Errorf("Classify(%q).ASN = %q, ожидалось %q", name, got.ASN, want)
+	// CDN-сервисы без доменов: ASN тоже не вшит — источник в конфиге.
+	for _, name := range []string{"cloudflare", "aws", "google", "fastly"} {
+		got := Classify(name, "")
+		if got.ASN != "" {
+			t.Errorf("Classify(%q).ASN = %q, ожидалось пусто (ASN берётся из config.cdn_sources)", name, got.ASN)
+		}
+		if !contains(got.Methods, "cdn") {
+			t.Errorf("Classify(%q).Methods = %v, ожидался метод cdn", name, got.Methods)
 		}
 	}
+
+	// Исключение: akamai — метод asn, ASN задан (официального списка нет).
+	if got := Classify("akamai", ""); got.ASN != "AS20940" {
+		t.Errorf("Classify(\"akamai\").ASN = %q, ожидалось AS20940", got.ASN)
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestClassifyASNLiteral(t *testing.T) {

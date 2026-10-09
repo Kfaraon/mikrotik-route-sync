@@ -671,5 +671,79 @@
     });
   })();
 
+  // Таблица источников CDN в настройках: динамическое добавление/удаление
+  // строк. Клонируем последнюю строку (сохраняя шаблон select), чистим поля.
+  (function () {
+    var body = document.getElementById("cdn-sources-body");
+    var addBtn = document.getElementById("cdn-sources-add");
+    if (!body || !addBtn) return;
+
+    function clearRow(row) {
+      row.querySelectorAll("input").forEach(function (inp) {
+        inp.value = "";
+      });
+      row.querySelectorAll("select").forEach(function (sel) {
+        sel.selectedIndex = 0;
+      });
+    }
+
+    function makeRemoveBtn() {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-outline cdn-row-remove";
+      btn.title = "Удалить строку";
+      btn.textContent = "✕";
+      return btn;
+    }
+
+    addBtn.addEventListener("click", function () {
+      var rows = body.querySelectorAll("tr");
+      var row;
+      if (rows.length > 0) {
+        row = rows[rows.length - 1].cloneNode(true);
+        clearRow(row);
+      } else {
+        row = document.createElement("tr");
+        var fields = [
+          { name: "cdn_service", placeholder: "cloudflare" },
+          { name: "cdn_name", placeholder: "Cloudflare" },
+          { name: "cdn_asn", placeholder: "13335", type: "number" },
+          { name: "cdn_url", placeholder: "https://..." }
+        ];
+        fields.forEach(function (f) {
+          var td = document.createElement("td");
+          var inp = document.createElement("input");
+          inp.type = f.type || "text";
+          inp.name = f.name;
+          inp.placeholder = f.placeholder;
+          td.appendChild(inp);
+          row.appendChild(td);
+        });
+        var td2 = document.createElement("td");
+        var sel = document.createElement("select");
+        sel.name = "cdn_parser";
+        ["text", "google", "aws", "fastly"].forEach(function (p) {
+          var opt = document.createElement("option");
+          opt.value = p;
+          opt.textContent = p;
+          sel.appendChild(opt);
+        });
+        td2.appendChild(sel);
+        row.appendChild(td2);
+        var td3 = document.createElement("td");
+        td3.appendChild(makeRemoveBtn());
+        row.appendChild(td3);
+      }
+      body.appendChild(row);
+    });
+
+    body.addEventListener("click", function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest(".cdn-row-remove") : null;
+      if (!btn) return;
+      var row = btn.closest("tr");
+      if (row) row.parentNode.removeChild(row);
+    });
+  })();
+
 })();
 

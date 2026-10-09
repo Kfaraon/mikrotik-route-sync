@@ -38,6 +38,13 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	if staticURL == "" && len(class.StaticURLs) > 0 {
 		staticURL = class.StaticURLs[0]
 	}
+	// CDN-сервис с явным методом static_url и без своего URL: берём
+	// официальный список из каталога (раньше он приходил из classifier).
+	if staticURL == "" && hasMethod(class.Methods, "static_url") {
+		if _, _, u, ok := collectors.CDNSourceByName(name); ok {
+			staticURL = u
+		}
+	}
 	maxPrefixes := ov.MaxPrefixes
 	if maxPrefixes == 0 {
 		maxPrefixes = ov.MaxASNPrefixes
@@ -51,6 +58,13 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 			asn = n
 		}
 	}
+	// CDN-сервис без домена (cloudflare/aws/google/fastly): ASN берём из
+	// каталога config.cdn_sources по имени сервиса, а не из кода.
+	if asn == 0 && hasMethod(class.Methods, "cdn") && len(domains) == 0 {
+		if n, _, _, ok := collectors.CDNSourceByName(name); ok {
+			asn = n
+		}
+	}
 	if asn == 0 && (hasMethod(class.Methods, "asn") || hasMethod(class.Methods, "cdn")) && len(domains) > 0 {
 		if resolved, err := s.resolver().ResolveASN(ctx, domains[0]); err == nil {
 			asn = resolved
@@ -61,7 +75,7 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 
 	alsoCDN := make([]int, 0, len(ov.AlsoCDN))
 	for _, c := range ov.AlsoCDN {
-		if a, ok := cdnNameToASN[c]; ok {
+		if a, _, _, ok := collectors.CDNSourceByName(c); ok {
 			alsoCDN = append(alsoCDN, a)
 		}
 	}
@@ -168,13 +182,6 @@ func (s *Syncer) verifyASNOwnership(ctx context.Context, in []netip.Prefix, asn 
 		out = append(out, p)
 	}
 	return out
-}
-
-var cdnNameToASN = map[string]int{
-	"cloudflare": 13335,
-	"aws":        16509,
-	"google":     15169,
-	"fastly":     54113,
 }
 
 func hasMethod(methods []string, want string) bool {

@@ -68,8 +68,41 @@ type Config struct {
 	Suggest   SuggestConfig   `yaml:"suggest"`
 	Presets   PresetsConfig   `yaml:"presets"`
 
+	// CDNSources — каталог официальных списков CDN: по ASN выбирается URL и
+	// парсер ответа. Пусто — встроенные дефолты (setDefaults). Вынесен из
+	// кода, чтобы менять/добавлять провайдеров без пересборки.
+	CDNSources []CDNSourceConfig `yaml:"cdn_sources"`
+
 	Services  []string                   `yaml:"services"`
 	Overrides map[string]ServiceOverride `yaml:"overrides"`
+}
+
+// CDNSourceConfig — один официальный источник диапазонов CDN-провайдера.
+// Service — имя сервиса-алиаса (cloudflare/aws/google/fastly): по нему
+// classifier-сервис без домена получает ASN. ASN — ключ каталога.
+// Parser — text|google|aws|fastly: какой формат ответа разбирать.
+type CDNSourceConfig struct {
+	Service string `yaml:"service"`
+	Name    string `yaml:"name"`
+	ASN     int    `yaml:"asn"`
+	URL     string `yaml:"url"`
+	Parser  string `yaml:"parser"`
+}
+
+// DefaultCDNSources возвращает копию встроенного каталога CDN. Используется
+// как значение по умолчанию, когда cdn_sources в конфиге не задан.
+// Akamai здесь нет: у него нет официального списка, сбор идёт методом asn.
+func DefaultCDNSources() []CDNSourceConfig {
+	return []CDNSourceConfig{
+		{Service: "cloudflare", Name: "Cloudflare", ASN: 13335,
+			URL: "https://www.cloudflare.com/ips-v4", Parser: "text"},
+		{Service: "aws", Name: "AWS CloudFront", ASN: 16509,
+			URL: "https://ip-ranges.amazonaws.com/ip-ranges.json", Parser: "aws"},
+		{Service: "google", Name: "Google", ASN: 15169,
+			URL: "https://www.gstatic.com/ipranges/goog.json", Parser: "google"},
+		{Service: "fastly", Name: "Fastly", ASN: 54113,
+			URL: "https://api.fastly.com/public-ip-list", Parser: "fastly"},
+	}
 }
 
 // LoggingConfig — настройки логирования (slog + lumberjack).
@@ -429,6 +462,11 @@ func setDefaults(c *Config) {
 	if len(c.Suggest.Sources) == 0 {
 		c.Suggest.Sources = []string{"preset", "urlscan"}
 	}
+	// Каталог CDN вынесен в конфиг: пусто — вкомпилированные дефолты.
+	// Явно заданный (в т.ч. пустой намеренно) список не перетираем.
+	if c.CDNSources == nil {
+		c.CDNSources = DefaultCDNSources()
+	}
 }
 
 // RLock/RUnlock — чтение полей под разделяемой блокировкой.
@@ -461,6 +499,7 @@ func (c *Config) replaceFromLocked(src *Config) {
 	c.Schedules = src.Schedules
 	c.Suggest = src.Suggest
 	c.Presets = src.Presets
+	c.CDNSources = src.CDNSources
 	c.Services = src.Services
 	c.Overrides = src.Overrides
 }
@@ -571,6 +610,46 @@ func (c *Config) Validate() error {
 	}
 	if c.Suggest.UrlscanMode == "key" && c.External.UrlscanAPIKey == "" {
 		return fmt.Errorf("suggest.urlscan_mode=key requires external.urlscan_api_key")
+	}
+	if err := validateCDNSources(c.CDNSources); err != nil {
+		return err
+	}
+	return nil
+}
+
+// cdnParsers — поддерживаемые парсеры ответа CDN-источника.
+var cdnParsers = map[string]bool{"text": true, "google": true, "aws": true, "fastly": true}
+
+// validateCDNSources проверяет каталог cdn_sources: корректные service/name,
+// ASN, URL, парсер; без дублей service и ASN (иначе lookup неоднозначен).
+func validateCDNSources(list []CDNSourceConfig) error {
+	seenSvc := map[string]bool{}
+	seenASN := map[int]bool{}
+	for i, s := range list {
+		svc := strings.ToLower(strings.TrimSpace(s.Service))
+		if !ValidateServiceName(svc) {
+			return fmt.Errorf("cdn_sources[%d]: invalid service %q (allowed ^[a-z0-9][a-z0-9_-]{0,63}$)", i, s.Service)
+		}
+		if s.Name == "" {
+			return fmt.Errorf("cdn_sources[%d] (%s): name required", i, svc)
+		}
+		if s.ASN <= 0 || s.ASN > 4294967295 {
+			return fmt.Errorf("cdn_sources[%d] (%s): asn must be 1..4294967295, got %d", i, svc, s.ASN)
+		}
+		if u, err := url.Parse(s.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("cdn_sources[%d] (%s): url must be http/https", i, svc)
+		}
+		if !cdnParsers[s.Parser] {
+			return fmt.Errorf("cdn_sources[%d] (%s): parser must be text|google|aws|fastly, got %q", i, svc, s.Parser)
+		}
+		if seenSvc[svc] {
+			return fmt.Errorf("cdn_sources: duplicate service %q", svc)
+		}
+		seenSvc[svc] = true
+		if seenASN[s.ASN] {
+			return fmt.Errorf("cdn_sources: duplicate asn %d", s.ASN)
+		}
+		seenASN[s.ASN] = true
 	}
 	return nil
 }

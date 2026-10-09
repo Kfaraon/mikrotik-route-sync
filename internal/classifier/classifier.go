@@ -26,28 +26,26 @@ type knownService struct {
 
 // knownServices — словарь известных сервисов (PROMPT II.2).
 //
-// Поле asn заполняется только у провайдеров, где ASN — это идентификатор
-// источника: у CDN-сервисов без домена (cloudflare/aws/google/fastly) он
-// выбирает официальный список в collectors.cdnSources, у akamai — вход
-// метода asn. Для сервисов с доменами (youtube/instagram/facebook/telegram)
-// ASN НЕ вшивается: его определяет механика сбора в рантайме
-// (core/collect.go → resolver.ResolveASN), поэтому смена ASN провайдером
-// не требует правки кода (раньше зашитый AS62240 у telegram вёл на чужие
-// сети Clouvider). Если такой сервис не получит ASN из домена — это
-// сигнал о проблеме сбора, а не повод подставлять константу.
+// ASN НЕ вшивается: он определяется рантаймом.
+//   - Для сервисов с доменами (youtube/instagram/facebook/telegram) ASN
+//     резолвится из домена (core/collect.go → resolver.ResolveASN): смена
+//     ASN провайдером не требует правки кода (раньше зашитый AS62240 у
+//     telegram вёл на чужие сети Clouvider).
+//   - Для CDN-сервисов без домена (cloudflare/aws/google/fastly) ASN берётся
+//     из каталога config.cdn_sources по имени сервиса (core/collect.go →
+//     collectors.CDNSourceByName): провайдеров можно менять в настройках.
+//
+// asn заполняется только у akamai: это вход метода "asn", официального
+// списка у Akamai нет.
 var knownServices = map[string]knownService{
 	"cloudflare": {
 		methods: []string{"cdn"},
-		static:  []string{"https://www.cloudflare.com/ips-v4"},
-		asn:     "AS13335",
 	},
 	"aws": {
 		methods: []string{"cdn"},
-		asn:     "AS16509",
 	},
 	"google": {
 		methods: []string{"cdn"},
-		asn:     "AS15169",
 	},
 	"youtube": {
 		methods: []string{"dynamic", "cdn"},
@@ -68,8 +66,6 @@ var knownServices = map[string]knownService{
 	},
 	"fastly": {
 		methods: []string{"cdn"},
-		static:  []string{"https://api.fastly.com/public-ip-list"},
-		asn:     "AS54113",
 	},
 	"akamai": {
 		methods: []string{"asn"},
