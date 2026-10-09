@@ -1623,8 +1623,8 @@ func TestMaxBodyLimit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
 		// DELETE без тела-обработчика упадёт раньше на 404/405 — главное,
 		// что не 200 и не зависание; POST/PUT отрезаются лимитом
 		// (413 от MaxBytesReader или 400 от декодера — оба до обработки).
