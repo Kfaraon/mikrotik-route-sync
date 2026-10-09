@@ -97,12 +97,15 @@ func (c *Cache) Close() error {
 // StartPurgeTicker запускает фоновый тикер для автоматической чистки
 // просроченных записей. interval — период чистки (рекомендуется 5-10 мин).
 // Безопасно вызывать многократно: перезапускает тикер.
+// Горютина работает с локальными копиями каналов (не полями структуры):
+// иначе чтение полей без мьютекса гоняет со Stop/Close (data race).
 func (c *Cache) StartPurgeTicker(interval time.Duration) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.purgeTicker != nil {
 		c.purgeTicker.Stop()
+	}
+	if c.purgeDone != nil {
+		close(c.purgeDone)
 	}
 	if interval <= 0 {
 		interval = 5 * time.Minute
@@ -110,13 +113,15 @@ func (c *Cache) StartPurgeTicker(interval time.Duration) {
 
 	c.purgeDone = make(chan struct{})
 	c.purgeTicker = time.NewTicker(interval)
+	ticker, done := c.purgeTicker, c.purgeDone
+	c.mu.Unlock()
 
 	go func() {
 		for {
 			select {
-			case <-c.purgeTicker.C:
+			case <-ticker.C:
 				_ = c.PurgeExpired()
-			case <-c.purgeDone:
+			case <-done:
 				return
 			}
 		}

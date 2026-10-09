@@ -365,6 +365,9 @@ func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug
 	nov.Primary = primary
 
 	cur, hadCur := s.cfg.Overrides[name]
+	if s.cfg.Overrides == nil {
+		s.cfg.Overrides = make(map[string]config.ServiceOverride)
+	}
 	s.cfg.Overrides[name] = nov
 	if err := s.cfg.Save(); err != nil {
 		if hadCur {

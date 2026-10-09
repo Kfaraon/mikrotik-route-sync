@@ -3,6 +3,7 @@ package storage
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -108,4 +109,37 @@ func TestOpenLockedDBHintsDaemon(t *testing.T) {
 			t.Fatalf("error %q must mention %q", err, want)
 		}
 	}
+}
+
+// TestPurgeTickerRestartRace — перезапуск и остановка тикера параллельно:
+// бывший data race полей purgeTicker/purgeDone (горутина читала без мьютекса).
+func TestPurgeTickerRestartRace(t *testing.T) {
+	c := openTestCache(t)
+	defer func() { _ = c.Close() }()
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for g := 0; g < 3; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				c.StartPurgeTicker(time.Millisecond)
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			c.StopPurgeTicker()
+		}
+		close(stop)
+	}()
+	wg.Wait()
 }

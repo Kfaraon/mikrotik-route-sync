@@ -246,18 +246,13 @@ func TestUpdateServiceOverrideDomainCap(t *testing.T) {
 
 // TestApplyPresetRefreshKeepsManual — ручные домены переживают refresh,
 // diff честный, повторный refresh — пустой diff.
-// NOTE: сервис без override падает паникой assignment to entry in nil map
-// (ApplyPresetRefresh не создаёт map) — заведено как баг, здесь обходим
-// предварительным UpdateServiceOverride.
 func TestApplyPresetRefreshKeepsManual(t *testing.T) {
 	m := &mockRouter{t: t}
 	s, _ := newTestSyncer(t, m.serve(nil, false))
 
-	if _, err := s.UpdateServiceOverride(context.Background(), "yt", strPtr("whois"), nil); err != nil {
-		t.Fatalf("seed override: %v", err)
-	}
+	// Без override вообще (nil-map): refresh обязан работать, а не паниковать.
 	if _, _, err := s.ApplyPresetRefresh(context.Background(), "yt", "youtube", false); err != nil {
-		t.Fatalf("refresh: %v", err)
+		t.Fatalf("refresh without override: %v", err)
 	}
 	ov := s.GetServiceOverride("yt")
 	if ov.Preset != "youtube" || len(ov.Generated) == 0 {
