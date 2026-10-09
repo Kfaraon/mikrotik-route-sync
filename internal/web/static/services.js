@@ -1513,10 +1513,13 @@
       var vendored = null;
       var nonVendoredFirst = null;
       var names = [];
+      // Слаг сервера ограничен [a-z0-9_-]: "geolocation-!cn" создать нельзя,
+      // кнопка даёт постоянный 400 — берём первый невендоренный валидный.
+      var slugOk = /^[a-z0-9][a-z0-9_-]{0,63}$/;
       each(list, function (m) {
         names.push(m.title || m.slug);
         if (!vendored && m.vendored) vendored = m;
-        if (!nonVendoredFirst && !m.vendored) nonVendoredFirst = m;
+        if (!nonVendoredFirst && !m.vendored && slugOk.test(m.slug)) nonVendoredFirst = m;
       });
       hint.innerHTML = "";
       if (vendored) {
@@ -1589,9 +1592,9 @@
   // Large-пресеты без доменов в списке — создание по ним сервер отклонит
   // с объяснением (rublock), в option помечаем.
   function loadPresets() {
-    if (state.presets !== undefined) return;
+    if (state.presets !== undefined) return Promise.resolve();
     state.presets = null;
-    api("/api/v1/presets").then(function (data) {
+    return api("/api/v1/presets").then(function (data) {
       var list = (data && data.presets) || [];
       state.presets = list;
       if (!els.addPreset) return;

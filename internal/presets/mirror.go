@@ -322,15 +322,19 @@ var (
 	ix   *Index
 )
 
-// RebuildUpstreamIndex строит инвертированный индекс по файлам dir/upstream/.
-// Вызывать при старте (если зеркало скачано) и после каждого обновления.
-func RebuildUpstreamIndex(dir string) error {
+// LoadUpstreamFiles читает все файлы dir/upstream/ (имя → содержимое).
+// Нужна для конвертации одного пресета на лету: upstream-файлы массово
+// используют include: на соседние списки, без полной карты парсер молча
+// их пропускает и пресет теряет почти всё содержимое (у
+// category-companies из 125 записей без карты остаются 9).
+// Каталога нет — nil.
+func LoadUpstreamFiles(dir string) map[string]string {
 	upDir := filepath.Join(dir, "upstream")
 	entries, err := os.ReadDir(upDir)
 	if err != nil {
-		return fmt.Errorf("read upstream: %w", err)
+		return nil
 	}
-	files := map[string]string{}
+	files := make(map[string]string, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -341,8 +345,15 @@ func RebuildUpstreamIndex(dir string) error {
 		}
 		files[e.Name()] = string(raw)
 	}
+	return files
+}
+
+// RebuildUpstreamIndex строит инвертированный индекс по файлам dir/upstream/.
+// Вызывать при старте (если зеркало скачано) и после каждого обновления.
+func RebuildUpstreamIndex(dir string) error {
+	files := LoadUpstreamFiles(dir)
 	if len(files) == 0 {
-		return fmt.Errorf("upstream mirror empty: %s", upDir)
+		return fmt.Errorf("upstream mirror empty: %s", filepath.Join(dir, "upstream"))
 	}
 	built := BuildIndex(files)
 	ixMu.Lock()

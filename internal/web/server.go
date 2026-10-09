@@ -1753,14 +1753,17 @@ func (s *Server) apiPresetsCreateFromUpstream(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusBadRequest, "invalid slug: only a-z0-9_- allowed, no '!'")
 		return
 	}
-	// Читаем upstream-файл с диска (dir/upstream/<slug>).
-	upDir := filepath.Join(dir, "upstream")
-	raw, err := os.ReadFile(filepath.Join(upDir, slug))
-	if err != nil {
+	// Полная карта upstream: без соседних файлов include: не раскрываются
+	// (у category-companies из 125 записей теряются 116).
+	files := presets.LoadUpstreamFiles(dir)
+	if files == nil {
+		writeErr(w, http.StatusNotFound, "upstream mirror not found (скачайте зеркало)")
+		return
+	}
+	if _, ok := files[slug]; !ok {
 		writeErr(w, http.StatusNotFound, "upstream file not found: "+slug)
 		return
 	}
-	files := map[string]string{slug: string(raw)}
 	src := presets.PresetSource{
 		Repo:   presets.SourceV2Fly,
 		Commit: "runtime-mirror",
@@ -1806,13 +1809,13 @@ func (s *Server) apiPresetsCreateFromUpstream(w http.ResponseWriter, r *http.Req
 	// Аудит + ответ с предупреждением о капе, если было.
 	s.auditChange(r, "api", "preset_create_from_upstream", slug)
 	resp := map[string]any{
-		"slug":       p.Slug,
-		"title":      p.Title,
-		"domains":    len(p.Domains),
-		"method":     p.Method,
-		"source":     p.Source.String(),
-		"truncated":  st.Truncated,
-		"showcase":   p.Domains[0],
+		"slug":      p.Slug,
+		"title":     p.Title,
+		"domains":   len(p.Domains),
+		"method":    p.Method,
+		"source":    p.Source.String(),
+		"truncated": st.Truncated,
+		"showcase":  p.Domains[0],
 	}
 	if st.Truncated > 0 {
 		resp["warning"] = fmt.Sprintf("list truncated to %d domains (original had %d)", presets.MaxDomains, len(p.Domains)+st.Truncated)

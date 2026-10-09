@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1833,7 +1834,12 @@ func TestAPIPresetsCreateFromUpstream(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Файл с include: и full:/domain: для проверки парсера.
+	// Файл с include: на соседний файл (должен раскрыться — хендлер
+	// обязан передавать парсеру полную карту upstream), full:/domain:,
+	// отбросные записи. google — include без файла: warn, не ошибка.
+	if err := os.WriteFile(filepath.Join(dir, "google"), []byte("full:included-via-google.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	content := `include:google
 full:abc.xyz
 domain:test.example.com
@@ -1862,11 +1868,21 @@ regexp:.*\.ads\.
 	if data["truncated"] != float64(0) {
 		t.Fatalf("expected no truncation: %+v", data)
 	}
-	// Домены должны быть: abc.xyz (showcase, из full:) + test.example.com (из domain:)
-	// include:google раскрывается, но google нет в files — будет MissingIncludes (warn, не ошибка).
+	// Обязаны прийти: abc.xyz (full:), test.example.com (domain:) и
+	// included-via-google.com (include: на соседний файл). Регрессия
+	// «парсеру отдают один файл» даёт ровно 2 домена — первый баг
+	// находки (include терялся молча).
 	domainsCount := int(data["domains"].(float64))
-	if domainsCount < 1 {
-		t.Fatalf("expected domains > 0, got %d", domainsCount)
+	if domainsCount < 3 {
+		t.Fatalf("expected >= 3 domains (include must expand), got %d: %s", domainsCount, body)
+	}
+	// Сам домен из include проверяем через Get созданного пресета.
+	cp, ok := presets.Get("alphabet")
+	if !ok {
+		t.Fatalf("created preset not readable via Get")
+	}
+	if !slices.Contains(cp.Domains, "included-via-google.com") {
+		t.Fatalf("include: not expanded, domains: %v", cp.Domains)
 	}
 
 	// Пресет должен появиться в списке.
