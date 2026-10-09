@@ -463,8 +463,9 @@ func setDefaults(c *Config) {
 		c.Suggest.Sources = []string{"preset", "urlscan"}
 	}
 	// Каталог CDN вынесен в конфиг: пусто — вкомпилированные дефолты.
-	// Явно заданный (в т.ч. пустой намеренно) список не перетираем.
-	if c.CDNSources == nil {
+	// Так встроенные CDN-сервисы (cloudflare/aws/...) не остаются без
+	// источника, если секцию убрали/очистили.
+	if len(c.CDNSources) == 0 {
 		c.CDNSources = DefaultCDNSources()
 	}
 }

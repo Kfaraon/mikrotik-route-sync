@@ -2548,6 +2548,11 @@ func (s *Server) actionUpdateCDNSources(w http.ResponseWriter, r *http.Request) 
 			Service: svc, Name: nm, ASN: asn, URL: u, Parser: strings.TrimSpace(parsers[i]),
 		})
 	}
+	// Пустая таблица = вернуться к встроенным дефолтам (как в setDefaults):
+	// иначе CDN-сервисы остались бы без источника.
+	if len(list) == 0 {
+		list = config.DefaultCDNSources()
+	}
 
 	// Клон для валидации — маршалинг под чтением.
 	s.cfg.RLock()
