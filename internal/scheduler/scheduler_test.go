@@ -66,6 +66,30 @@ func TestRunRecoversPanic(t *testing.T) {
 
 // E4: wg.Add в dispatch не должен гоняться с wg.Wait в Stop. Гвардия
 // runMu/runActive запрещает Add после выключения: -race ловит нарушение.
+// O3: Push должен разбудить ожидающий runner, signal — неблокирующий.
+func TestIntervalHeapSignalsOnPush(t *testing.T) {
+	h := newIntervalHeap()
+	// Пустая куча: сигнала нет.
+	select {
+	case <-h.notify:
+		t.Fatal("unexpected signal on empty heap")
+	default:
+	}
+	h.Push(intervalItem{service: "svc", interval: time.Hour, nextRun: time.Now().Add(time.Hour)})
+	select {
+	case <-h.notify:
+	default:
+		t.Fatal("push did not signal")
+	}
+	// Повторные сигналы не блокируют и не теряют состояние.
+	for i := 0; i < 10; i++ {
+		h.signal()
+	}
+	if got := h.Len(); got != 1 {
+		t.Fatalf("len=%d, want 1", got)
+	}
+}
+
 func TestDispatchStopNoWaitGroupRace(t *testing.T) {
 	s := &Scheduler{log: slog.Default()} // nil syncer: run паникует и восстанавливается
 	s.sem = make(chan struct{}, 4)

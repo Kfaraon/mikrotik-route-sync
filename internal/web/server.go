@@ -1182,11 +1182,13 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 	}
 	s.cfg.RUnlock()
 
+	// O1: один запрос к роутеру на все сервисы (было N в одном 3-секундном
+	// ctx — хвост молча получал Routes=0). Ошибка чтения — счётчики пусты.
+	counts, _ := s.syncer.ServiceEntryCounts(ctx)
+
 	rows := make([]serviceRow, 0, len(statics))
 	for _, row := range statics {
-		if entries, err := s.syncer.ListServiceEntries(ctx, row.Name); err == nil {
-			row.Routes = len(entries)
-		}
+		row.Routes = counts[row.Name]
 		if rec, ok := s.syncer.History().Last(row.Name); ok {
 			status := "успех"
 			if rec.Status == "failed" || rec.Error != "" {

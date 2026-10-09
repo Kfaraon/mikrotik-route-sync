@@ -340,6 +340,9 @@ func (s *Scheduler) reloadLocked(quiet bool) error {
 type intervalHeap struct {
 	mu    sync.Mutex
 	items []intervalItem
+	// notify будит intervalRunner при добавлении/изменении элемента: без него
+	// пустая куча опрашивалась busy-poll'ом каждые 100 мс (O3).
+	notify chan struct{}
 }
 
 type intervalItem struct {
@@ -350,15 +353,23 @@ type intervalItem struct {
 }
 
 func newIntervalHeap() *intervalHeap {
-	h := &intervalHeap{items: make([]intervalItem, 0)}
-	return h
+	return &intervalHeap{items: make([]intervalItem, 0), notify: make(chan struct{}, 1)}
+}
+
+// signal — неблокирующее пробуждение runner'а (канал буферизован на 1).
+func (h *intervalHeap) signal() {
+	select {
+	case h.notify <- struct{}{}:
+	default:
+	}
 }
 
 func (h *intervalHeap) Push(item intervalItem) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.items = append(h.items, item)
 	h.siftUp(len(h.items) - 1)
+	h.mu.Unlock()
+	h.signal()
 }
 
 func (h *intervalHeap) Pop() (intervalItem, bool) {
@@ -394,7 +405,6 @@ func (h *intervalHeap) Len() int {
 
 func (h *intervalHeap) Remove(service string) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	for i, item := range h.items {
 		if item.service == service {
 			h.items[i] = h.items[len(h.items)-1]
@@ -406,6 +416,9 @@ func (h *intervalHeap) Remove(service string) {
 			break
 		}
 	}
+	h.mu.Unlock()
+	// Куча изменилась — возможно, освободился слот для других сервисов.
+	h.signal()
 }
 
 func (h *intervalHeap) siftUp(i int) {
@@ -462,11 +475,11 @@ func (s *Scheduler) intervalRunner(ctx context.Context) {
 		heap.mu.Unlock()
 
 		if !hasItem {
-			// Нет интервальных сервисов — ждём добавления или отмены
+			// Пустая куча — спим на сигнале о добавлении (O3: без busy-poll).
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(100 * time.Millisecond):
+			case <-heap.notify:
 				continue
 			}
 		}

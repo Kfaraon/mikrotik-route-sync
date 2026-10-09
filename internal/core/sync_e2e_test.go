@@ -773,6 +773,32 @@ func TestE2ESyncUnknownServiceRejected(t *testing.T) {
 	}
 }
 
+// O1: счётчики записей по сервисам одним запросом, orphan/dynamic не в счёт.
+func TestServiceEntryCounts(t *testing.T) {
+	fr := newFakeRouter(
+		addresslist.Entry{ID: "*1", Address: "1.1.1.0/24", List: "TO-VPN", Comment: "AUTO:demo"},
+		addresslist.Entry{ID: "*2", Address: "2.2.2.0/24", List: "TO-VPN", Comment: "AUTO:demo"},
+		addresslist.Entry{ID: "*3", Address: "3.3.3.0/24", List: "TO-VPN", Comment: "AUTO:other"},
+		addresslist.Entry{ID: "*4", Address: "4.4.4.0/24", List: "TO-VPN", Comment: "manual"},
+		addresslist.Entry{ID: "*5", Address: "5.5.5.0/24", List: "TO-VPN", Comment: "AUTO:demo", Dynamic: "true"},
+	)
+	s := newE2ESyncer(t, fr, &fakeSource{}, true)
+
+	counts, err := s.ServiceEntryCounts(context.Background())
+	if err != nil {
+		t.Fatalf("counts: %v", err)
+	}
+	if counts["demo"] != 2 {
+		t.Fatalf("demo count=%d, want 2", counts["demo"])
+	}
+	if counts["other"] != 1 {
+		t.Fatalf("other count=%d, want 1", counts["other"])
+	}
+	if _, ok := counts[""]; ok {
+		t.Fatalf("unmanaged comment counted: %+v", counts)
+	}
+}
+
 func strPtr(s string) *string { return &s }
 
 // UpdateServiceOverride: точечное обновление method/domains с валидацией.

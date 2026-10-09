@@ -28,8 +28,14 @@ var (
 
 // Cache — обёртка над bbolt для кэша и хранения состояния.
 type Cache struct {
-	db          *bolt.DB
-	mu          sync.RWMutex
+	db *bolt.DB
+	// mu защищает ВРЕМЯ ЖИЗНИ db: операции берут RLock, Close — Lock.
+	// Транзакции bbolt сериализует сам, поэтому операции не блокируют друг
+	// друга нашим мьютексом (O2). Исключительный Lock нужен лишь чтобы не
+	// закрыть базу во время транзакции.
+	mu sync.RWMutex
+	// lifeMu защищает поля тикера чистки (отдельно от db, E3/O2).
+	lifeMu      sync.Mutex
 	purgeTicker *time.Ticker
 	purgeDone   chan struct{}
 }
@@ -101,7 +107,7 @@ func (c *Cache) Close() error {
 // Горютина работает с локальными копиями каналов (не полями структуры):
 // иначе чтение полей без мьютекса гоняет со Stop/Close (data race).
 func (c *Cache) StartPurgeTicker(interval time.Duration) {
-	c.mu.Lock()
+	c.lifeMu.Lock()
 	if c.purgeTicker != nil {
 		c.purgeTicker.Stop()
 	}
@@ -115,7 +121,7 @@ func (c *Cache) StartPurgeTicker(interval time.Duration) {
 	c.purgeDone = make(chan struct{})
 	c.purgeTicker = time.NewTicker(interval)
 	ticker, done := c.purgeTicker, c.purgeDone
-	c.mu.Unlock()
+	c.lifeMu.Unlock()
 
 	go func() {
 		for {
@@ -131,8 +137,8 @@ func (c *Cache) StartPurgeTicker(interval time.Duration) {
 
 // StopPurgeTicker останавливает фоновый тикер чистки.
 func (c *Cache) StopPurgeTicker() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.lifeMu.Lock()
+	defer c.lifeMu.Unlock()
 
 	if c.purgeTicker != nil {
 		c.purgeTicker.Stop()
@@ -187,8 +193,8 @@ func (c *Cache) set(bucket []byte, key string, value any, ttl time.Duration) err
 		return fmt.Errorf("marshal entry: %w", err)
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	return c.db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists(bucket)
@@ -223,8 +229,8 @@ func (c *Cache) SetPrefixes(asn int, prefixes []string, ttl time.Duration) error
 
 // PurgeExpired удаляет просроченные записи из кэш-бакетов.
 func (c *Cache) PurgeExpired() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	return c.db.Update(func(tx *bolt.Tx) error {
 		for _, name := range [][]byte{bucketASN, bucketPrefixes, bucketCache} {
@@ -256,8 +262,8 @@ func (c *Cache) Put(bucket, key string, v any) error {
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucket))
 		if b == nil {
@@ -311,8 +317,8 @@ func (c *Cache) CreateSnapshot(service string, prefixes []string) (string, error
 	snapshotID := fmt.Sprintf("%d", time.Now().UnixNano())
 	key := fmt.Sprintf("%s:%s", service, snapshotID)
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	err = c.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketSnapshots)
@@ -424,8 +430,8 @@ func (c *Cache) GetSnapshot(service, snapshotID string, v any) error {
 // DeleteSnapshot удаляет конкретный снапшот.
 func (c *Cache) DeleteSnapshot(service, snapshotID string) error {
 	key := fmt.Sprintf("%s:%s", service, snapshotID)
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketSnapshots)
 		if b == nil {

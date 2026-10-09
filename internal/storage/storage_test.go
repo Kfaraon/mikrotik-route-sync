@@ -2,6 +2,7 @@ package storage
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -190,6 +191,33 @@ func TestPurgeTickerRestartRace(t *testing.T) {
 			c.StopPurgeTicker()
 		}
 		close(stop)
+	}()
+	wg.Wait()
+}
+
+// O2: чтения/записи/чистка идут параллельно без взаимной блокировки нашим
+// мьютексом (bbolt транзакции сериализует сам). Проверка под -race.
+func TestConcurrentReadWritePurge(t *testing.T) {
+	c := openTestCache(t)
+	defer func() { _ = c.Close() }()
+
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				_ = c.SetASN("10.0.0."+strconv.Itoa((g*100+i)%255), g+1, time.Hour)
+				_, _ = c.GetASN("10.0.0." + strconv.Itoa((g*100+i)%255))
+			}
+		}(g)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			_ = c.PurgeExpired()
+		}
 	}()
 	wg.Wait()
 }

@@ -122,6 +122,34 @@ func (s *Syncer) ListServiceEntries(ctx context.Context, name string) ([]address
 	return s.mt().ListServiceEntries(ctx, list, prefix, name)
 }
 
+// ServiceEntryCounts возвращает число managed-записей по каждому сервису за
+// ОДИН запрос к роутеру: раньше UI делал N запросов (по одному на сервис),
+// и при 3-секундном дедлайне хвост молча получал Routes=0 (O1). Записи, чей
+// комментарий не AUTO:<service>, игнорируются (orphan-и не в счёт).
+func (s *Syncer) ServiceEntryCounts(ctx context.Context) (map[string]int, error) {
+	s.cfg.RLock()
+	list := s.cfg.Firewall.AddressList
+	prefix := s.cfg.Firewall.CommentPrefix
+	s.cfg.RUnlock()
+
+	entries, err := s.mt().ListEntries(ctx, list)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(entries))
+	for _, e := range entries {
+		if e.IsDynamic() {
+			continue
+		}
+		svc, ok := addresslist.ServiceFromComment(e.Comment, prefix)
+		if !ok {
+			continue
+		}
+		counts[svc]++
+	}
+	return counts, nil
+}
+
 func (s *Syncer) AuditAddressList(ctx context.Context) ([]OrphanEntry, error) {
 	entries, err := s.ListGlobalEntries(ctx)
 	if err != nil {
