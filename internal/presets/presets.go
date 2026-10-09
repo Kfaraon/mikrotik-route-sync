@@ -30,6 +30,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -248,6 +249,10 @@ func Domains(slug string) ([]string, bool) {
 	return p.Domains, true
 }
 
+// validSlug — слаги только из безопасного алфавита: защита от path
+// traversal через DiskDir (filepath.Join схлопывает "..").
+var validSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
 // Get возвращает пресет по слагу. Второе значение false, если пресета
 // нет (в том числе если файл не распарсился).
 //
@@ -255,7 +260,7 @@ func Domains(slug string) ([]string, bool) {
 // (rublock содержит >1.5 млн доменов, повторный разбор недопустим).
 func Get(slug string) (Preset, bool) {
 	slug = strings.ToLower(strings.TrimSpace(slug))
-	if slug == "" {
+	if slug == "" || !validSlug.MatchString(slug) {
 		return Preset{}, false
 	}
 

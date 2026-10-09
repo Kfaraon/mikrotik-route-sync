@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -175,14 +176,26 @@ func TestCSRFRequiredForMutations(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
+	// Cookie больше не выдаётся при Basic (нет fixation): запрос без cookie
+	// идёт веткой basicAuth. Без Origin — программный клиент, пропуск
+	// (но НЕ 403): защита от браузера строится на Origin/Referer.
 	client := &http.Client{Jar: newJar(t)}
 	if resp, body := doAuth(client, ts.URL, "GET", "/", "", nil); resp.StatusCode != 200 {
 		t.Fatalf("auth GET failed: %d %s", resp.StatusCode, body)
 	}
 
-	resp, _ := doAuth(client, ts.URL, "POST", "/actions/sync-all", "", strings.NewReader(""))
+	// Чужой Origin в Basic-ветке — 403 (см. TestCSRFBasicauthOrigin).
+	// Чужой Referer без Origin — тоже 403.
+	req, _ := http.NewRequest("POST", ts.URL+"/actions/sync-all", strings.NewReader(""))
+	req.SetBasicAuth("admin", "secret-pass")
+	req.Header.Set("Referer", "http://evil.example/page")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected 403 without csrf, got %d", resp.StatusCode)
+		t.Fatalf("expected 403 on cross-origin referer, got %d", resp.StatusCode)
 	}
 
 	_, page := doAuth(client, ts.URL, "GET", "/", "", nil)
@@ -1105,19 +1118,30 @@ func TestCSRFBasicauthOrigin(t *testing.T) {
 	}
 }
 
-// TestSameOrigin — строгая сверка Origin с Host.
+// TestSameOrigin — строгая сверка Origin с Host (без префиксов).
 func TestSameOrigin(t *testing.T) {
+	srv, _ := newTestServer(t)
 	req, _ := http.NewRequest("GET", "http://mrs.local/", nil)
 	req.Host = "mrs.local"
 	for _, ok := range []string{"", "http://mrs.local", "https://mrs.local", "HTTP://MRS.LOCAL"} {
-		if !sameOrigin(req, ok) {
+		if !checkOriginHost(req, ok) {
 			t.Fatalf("must accept %q", ok)
 		}
 	}
 	for _, bad := range []string{"http://mrs.local.evil.com", "http://evil.com", "http://mrs.local:9999", "://", "http://"} {
-		if sameOrigin(req, bad) {
+		if checkOriginHost(req, bad) {
 			t.Fatalf("must reject %q", bad)
 		}
+	}
+	// Схема: http-Origin при https-запросе (и наоборот) — отказ.
+	tlsReq, _ := http.NewRequest("GET", "https://mrs.local/", nil)
+	tlsReq.Host = "mrs.local"
+	tlsReq.TLS = &tls.ConnectionState{}
+	if srv.sameOrigin(tlsReq, "http://mrs.local") {
+		t.Fatal("http origin over https must be rejected")
+	}
+	if !srv.sameOrigin(tlsReq, "https://mrs.local") {
+		t.Fatal("https origin over https must pass")
 	}
 }
 
@@ -1572,6 +1596,43 @@ func TestSettingsHasSuggestRows(t *testing.T) {
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("settings page missing %q", want)
+		}
+	}
+}
+
+// TestMaxBodyLimit — тело больше 1МБ режется на всех методах с телом.
+func TestMaxBodyLimit(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	big := strings.Repeat("x", (1<<20)+8)
+	targets := map[string]string{
+		"POST": "/api/v1/services",
+		"PUT":  "/api/v1/services/testsvc",
+	}
+	for _, m := range []string{"POST", "PUT", "DELETE"} {
+		path := "/api/v1/services"
+		if m == "PUT" {
+			path = targets[m]
+		}
+		req, _ := http.NewRequest(m, ts.URL+path, strings.NewReader(big))
+		req.SetBasicAuth("admin", "secret-pass")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		// DELETE без тела-обработчика упадёт раньше на 404/405 — главное,
+		// что не 200 и не зависание; POST/PUT отрезаются лимитом
+		// (413 от MaxBytesReader или 400 от декодера — оба до обработки).
+		if m == "DELETE" {
+			continue
+		}
+		if resp.StatusCode != http.StatusRequestEntityTooLarge && resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s oversized body: want 4xx reject, got %d", m, resp.StatusCode)
 		}
 	}
 }

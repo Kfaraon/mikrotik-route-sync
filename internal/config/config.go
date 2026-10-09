@@ -444,6 +444,15 @@ func (c *Config) Unlock()  { c.mu.Unlock() }
 func (c *Config) ReplaceFrom(src *Config) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.replaceFromLocked(src)
+}
+
+// ReplaceFromLocked — то же без блокировки (вызывающий держит Lock).
+func (c *Config) ReplaceFromLocked(src *Config) {
+	c.replaceFromLocked(src)
+}
+
+func (c *Config) replaceFromLocked(src *Config) {
 	c.Timezone = src.Timezone
 	c.CachePath = src.CachePath
 	c.Logging = src.Logging

@@ -746,8 +746,13 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 	}
 	botCancel = nil
 
+	// Снапшот настроек: вызывается из веб-запроса параллельно с мутациями.
+	cfg.RLock()
+	tg := cfg.Telegram
+	cfg.RUnlock()
+
 	// Создаём новый бот только если включён
-	if !cfg.Telegram.Enabled || cfg.Telegram.BotToken == "" {
+	if !tg.Enabled || tg.BotToken == "" {
 		log.Info("telegram bot disabled, skipping start")
 		return nil
 	}
@@ -756,7 +761,7 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 	botCtx, botCancel = context.WithCancel(context.Background())
 
 	// Создаём бот
-	newBot, err := bot.New(cfg.Telegram, s, log)
+	newBot, err := bot.New(tg, s, log)
 	if err != nil {
 		return fmt.Errorf("create telegram bot: %w", err)
 	}
@@ -845,11 +850,17 @@ func daemonCmd() *cobra.Command {
 
 			sched := scheduler.New(cfg, s, notify, log)
 			s.SetReloadFunc(func() error {
+				// Load под Lock: иначе web-мутация (Save) между чтением
+				// файла и подменой затиралась бы устаревшим содержимым.
+				// Unlock ДО Reload: планировщик берёт RLock сам.
+				cfg.Lock()
 				newCfg, err := config.Load(cfgPath)
 				if err != nil {
+					cfg.Unlock()
 					return fmt.Errorf("reload config: %w", err)
 				}
-				cfg.ReplaceFrom(newCfg)
+				cfg.ReplaceFromLocked(newCfg)
+				cfg.Unlock()
 				return sched.Reload()
 			})
 

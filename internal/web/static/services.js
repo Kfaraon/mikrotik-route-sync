@@ -2190,7 +2190,7 @@
           var checked = c.confidence === "high" ? " checked" : "";
           h += '<label class="svc-suggest-row"><input type="checkbox" data-suggest-check="' + i + '"' + checked + "> " +
             "<code>" + esc(c.domain) + "</code> " +
-            '<span class="svc-muted">' + esc(c.confidence || "") + ", в " + (c.scans || 0) + " ск.</span></label>";
+            '<span class="svc-muted">' + esc(c.confidence || "") + ", в " + esc(String(c.scans || 0)) + " ск.</span></label>";
         });
         h += "</div>";
         h += '<button class="btn btn-small btn-primary" data-suggest-apply="1">Применить выбранные</button>';
@@ -2213,7 +2213,7 @@
         } else if (bc.error) {
           h += ' <span class="svc-muted">Ошибка: ' + esc(bc.error) + "</span>";
         } else if (bc.data) {
-          h += ' <span>' + bc.data.blocked_count + " из " + bc.data.total + " в блоклисте" +
+          h += ' <span>' + esc(String(bc.data.blocked_count)) + " из " + esc(String(bc.data.total)) + " в блоклисте" +
             (bc.data.cached ? " (кэш)" : "") + "</span>";
           if ((bc.data.blocked || []).length) {
             h += '<div class="svc-muted">' + esc(bc.data.blocked.slice(0, 12).join(", ")) +

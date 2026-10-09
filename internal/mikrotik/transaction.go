@@ -39,10 +39,16 @@ const (
 // Если rollback прошёл частично, транзакция переходит в StateDegraded.
 type Transaction struct {
 	client  *Client
-	cfg     *config.Config
 	cache   *storage.Cache
 	service string
 	log     *slog.Logger
+
+	// Снапшот конфига на момент создания: Apply висит в сети минутами,
+	// читать живой конфиг там нельзя (гонка + list/comment, отличные
+	// от посчитанного diff). cfg целиком не храним специально.
+	list          string
+	comment       string
+	commentPrefix string
 
 	snapshotID string
 	state      TransactionState
@@ -64,13 +70,21 @@ func NewTransaction(
 		log = slog.Default()
 	}
 
+	cfg.RLock()
+	list := cfg.Firewall.AddressList
+	commentPrefix := cfg.Firewall.CommentPrefix
+	comment := addresslist.CommentFor(commentPrefix, service)
+	cfg.RUnlock()
+
 	return &Transaction{
-		client:  client,
-		cfg:     cfg,
-		cache:   cache,
-		service: service,
-		log:     log,
-		state:   StatePending,
+		client:        client,
+		cache:         cache,
+		service:       service,
+		log:           log,
+		list:          list,
+		comment:       comment,
+		commentPrefix: commentPrefix,
+		state:         StatePending,
 	}
 }
 
@@ -94,8 +108,8 @@ func (t *Transaction) Apply(
 	update []addresslist.Entry,
 	remove []addresslist.Entry,
 ) error {
-	list := t.cfg.Firewall.AddressList
-	comment := addresslist.CommentFor(t.cfg.Firewall.CommentPrefix, t.service)
+	list := t.list
+	comment := t.comment
 
 	addEntries, err := t.prepareAdd(add, list, comment)
 	if err != nil {
@@ -312,7 +326,7 @@ func (t *Transaction) prepareRemove(
 				entries, err := t.client.ListServiceEntries(
 					ctx,
 					list,
-					t.cfg.Firewall.CommentPrefix,
+					t.commentPrefix,
 					t.service,
 				)
 				if err != nil {

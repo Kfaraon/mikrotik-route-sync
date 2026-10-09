@@ -34,16 +34,20 @@ type BackupFile struct {
 }
 
 func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, error) {
-	// Lock-free: вызывающие держат чтение конфига сами (бот — секцией,
-	// веб — секцией serviceRows, CLI однопоточен).
+	// Снапшот читаемого под RLock, сеть — после (вызывающие блокировок
+	// не держат: бот — секциями, веб — секцией serviceRows, CLI один).
+	s.cfg.RLock()
 	list := s.cfg.Firewall.AddressList
 	commentPrefix := s.cfg.Firewall.CommentPrefix
+	schedule := s.cfg.EffectiveSchedule(name)
+	override := s.cfg.Overrides[name]
+	s.cfg.RUnlock()
 	info := &ServiceInfo{
 		Name:     name,
 		List:     list,
 		Comment:  addresslist.CommentFor(commentPrefix, name),
-		Schedule: s.cfg.EffectiveSchedule(name),
-		Override: s.cfg.Overrides[name],
+		Schedule: schedule,
+		Override: override,
 	}
 
 	entries, err := s.mt().ListServiceEntries(ctx, list, commentPrefix, name)
@@ -367,7 +371,9 @@ func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug
 }
 
 func (s *Syncer) ListServices() []string {
-	return s.cfg.Services
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
+	return append([]string(nil), s.cfg.Services...)
 }
 
 // UpdateServiceOverride меняет method и/или domains сервиса (scope Фазы 2:
@@ -382,9 +388,15 @@ func (s *Syncer) UpdateServiceOverride(ctx context.Context, name string, method 
 	}
 
 	// Только конфиг: serviceMu не трогаем (порядок cfgMu → serviceMu,
-	// обратного захвата нигде нет).
+	// обратного захвата нигде нет). Разблокировка явная до аудита/emit:
+	// с defer они висели бы под Lock на дисковом I/O логгера.
 	s.cfg.Lock()
-	defer s.cfg.Unlock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.cfg.Unlock()
+		}
+	}()
 
 	found := false
 	for _, p := range s.cfg.Services {
@@ -437,6 +449,8 @@ func (s *Syncer) UpdateServiceOverride(ctx context.Context, name string, method 
 		}
 		return config.ServiceOverride{}, fmt.Errorf("config not saved, override unchanged: %w", err)
 	}
+	s.cfg.Unlock()
+	unlocked = true
 
 	s.audit.LogConfigChange("", "core", map[string]string{
 		"service": name,

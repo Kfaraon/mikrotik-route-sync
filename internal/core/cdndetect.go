@@ -382,6 +382,8 @@ func (s *Syncer) ApplyCDNRecommendation(ctx context.Context, name string, adv *C
 
 // GetServiceOverride возвращает override сервиса (пустой, если нет).
 func (s *Syncer) GetServiceOverride(name string) config.ServiceOverride {
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
 	return s.cfg.Overrides[strings.ToLower(strings.TrimSpace(name))]
 }
 

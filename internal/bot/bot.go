@@ -112,8 +112,6 @@ func splitMessage(text string, chunk int) []string {
 }
 
 func (b *Bot) menu(id int64) {
-	b.syncer.RLockConfig()
-	defer b.syncer.RUnlockConfig()
 	rows := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📊 Статус", "cmd:status"),
@@ -134,17 +132,21 @@ func (b *Bot) menu(id int64) {
 }
 
 func (b *Bot) statusText(ctx context.Context) string {
+	// Прямые чтения конфига — коротким снапшотом; InfoService/ListServices
+	// самодостаточны (секции внутри), сеть — без блокировок.
 	b.syncer.RLockConfig()
-	defer b.syncer.RUnlockConfig()
+	fwList := b.syncer.Config().Firewall.AddressList
+	timezone := b.syncer.Config().Timezone
+	b.syncer.RUnlockConfig()
 	var sb strings.Builder
 	sb.WriteString("Статус (Firewall Address List):\n")
-	fmt.Fprintf(&sb, "  список: %s\n", b.syncer.Config().Firewall.AddressList)
+	fmt.Fprintf(&sb, "  список: %s\n", fwList)
 	fmt.Fprintf(&sb, "  аптайм: %s\n", notifier.FormatDur(time.Since(b.syncer.StartTime())))
 	last := b.syncer.LastSync()
 	if last.IsZero() {
 		sb.WriteString("  последняя синхронизация: ещё не выполнялась\n")
 	} else {
-		loc := notifier.LoadLocation(b.syncer.Config().Timezone)
+		loc := notifier.LoadLocation(timezone)
 		fmt.Fprintf(&sb, "  последняя синхронизация: %s\n",
 			last.In(loc).Format("02.01.2006 15:04:05"))
 	}

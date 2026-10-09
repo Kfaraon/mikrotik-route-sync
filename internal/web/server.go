@@ -138,14 +138,14 @@ var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return sameOrigin(r, r.Header.Get("Origin"))
+		return checkOriginHost(r, r.Header.Get("Origin"))
 	},
 }
 
-// sameOrigin строго сравнивает Origin с Host запроса: префиксные совпадения
-// вида http://host.evil.com отвергаются. Пустой Origin — не браузер
-// (программный клиент вроде curl), пропускаем.
-func sameOrigin(r *http.Request, origin string) bool {
+// checkOriginHost строго сравнивает Origin с Host (без префиксных
+// совпадений вида http://host.evil.com). Пустой Origin — не браузер.
+// Схему здесь не смотрим: её проверяет Server.handleWS до апгрейда.
+func checkOriginHost(r *http.Request, origin string) bool {
 	if origin == "" {
 		return true
 	}
@@ -154,6 +154,38 @@ func sameOrigin(r *http.Request, origin string) bool {
 		return false
 	}
 	return strings.EqualFold(u.Host, r.Host)
+}
+
+// sameOrigin — то же плюс сверка схемы (за TLS-терминирующим прокси
+// смотрим X-Forwarded-Proto от доверенного).
+func (s *Server) sameOrigin(r *http.Request, origin string) bool {
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if !strings.EqualFold(u.Host, r.Host) {
+		return false
+	}
+	wantHTTPS := s.httpsNow(r)
+	if u.Scheme == "https" && !wantHTTPS {
+		return false
+	}
+	if u.Scheme == "http" && wantHTTPS {
+		return false
+	}
+	return true
+}
+
+// handleWS — апгрейд с проверкой Origin (включая схему), затем хаб.
+func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	if !s.sameOrigin(r, r.Header.Get("Origin")) {
+		http.Error(w, "cross-origin websocket rejected", http.StatusForbidden)
+		return
+	}
+	s.hub.handleWS(w, r)
 }
 
 func (h *Hub) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -521,6 +553,10 @@ type Server struct {
 	mtAt         time.Time
 	mtRefreshing bool
 	pingFn       func(context.Context) error // подмена в тестах
+
+	// Дедупликация тяжёлых refresh-запросов (зеркала качают десятки МБ).
+	refreshMu sync.Mutex
+	refreshOn map[string]bool
 }
 
 func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Server, error) {
@@ -529,8 +565,14 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	}
 
 	funcs := template.FuncMap{
-		"effectiveSchedule": cfg.EffectiveSchedule,
-		"maskSecret":        Mask,
+		// Обёртка с чтением: прямой вызов в шаблоне без блокировки —
+		// concurrent map iteration при параллельной мутации.
+		"effectiveSchedule": func(service string) string {
+			cfg.RLock()
+			defer cfg.RUnlock()
+			return cfg.EffectiveSchedule(service)
+		},
+		"maskSecret": Mask,
 	}
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(webFS, "templates/*.html")
 	if err != nil {
@@ -568,7 +610,9 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 
 	router := chi.NewRouter()
 	router.Use(middleware.Recoverer)
-	router.Use(middleware.Compress(5))
+	// БЕЗ глобального Compress: /ws апгрейд под gzip держится на
+	// недокументированном совпадении (см. handleWS). Сжатие — точечно
+	// на страницах, API и статике ниже.
 	router.Use(s.securityHeaders)
 	router.Use(s.cidrMiddleware)
 	router.Use(s.rateLimitMiddleware)
@@ -591,6 +635,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	router.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.Use(s.csrfMiddleware)
+		r.Use(middleware.Compress(5))
 
 		r.Get("/status", s.apiStatus)
 		r.Get("/progress", s.apiProgress)
@@ -614,10 +659,10 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Get("/history", s.apiHistory)
 		r.Get("/address-list", s.apiAddressList)
 		r.Get("/address-list/{service}", s.apiServiceAddressList)
-		r.Get("/ws", s.hub.handleWS)
+		// /ws — отдельно вне Compress (см. ниже).
 	})
 
-	pages := router.With(s.authMiddleware, noCache)
+	pages := router.With(s.authMiddleware, middleware.Compress(5), noCache)
 	pages.Get("/", s.pageDashboard)
 	pages.Get("/services", s.pageServices)
 	pages.Get("/address-list", s.pageAddressList)
@@ -638,7 +683,11 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	})
 
 	static, _ := fs.Sub(webFS, "static")
-	router.Handle("/static/*", noCache(http.StripPrefix("/static/", http.FileServer(http.FS(static)))))
+	router.With(middleware.Compress(5)).Handle("/static/*", noCache(http.StripPrefix("/static/", http.FileServer(http.FS(static)))))
+
+	// WebSocket отдельно от сжатия: gzip-обёртка и Hijack сочетаются лишь
+	// случайно (chi#compress). Auth сохранён, Origin проверяет handleWS.
+	router.With(s.authMiddleware).Get("/api/v1/ws", s.handleWS)
 
 	s.httpSrv = &http.Server{
 		Addr:              cfg.Web.Listen,
@@ -774,16 +823,11 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		id, sess := s.sessions.reuseOrCreate(user)
-		http.SetCookie(w, &http.Cookie{
-			Name:     "mrs_session",
-			Value:    id,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   s.httpsNow(r),
-			SameSite: http.SameSiteStrictMode,
-			Expires:  sess.expires,
-		})
+		// Cookie при Basic НЕ выдаём (устранение fixation): браузер и curl
+		// шлют Basic сами на каждый запрос, ветка basicAuth выше covered.
+		// Сессию учитываем для дедупликации (reuseOrCreate), cookie-ветка
+		// ниже оставлена для совместимости (старые сессии).
+		_, sess := s.sessions.reuseOrCreate(user)
 		next.ServeHTTP(w, withBasicAuth(r, sess))
 	})
 }
@@ -833,8 +877,18 @@ func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 		if si := sessionFrom(r); si != nil && si.basicAuth {
 			// Программные клиенты (curl) шлют Basic без cookie и без Origin.
 			// Браузерный кросс-сайт всегда добавляет Origin (запрещённый
-			// заголовок, подменить из JS нельзя) — чужой режем.
-			if origin := r.Header.Get("Origin"); !sameOrigin(r, origin) {
+			// заголовок, подменить из JS нельзя) — чужой режем. Пустой
+			// Origin бывает и у браузеров (form POST/sandbox, вырезан
+			// прокси) — тогда смотрим Referer; нет обоих — программный.
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				if ref := r.Header.Get("Referer"); ref != "" && !s.sameOrigin(r, ref) {
+					s.log.Warn("cross-origin basic-auth request rejected (referer)", "remote", r.RemoteAddr)
+					http.Error(w, `{"ok":false,"error":"cross-origin request rejected"}`, http.StatusForbidden)
+					return
+				}
+				s.log.Debug("basic-auth without origin/referer (programmatic?)", "remote", r.RemoteAddr)
+			} else if !s.sameOrigin(r, origin) {
 				s.log.Warn("cross-origin basic-auth request rejected", "remote", r.RemoteAddr, "origin", origin)
 				http.Error(w, `{"ok":false,"error":"cross-origin request rejected"}`, http.StatusForbidden)
 				return
@@ -1406,10 +1460,9 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	// Состояние роутера — из кэша с TTL (mikrotikHealth): синхронный ping
 	// на каждый полл вкладок держал бы коннекты по 3с.
 	mtOK, mtKnown := s.mikrotikHealth(r.Context())
-	// Map'ы маршалятся внутри writeOK — держим чтение до конца записи.
+	// Map'ы маршалятся в байты под RLock, в сокет — после (см. apiSchedules).
 	s.cfg.RLock()
-	defer s.cfg.RUnlock()
-	writeOK(w, map[string]any{
+	raw, err := json.Marshal(apiEnvelope{OK: true, Data: map[string]any{
 		"version":     version.Version,
 		"uptime":      time.Since(s.syncer.StartTime()).String(),
 		"last_sync":   s.syncer.LastSync(),
@@ -1417,7 +1470,15 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		"services":    append([]string(nil), s.cfg.Services...),
 		"degraded":    s.syncer.DegradedServices(),
 		"schedules":   s.cfg.Schedules,
-	})
+	}})
+	s.cfg.RUnlock()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 func (s *Server) apiServices(w http.ResponseWriter, r *http.Request) {
@@ -1516,6 +1577,10 @@ const maxServiceDomains = 5000
 // (советник: только кандидаты, запись — обычным PUT /services/{name}).
 func (s *Server) apiSuggestDomains(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if !config.ValidateServiceName(strings.ToLower(name)) {
+		writeErr(w, http.StatusBadRequest, "invalid service name")
+		return
+	}
 	var req struct {
 		Scans int `json:"scans"`
 	}
@@ -1527,6 +1592,10 @@ func (s *Server) apiSuggestDomains(w http.ResponseWriter, r *http.Request) {
 // Отвечает diff'ом: UI предлагает dry-run перед применением маршрутов.
 func (s *Server) apiRefreshPreset(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if !config.ValidateServiceName(strings.ToLower(name)) {
+		writeErr(w, http.StatusBadRequest, "invalid service name")
+		return
+	}
 	var req struct {
 		Preset string `json:"preset"`
 		Force  bool   `json:"force"`
@@ -1608,6 +1677,28 @@ func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = "all"
 	}
+	if source != "all" && source != "ru" && source != "upstream" {
+		writeErr(w, http.StatusBadRequest, "source must be ru|upstream|all")
+		return
+	}
+	// Дедуплика: повторный запрос того же источника, пока идёт первый, —
+	// сразу 429 вместо второй докачки десятков мегабайт.
+	s.refreshMu.Lock()
+	if s.refreshOn == nil {
+		s.refreshOn = map[string]bool{}
+	}
+	if s.refreshOn[source] {
+		s.refreshMu.Unlock()
+		writeErr(w, http.StatusTooManyRequests, "refresh of "+source+" already running")
+		return
+	}
+	s.refreshOn[source] = true
+	s.refreshMu.Unlock()
+	defer func() {
+		s.refreshMu.Lock()
+		delete(s.refreshOn, source)
+		s.refreshMu.Unlock()
+	}()
 	out := map[string]any{}
 	if source == "all" || source == "ru" {
 		st, err := presets.RefreshMirror(r.Context(), dir)
@@ -1627,10 +1718,6 @@ func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
 			s.log.Warn("upstream index rebuild failed", "err", err)
 		}
 		out["upstream"] = st
-	}
-	if len(out) == 0 {
-		writeErr(w, http.StatusBadRequest, "source must be ru|upstream|all")
-		return
 	}
 	s.auditChange(r, "api", "presets_refresh", fmt.Sprintf("%v", out))
 	writeOK(w, out)
@@ -1670,6 +1757,10 @@ func (s *Server) apiPresetsMatch(w http.ResponseWriter, r *http.Request) {
 // Потоковое чтение зеркала (1.7M строк в память не грузим), итог кэшируем.
 func (s *Server) apiBlockcheck(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if !config.ValidateServiceName(strings.ToLower(name)) {
+		writeErr(w, http.StatusBadRequest, "invalid service name")
+		return
+	}
 	s.cfg.RLock()
 	ov, _ := s.cfg.Overrides[name]
 	inServices := false
@@ -1840,18 +1931,29 @@ func (s *Server) apiDryRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiSchedules(w http.ResponseWriter, r *http.Request) {
+	// Маршалим под RLock в байты, в сокет — после: зависший клиент
+	// не должен держать чтение конфига (писатели голодают).
 	s.cfg.RLock()
-	defer s.cfg.RUnlock()
-	eff := map[string]string{}
-	for _, svc := range s.cfg.Services {
-		eff[svc] = s.cfg.EffectiveSchedule(svc)
+	raw, err := json.Marshal(apiEnvelope{OK: true, Data: map[string]any{
+		"global":   s.cfg.Schedules.Global,
+		"groups":   s.cfg.Schedules.Groups,
+		"services": s.cfg.Schedules.Services,
+		"effective": func() map[string]string {
+			eff := map[string]string{}
+			for _, svc := range s.cfg.Services {
+				eff[svc] = s.cfg.EffectiveSchedule(svc)
+			}
+			return eff
+		}(),
+	}})
+	s.cfg.RUnlock()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	writeOK(w, map[string]any{
-		"global":    s.cfg.Schedules.Global,
-		"groups":    s.cfg.Schedules.Groups,
-		"services":  s.cfg.Schedules.Services,
-		"effective": eff,
-	})
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 func (s *Server) apiUpdateSchedule(w http.ResponseWriter, r *http.Request) {
@@ -2213,8 +2315,16 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Применение под записью с откатом старых значений: ранний return
-	// оставлял бы полуприменённый конфиг (память != файл).
+	// оставлял бы полуприменённый конфиг (память != файл). Страховка от
+	// паники в reflect-пути: мьютекс не должен остаться захваченным.
+	// Разблокировка явная до applyRuntimeChanges (он берёт RLock сам).
 	s.cfg.Lock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.cfg.Unlock()
+		}
+	}()
 	type backup struct {
 		key string
 		old any
@@ -2242,11 +2352,11 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		for i := len(backed) - 1; i >= 0; i-- {
 			_ = s.cfg.Set(backed[i].key, backed[i].old)
 		}
-		s.cfg.Unlock()
 		writeErr(w, http.StatusInternalServerError, "не применено, откачено: "+applyErr)
 		return
 	}
 	s.cfg.Unlock()
+	unlocked = true
 
 	s.applyRuntimeChanges()
 

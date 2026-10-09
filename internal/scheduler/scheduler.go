@@ -68,19 +68,26 @@ func (s *Scheduler) StartNow() {
 
 // ИЗМЕНЕНО: добавлен параметр quiet bool
 func (s *Scheduler) startLocked(quiet bool) {
-	loc, err := time.LoadLocation(s.cfg.Timezone)
+	// Снапшот читаемого: дальше кроны/куча без блокировок.
+	s.cfg.RLock()
+	timezone := s.cfg.Timezone
+	limit := s.cfg.Scheduler.MaxConcurrent
+	parallel := s.cfg.Scheduler.Parallel
+	purgeSpec := s.cfg.Scheduler.CachePurge
+	reloadInterval := s.cfg.Scheduler.ReloadInterval
+	s.cfg.RUnlock()
+	loc, err := time.LoadLocation(timezone)
 	if err != nil {
 		loc = time.UTC
-		s.log.Warn("invalid timezone, using UTC", "timezone", s.cfg.Timezone)
+		s.log.Warn("invalid timezone, using UTC", "timezone", timezone)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 
-	limit := s.cfg.Scheduler.MaxConcurrent
 	if limit <= 0 {
 		limit = 1
 	}
-	if !s.cfg.Scheduler.Parallel {
+	if !parallel {
 		limit = 1
 	}
 	s.sem = make(chan struct{}, limit)
@@ -100,7 +107,7 @@ func (s *Scheduler) startLocked(quiet bool) {
 	s.wg.Add(1)
 	go s.intervalRunner(ctx)
 
-	if d, ok := purgeInterval(s.cfg.Scheduler.CachePurge); ok {
+	if d, ok := purgeInterval(purgeSpec); ok {
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
@@ -119,7 +126,7 @@ func (s *Scheduler) startLocked(quiet bool) {
 		}()
 	}
 
-	if d := s.cfg.Scheduler.ReloadInterval.Duration(); d > 0 {
+	if d := reloadInterval.Duration(); d > 0 {
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
