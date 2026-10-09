@@ -893,6 +893,14 @@ func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 			// заголовок, подменить из JS нельзя) — чужой режем. Пустой
 			// Origin бывает и у браузеров (form POST/sandbox, вырезан
 			// прокси) — тогда смотрим Referer; нет обоих — программный.
+			// Дополнительно (H13): браузерный Sec-Fetch-Site: cross-site
+			// режем всегда — его нельзя подделать из JS, и он срабатывает
+			// даже когда Origin/Referer вырезаны прокси.
+			if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+				s.log.Warn("cross-site basic-auth request rejected (sec-fetch-site)", "remote", r.RemoteAddr)
+				http.Error(w, `{"ok":false,"error":"cross-origin request rejected"}`, http.StatusForbidden)
+				return
+			}
 			origin := r.Header.Get("Origin")
 			if origin == "" {
 				if ref := r.Header.Get("Referer"); ref != "" && !s.sameOrigin(r, ref) {

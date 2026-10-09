@@ -166,6 +166,41 @@ func doAuthJSON(c *http.Client, base, path string, payload any) (*http.Response,
 	return resp, string(b)
 }
 
+// H13: Basic-auth state-changing запрос с Sec-Fetch-Site: cross-site режется
+// даже при пустых Origin/Referer (заголовок ставит только браузер).
+func TestBasicAuthCrossSiteSecFetchRejected(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/services/sync", strings.NewReader("{}"))
+	req.SetBasicAuth("admin", "secret-pass")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-site basic-auth: want 403, got %d", resp.StatusCode)
+	}
+
+	// same-origin — проходит дальше по конвейеру (не 403).
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/services/sync", strings.NewReader("{}"))
+	req2.SetBasicAuth("admin", "secret-pass")
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Sec-Fetch-Site", "same-origin")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	if resp2.StatusCode == http.StatusForbidden {
+		t.Fatalf("same-origin basic-auth wrongly rejected: %d", resp2.StatusCode)
+	}
+}
+
 func TestHealthzNoAuth(t *testing.T) {
 	srv, _ := newTestServer(t)
 	ts := httptest.NewServer(srv)
