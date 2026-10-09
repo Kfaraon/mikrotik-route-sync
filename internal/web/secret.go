@@ -26,12 +26,29 @@ var secretFields = map[string]struct{}{
 	"external.akamai_api_key_file": {},
 }
 
-// IsSecret возвращает true, если ключ содержит секретное значение.
-// Сравнение регистронезависимое, точки нормализованы.
-func IsSecret(key string) bool {
+// secretFieldsNorm — secretFields с нормализованными ключами (см.
+// normalizeSecretKey). Строится один раз при инициализации.
+var secretFieldsNorm = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(secretFields))
+	for k := range secretFields {
+		m[normalizeSecretKey(k)] = struct{}{}
+	}
+	return m
+}()
+
+// normalizeSecretKey приводит ключ к сравнимому виду: нижний регистр, без
+// крайних пробелов, `_` и `.` взаимозаменяемы. Реестр и запрос нормализуются
+// ОДИНАКОВО — иначе `IsSecret("telegram.bot_token")` не находил ключ, потому
+// что заменялась только одна сторона (H7).
+func normalizeSecretKey(key string) string {
 	k := strings.ToLower(strings.TrimSpace(key))
-	k = strings.ReplaceAll(k, "_", ".")
-	_, ok := secretFields[k]
+	return strings.ReplaceAll(k, "_", ".")
+}
+
+// IsSecret возвращает true, если ключ содержит секретное значение.
+// Сравнение регистронезависимое, разделители `_`/`.` нормализованы.
+func IsSecret(key string) bool {
+	_, ok := secretFieldsNorm[normalizeSecretKey(key)]
 	return ok
 }
 

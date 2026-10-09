@@ -218,7 +218,16 @@ func (r *Resolver) lookupTXT(ctx context.Context, name string) ([]string, error)
 // lookupIP резолвит домен, используя указанный DNS-резолвер.
 func (r *Resolver) lookupIP(ctx context.Context, domain string) ([]net.IP, error) {
 	if r.dnsResolver == "" && len(r.fallbacks) == 0 {
-		return net.LookupIP(domain)
+		// H8: без ctx системный резолв не отменялся/не имел дедлайна.
+		addrs, err := net.DefaultResolver.LookupIPAddr(ctx, domain)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]net.IP, 0, len(addrs))
+		for _, a := range addrs {
+			out = append(out, a.IP)
+		}
+		return out, nil
 	}
 
 	addr, err := lookupWithFallback(ctx, r.resolvers(), func(ctx context.Context, res *net.Resolver) ([]net.IPAddr, error) {

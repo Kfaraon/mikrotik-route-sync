@@ -9,6 +9,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -1050,10 +1051,17 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	data["Timezone"] = s.cfg.Timezone
 	s.cfg.RUnlock()
 	data["DotClass"], data["DotTitle"] = s.dotState(r)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
+	// H11: рендерим в буфер — при ошибке шаблона ответ ещё не отправлен,
+	// http.Error вернёт честный 500 (а не 200 с обрывком).
+	var buf bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		s.log.Error("template render error", "template", name, "err", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := buf.WriteTo(w); err != nil {
+		s.log.Warn("template write error", "template", name, "err", err)
 	}
 }
 

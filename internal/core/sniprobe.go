@@ -219,11 +219,16 @@ func (s *Syncer) maybeAlertSNI(ctx context.Context, name string, vds []*SNIVerdi
 		s.sniMu.Unlock()
 		return
 	}
-	s.sniAlerted[name] = now
 	s.sniMu.Unlock()
+	// H10: метку ставим ТОЛЬКО после успешной отправки — иначе сбой Send
+	// подавлял бы повторный алерт на сутки (проблема оставалась незамеченной).
 	if n := s.getNotify(); n != nil {
 		if err := n.Send(context.WithoutCancel(ctx), sniAlertMessage(name, sniFailedDomains(vds))); err != nil {
 			s.log.Warn("telegram sni alert not delivered", "service", name, "err", err)
+			return
 		}
+		s.sniMu.Lock()
+		s.sniAlerted[name] = now
+		s.sniMu.Unlock()
 	}
 }

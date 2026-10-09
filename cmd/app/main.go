@@ -781,6 +781,7 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 	cfg.RLock()
 	spec := cfg.Presets.UpdateSchedule
 	cachePath := cfg.CachePath
+	timezone := cfg.Timezone
 	cfg.RUnlock()
 	expr, err := presets.CronExpr(spec)
 	if err != nil {
@@ -797,9 +798,9 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 	}
 	presets.DiskDir = dir
 	// Зона — из конфига (как у планировщика), иначе daily тикает по UTC.
-	loc, err := time.LoadLocation(cfg.Timezone)
+	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		log.Warn("invalid timezone, using UTC for presets mirror", "timezone", cfg.Timezone)
+		log.Warn("invalid timezone, using UTC for presets mirror", "timezone", timezone)
 		loc = time.UTC
 	}
 	c := cron.New(cron.WithLocation(loc))
@@ -907,7 +908,12 @@ func daemonCmd() *cobra.Command {
 			}
 
 			errCh := make(chan error, 3)
-			if cfg.Web.Enabled {
+			// Снапшот под RLock: SIGHUP уже мог заменить конфиг (H12).
+			cfg.RLock()
+			webEnabled := cfg.Web.Enabled
+			servicesSnapshot := append([]string(nil), cfg.Services...)
+			cfg.RUnlock()
+			if webEnabled {
 				srv, err := webui.NewServer(cfg, s, log)
 				if err != nil {
 					return fmt.Errorf("web init: %w", err)
@@ -920,7 +926,7 @@ func daemonCmd() *cobra.Command {
 				log.Error("failed to start telegram bot", "err", err)
 			}
 
-			log.Info("daemon started", "version", version.Version, "services", cfg.Services)
+			log.Info("daemon started", "version", version.Version, "services", servicesSnapshot)
 
 			select {
 			case <-ctx.Done():

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net"
@@ -101,6 +102,24 @@ suggest:
 		return errors.New("mikrotik down in tests")
 	}
 	return srv, cfg
+}
+
+// H11: ошибка шаблона не должна отдавать 200 с обрывком — рендер в буфер,
+// затем честный 500. Подменяем шаблон на битый (несуществующая функция).
+func TestRenderTemplateErrorIs500(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.tmpl = template.Must(template.New("broken").Parse(`{{call .NotAFunc}}`))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	srv.render(rec, req, "broken", map[string]any{})
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "NotAFunc") {
+		t.Fatalf("partial template output leaked: %q", rec.Body.String())
+	}
 }
 
 func doAuth(c *http.Client, base, method, path, csrf string, body io.Reader) (*http.Response, string) {

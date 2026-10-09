@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 func openTestCache(t *testing.T) *Cache {
@@ -66,6 +68,54 @@ func TestSnapshotIsolation(t *testing.T) {
 	ins, _ := c.ListSnapshots("instagram")
 	if len(ins) != 1 {
 		t.Fatalf("service isolation broken: %+v", ins)
+	}
+}
+
+// E6/O4: метаданные снапшота читаются из отдельного бакета, без разбора
+// тела. Проверяем, что создание пишет метаиндекс и ListSnapshots отдаёт
+// корректные CreatedAt/Count.
+func TestSnapshotMetaIndex(t *testing.T) {
+	c := openTestCache(t)
+	id, err := c.CreateSnapshot("svc", []string{"1.1.1.0/24", "2.2.2.0/24", "3.3.3.0/24"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	infos, err := c.ListSnapshots("svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != id || infos[0].Count != 3 || infos[0].CreatedAt.IsZero() {
+		t.Fatalf("meta index mismatch: %+v", infos)
+	}
+	// Удаление снапшота убирает и метазапись (иначе список рос бы призраками).
+	if err := c.DeleteSnapshot("svc", id); err != nil {
+		t.Fatal(err)
+	}
+	if infos, _ := c.ListSnapshots("svc"); len(infos) != 0 {
+		t.Fatalf("meta left after delete: %+v", infos)
+	}
+}
+
+// Fallback: снапшот без метазаписи (созданный старой версией) всё равно
+// попадает в список с метаданными из тела.
+func TestListSnapshotsLegacyFallback(t *testing.T) {
+	c := openTestCache(t)
+	key := "legacy:1700000000000000000"
+	body := `{"created_at":"2023-11-14T22:13:20Z","prefixes":["9.9.9.0/24"]}`
+	c.mu.Lock()
+	err := c.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSnapshots).Put([]byte(key), []byte(body))
+	})
+	c.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	infos, err := c.ListSnapshots("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].Count != 1 || infos[0].ID != "1700000000000000000" {
+		t.Fatalf("legacy fallback failed: %+v", infos)
 	}
 }
 

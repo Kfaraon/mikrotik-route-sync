@@ -112,3 +112,16 @@ func TestClassifyOverridePlusSeparated(t *testing.T) {
 		t.Fatalf("expected [dynamic cdn], got %v", got.Methods)
 	}
 }
+
+// H9: override-метод не должен терять распознавание IP/ASN-литерала —
+// иначе `8.8.8.8` + method: whois уходил в whois с пустым вводом.
+func TestClassifyOverrideKeepsLiterals(t *testing.T) {
+	ip := Classify("8.8.8.8", "whois")
+	if !reflect.DeepEqual(ip.IPs, []string{"8.8.8.8"}) || !reflect.DeepEqual(ip.Methods, []string{"whois"}) {
+		t.Fatalf("override IP literal lost: %+v", ip)
+	}
+	asn := Classify("as13335", "cdn")
+	if asn.ASN != "AS13335" {
+		t.Fatalf("override ASN literal lost: %+v", asn)
+	}
+}

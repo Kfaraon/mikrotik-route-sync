@@ -96,6 +96,13 @@ func Classify(service, overrideMethod string) Result {
 			res.StaticURLs = k.static
 			res.ASN = k.asn
 		}
+		// H9: override-метод не должен терять распознавание литералов.
+		// Иначе `8.8.8.8` + `method: whois` получал пустой ввод и падал в whois.
+		if asn := parseASNLiteral(s); asn != "" {
+			res.ASN = asn
+		} else if _, err := netip.ParseAddr(s); err == nil {
+			res.IPs = []string{s}
+		}
 		return res
 	}
 

@@ -21,6 +21,7 @@ var (
 	bucketPrefixes     = []byte("prefixes_by_asn")
 	bucketCache        = []byte("cache")
 	bucketSnapshots    = []byte("address_list_snapshots")
+	bucketSnapshotMeta = []byte("address_list_snapshot_meta")
 	bucketHistory      = []byte("history")
 	bucketTransactions = []byte("transactions")
 )
@@ -70,7 +71,7 @@ func Open(path string) (*Cache, error) {
 	err = db.Update(func(tx *bolt.Tx) error {
 		buckets := [][]byte{
 			bucketASN, bucketPrefixes, bucketCache,
-			bucketSnapshots, bucketHistory, bucketTransactions,
+			bucketSnapshots, bucketSnapshotMeta, bucketHistory, bucketTransactions,
 		}
 		for _, b := range buckets {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
@@ -296,6 +297,16 @@ func (c *Cache) CreateSnapshot(service string, prefixes []string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
+	// Компактная метаинформация: ListSnapshots читает только её, без разбора
+	// всего тела снапшота (E6/O4).
+	meta, err := json.Marshal(SnapshotInfo{
+		Service:   service,
+		CreatedAt: env.CreatedAt,
+		Count:     len(prefixes),
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal meta: %w", err)
+	}
 
 	snapshotID := fmt.Sprintf("%d", time.Now().UnixNano())
 	key := fmt.Sprintf("%s:%s", service, snapshotID)
@@ -308,7 +319,16 @@ func (c *Cache) CreateSnapshot(service string, prefixes []string) (string, error
 		if b == nil {
 			return fmt.Errorf("snapshots bucket not found")
 		}
-		return b.Put([]byte(key), data)
+		if err := b.Put([]byte(key), data); err != nil {
+			return err
+		}
+		mb := tx.Bucket(bucketSnapshotMeta)
+		if mb != nil {
+			if err := mb.Put([]byte(key), meta); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return "", err
@@ -317,6 +337,8 @@ func (c *Cache) CreateSnapshot(service string, prefixes []string) (string, error
 }
 
 // ListSnapshots возвращает список снапшотов для сервиса (новые первыми).
+// Метаданные берутся из отдельного бакета: тело снапшота не разворачивается.
+// Для старых записей без метаданных (до этой версии) — fallback на разбор тела.
 func (c *Cache) ListSnapshots(service string) ([]SnapshotInfo, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -327,11 +349,25 @@ func (c *Cache) ListSnapshots(service string) ([]SnapshotInfo, error) {
 		if b == nil {
 			return nil
 		}
+		mb := tx.Bucket(bucketSnapshotMeta)
 		prefix := []byte(service + ":")
 		cursor := b.Cursor()
 		for key, val := cursor.Seek(prefix); key != nil && bytes.HasPrefix(key, prefix); key, val = cursor.Next() {
 			snapshotID := string(key[len(prefix):])
 			info := SnapshotInfo{ID: snapshotID, Service: service}
+			// Быстрый путь: компактная запись метаданных.
+			if mb != nil {
+				if raw := mb.Get(key); raw != nil {
+					var mi SnapshotInfo
+					if json.Unmarshal(raw, &mi) == nil {
+						mi.ID = snapshotID
+						mi.Service = service
+						snapshots = append(snapshots, mi)
+						continue
+					}
+				}
+			}
+			// Медленный путь: снапшот, созданный до появления метаиндекса.
 			var env snapshotEnvelope
 			if err := json.Unmarshal(val, &env); err == nil {
 				info.CreatedAt = env.CreatedAt
@@ -395,6 +431,14 @@ func (c *Cache) DeleteSnapshot(service, snapshotID string) error {
 		if b == nil {
 			return fmt.Errorf("snapshots bucket not found")
 		}
-		return b.Delete([]byte(key))
+		if err := b.Delete([]byte(key)); err != nil {
+			return err
+		}
+		if mb := tx.Bucket(bucketSnapshotMeta); mb != nil {
+			if err := mb.Delete([]byte(key)); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
 )
 
 func testVerifier(t *testing.T, ts *httptest.Server) *SNIVerifier {
@@ -121,3 +123,51 @@ func TestPrimarySNIFailed(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+// H10: метка троттлинга SNI-алерта ставится только после успешной отправки,
+// иначе сбой Send подавляет повторный алерт на сутки.
+func TestSNIAlertMarksOnlyAfterSuccess(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	n := &flakyNotifier{failFirst: true}
+	s.SetNotifier(n)
+	ctx := context.Background()
+	vds := []*SNIVerdict{{Domain: "x.net", Checked: 1, OK: 0, Failed: []string{"1.1.1.1"}}}
+
+	// Первая попытка — Send падает: метка НЕ должна быть поставлена.
+	s.maybeAlertSNI(ctx, "x.net", vds)
+	if _, ok := s.sniAlerted["x.net"]; ok {
+		t.Fatal("alert marked despite send failure")
+	}
+	// Вторая — Send успешен: метка поставлена.
+	s.maybeAlertSNI(ctx, "x.net", vds)
+	if _, ok := s.sniAlerted["x.net"]; !ok {
+		t.Fatal("alert not marked after success")
+	}
+	// Третья — троттлинг: Send больше не вызывается.
+	before := n.calls
+	s.maybeAlertSNI(ctx, "x.net", vds)
+	if n.calls != before {
+		t.Fatalf("throttle broken: calls=%d", n.calls)
+	}
+}
+
+// flakyNotifier — Send падает при failFirst, затем считает вызовы.
+type flakyNotifier struct {
+	failFirst bool
+	sent      bool
+	calls     int
+}
+
+func (f *flakyNotifier) Send(context.Context, string) error {
+	f.calls++
+	if f.failFirst && !f.sent {
+		f.sent = true
+		return fmt.Errorf("send failed")
+	}
+	return nil
+}
+func (f *flakyNotifier) SyncStart(context.Context, []string, string, string) error { return nil }
+func (f *flakyNotifier) SyncDone(context.Context, []notifier.SyncResult, any, bool) error {
+	return nil
+}
+func (f *flakyNotifier) Error(context.Context, string, error) error { return nil }
