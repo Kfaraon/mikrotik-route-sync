@@ -42,11 +42,25 @@ type PrefixCache interface {
 	SetPrefixes(asn int, prefixes []string, ttl time.Duration) error
 }
 
+// allowedByInclude проверяет include_only с семантикой вложенности (как
+// валидатор, aggregator.ContainsPrefix): префикс допускается, если он
+// полностью содержится хотя бы в одном include_only. Точного совпадения
+// недостаточно — иначе include 1.2.3.0/24 отбрасывал бы 1.2.3.0/25 у
+// коллектора, хотя валидатор его пропускает (PROMPT II.1).
+func allowedByInclude(p netip.Prefix, include []netip.Prefix) bool {
+	for _, in := range include {
+		if in.Bits() <= p.Bits() && in.Contains(p.Addr()) {
+			return true
+		}
+	}
+	return false
+}
+
 // filterPrefixes применяет exclude/include_only фильтры к набору префиксов.
 func filterPrefixes(in []netip.Prefix, opts Options) []netip.Prefix {
 	excludeSet := parsePrefixSet(opts.Exclude)
 	includeOnly := len(opts.IncludeOnly) > 0
-	includeSet := parsePrefixSet(opts.IncludeOnly)
+	include := parsePrefixList(opts.IncludeOnly)
 
 	out := make([]netip.Prefix, 0, len(in))
 	for _, p := range in {
@@ -54,10 +68,8 @@ func filterPrefixes(in []netip.Prefix, opts Options) []netip.Prefix {
 		if _, ok := excludeSet[p]; ok {
 			continue
 		}
-		if includeOnly {
-			if _, ok := includeSet[p]; !ok {
-				continue
-			}
+		if includeOnly && !allowedByInclude(p, include) {
+			continue
 		}
 		out = append(out, p)
 	}
@@ -72,6 +84,18 @@ func parsePrefixSet(raw []string) map[netip.Prefix]struct{} {
 		}
 	}
 	return set
+}
+
+// parsePrefixList — те же валидные IPv4-префиксы, но списком (для проверки
+// вложенности без выделения map).
+func parsePrefixList(raw []string) []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(raw))
+	for _, s := range raw {
+		if p, err := netip.ParsePrefix(s); err == nil && p.Addr().Is4() {
+			out = append(out, p.Masked())
+		}
+	}
+	return out
 }
 
 // parsePrefixLines конвертирует строки вида "1.2.3.0/24" в []netip.Prefix.

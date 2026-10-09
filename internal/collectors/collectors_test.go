@@ -38,6 +38,25 @@ func TestFilterIncludeOnly(t *testing.T) {
 	}
 }
 
+// H3: include_only должен пропускать вложенные префиксы (семантика та же,
+// что у валидатора через aggregator.ContainsPrefix), а не только точные.
+func TestFilterIncludeOnlyNested(t *testing.T) {
+	in := []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/25"), // вложен в 1.2.3.0/24
+		netip.MustParsePrefix("1.2.3.0/24"), // равен включению
+		netip.MustParsePrefix("1.2.4.0/24"), // вне включения
+	}
+	out := filterPrefixes(in, Options{IncludeOnly: []string{"1.2.3.0/24"}})
+	if len(out) != 2 {
+		t.Fatalf("nested include_only: want 2, got %v", out)
+	}
+	for _, p := range out {
+		if p.String() == "1.2.4.0/24" {
+			t.Fatalf("out-of-include prefix kept: %v", out)
+		}
+	}
+}
+
 func TestRegistryUnknownMethod(t *testing.T) {
 	r := NewRegistry(&Deps{})
 	if _, err := r.Build("bogus", &Params{Service: "x"}); err == nil {

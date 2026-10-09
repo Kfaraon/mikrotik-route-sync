@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
@@ -28,6 +29,17 @@ type Scheduler struct {
 	sem     chan struct{}
 	started bool
 
+	// semPub — публикация текущего семафора для dispatch без s.mu: иначе
+	// Reload (держит s.mu) → stopLocked (ждёт cron.Stop) → dispatch (ждёт
+	// s.mu) образовывали инверсию блокировок со ступором до 10 с.
+	semPub atomic.Value // chan struct{}
+
+	// runMu/runActive синхронизируют wg.Add (dispatch) с wg.Wait (Stop)
+	// отдельно от s.mu: Add при нулевом счётчике, стартовавший после Wait,
+	// — известная гонка ("WaitGroup misuse"). s.mu для этого не годится:
+	// его держит Reload, ожидая завершения cron-задач.
+	runMu     sync.Mutex
+	runActive bool
 	// Для interval-based расписаний (every N): единый таймер + куча
 	// вместо горутины на сервис. Это предотвращает утечку горутин
 	// при большом количестве сервисов.
@@ -84,6 +96,11 @@ func (s *Scheduler) startLocked(quiet bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 
+	// Разрешаем dispatch откладывать места в wg (до wg.Wait в Stop).
+	s.runMu.Lock()
+	s.runActive = true
+	s.runMu.Unlock()
+
 	if limit <= 0 {
 		limit = 1
 	}
@@ -91,6 +108,7 @@ func (s *Scheduler) startLocked(quiet bool) {
 		limit = 1
 	}
 	s.sem = make(chan struct{}, limit)
+	s.semPub.Store(s.sem)
 	s.cron = cron.New(cron.WithLocation(loc))
 
 	// Инициализируем кучу для interval-based сервисов
@@ -198,13 +216,32 @@ func (s *Scheduler) addLocked(ctx context.Context, service, spec string) {
 }
 
 func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
-	// Снапшот семафора: startLocked пересоздаёт его под s.mu при Reload.
-	s.mu.Lock()
-	sem := s.sem
-	s.mu.Unlock()
+	// wg.Add(1) — до захвата семафора, под runMu: иначе Stop() успевал
+	// вызвать wg.Wait() (при уже отменённом ctx), а горутина после этого
+	// делала Add на счётчике с нулём — гонка "WaitGroup misuse".
+	s.runMu.Lock()
+	if !s.runActive {
+		s.runMu.Unlock()
+		return
+	}
+	s.wg.Add(1)
+	s.runMu.Unlock()
+	started := false
+	defer func() {
+		if !started {
+			s.wg.Done() // не запустились (ctx/timeout) — снимаем место
+		}
+	}()
+
+	// Снапшот семафора из atomic.Value: без захвата s.mu (см. semPub).
+	semRaw := s.semPub.Load()
+	var sem chan struct{}
+	if semRaw != nil {
+		sem = semRaw.(chan struct{})
+	}
 	select {
 	case sem <- struct{}{}:
-		s.wg.Add(1)
+		started = true
 		go func(gate chan struct{}) {
 			defer s.wg.Done()
 			defer func() { <-gate }()
@@ -248,6 +285,12 @@ func (s *Scheduler) stopLocked(ctx context.Context) {
 }
 
 func (s *Scheduler) Stop(ctx context.Context) {
+	// Запрещаем новые wg.Add(+dispatch) до stopLocked: dispatch получит
+	// отменённый ctx и не будет запускаться; wg.Wait не гонится с Add.
+	s.runMu.Lock()
+	s.runActive = false
+	s.runMu.Unlock()
+
 	s.mu.Lock()
 	s.stopLocked(ctx)
 	s.started = false

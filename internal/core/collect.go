@@ -118,11 +118,24 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 
 	usedMethod := strings.Join(used, "+")
 
-	if asn > 0 && (strings.Contains(usedMethod, "asn") || strings.Contains(usedMethod, "whois")) {
+	// RDAP-проверка принадлежности одному ASN имеет смысл только для метода
+	// asn (он собирает префиксы известного ASN). whois собирает префиксы
+	// ВСЕХ ASN, найденных по резолвленным IP: проверка против одного
+	// (основного) ASN отвергала бы легитимные префиксы вторичных ASN.
+	if shouldVerifyASNOwnership(usedMethod, asn) {
 		acc = s.verifyASNOwnership(ctx, acc, asn)
 	}
 
 	return acc, usedMethod, nil
+}
+
+// shouldVerifyASNOwnership — запускать ли RDAP-проверку принадлежности ASN.
+// Только для метода asn: whois-набор покрывает несколько ASN, и проверка
+// против одного отсеивала бы вторичные. Проверка всегда требует известного ASN.
+func shouldVerifyASNOwnership(usedMethod string, asn int) bool {
+	return asn > 0 &&
+		hasMethod(splitMethods(usedMethod), "asn") &&
+		!hasMethod(splitMethods(usedMethod), "whois")
 }
 
 func resolverParseASN(s string) (int, error) {

@@ -62,6 +62,31 @@ func TestVerifyASNOwnershipChecksSmallSetsFully(t *testing.T) {
 	}
 }
 
+// H4: глобальная RDAP-проверка по одному ASN не должна применяться к whois:
+// whois собирает префиксы всех ASN, найденных по IP домена, и проверка против
+// основного ASN отвергала бы легитимные вторичные префиксы.
+func TestShouldVerifyASNOwnership(t *testing.T) {
+	cases := []struct {
+		used string
+		asn  int
+		want bool
+	}{
+		{"asn", 13335, true},
+		{"dynamic+asn", 13335, true},
+		{"asn,dynamic", 13335, true},
+		{"whois", 13335, false},
+		{"dynamic+whois", 13335, false},
+		{"asn+whois", 13335, false},
+		{"dynamic", 13335, false},
+		{"asn", 0, false},
+	}
+	for _, c := range cases {
+		if got := shouldVerifyASNOwnership(c.used, c.asn); got != c.want {
+			t.Errorf("shouldVerifyASNOwnership(%q, %d)=%v, want %v", c.used, c.asn, got, c.want)
+		}
+	}
+}
+
 func TestVerifyASNOwnershipAllGoodKeepsAll(t *testing.T) {
 	s, _ := newTestSyncer(t, noopRouter)
 	s.resPtr.Store(resolver.NewResolver("", &rdapFakeFetch{}, nil, 0))

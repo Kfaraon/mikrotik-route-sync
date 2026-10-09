@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 )
@@ -61,4 +62,31 @@ func TestRunRecoversPanic(t *testing.T) {
 	}
 	// Не должно паниковать — recover внутри run ловит панику.
 	s.run(context.Background(), "test-service", "every 1h")
+}
+
+// E4: wg.Add в dispatch не должен гоняться с wg.Wait в Stop. Гвардия
+// runMu/runActive запрещает Add после выключения: -race ловит нарушение.
+func TestDispatchStopNoWaitGroupRace(t *testing.T) {
+	s := &Scheduler{log: slog.Default()} // nil syncer: run паникует и восстанавливается
+	s.sem = make(chan struct{}, 4)
+	s.semPub.Store(s.sem)
+	s.runActive = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var callers sync.WaitGroup
+	for i := 0; i < 200; i++ {
+		callers.Add(1)
+		go func() {
+			defer callers.Done()
+			s.dispatch(ctx, "svc", "every 1h")
+		}()
+	}
+	cancel()
+
+	// Эмуляция Stop: выключаем приём и ждём счётчик.
+	s.runMu.Lock()
+	s.runActive = false
+	s.runMu.Unlock()
+	s.wg.Wait()
+	callers.Wait()
 }

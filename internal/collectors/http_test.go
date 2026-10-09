@@ -98,13 +98,22 @@ func TestFetchNon2xxIsError(t *testing.T) {
 	}
 }
 
+// H5: тело сверх лимита — ошибка (fail-closed), а не молчаливое усечение.
+// Иначе усечённый официальный список CDN принимался бы за полный.
 func TestFetchRespectsBodyLimit(t *testing.T) {
 	stub := &stubTransport{status: 200, body: strings.Repeat("x", 100)}
 	h := fastHTTP(t, stub)
 	h.limit = 10
-	body, err := h.Fetch(context.Background(), "https://example.com/x")
+	if _, err := h.Fetch(context.Background(), "https://example.com/x"); err == nil {
+		t.Fatal("body over limit must be an error")
+	}
+	// Ровно лимит — не ошибка, тело отдаётся целиком.
+	stub2 := &stubTransport{status: 200, body: strings.Repeat("x", 10)}
+	h2 := fastHTTP(t, stub2)
+	h2.limit = 10
+	body, err := h2.Fetch(context.Background(), "https://example.com/x")
 	if err != nil {
-		t.Fatalf("fetch: %v", err)
+		t.Fatalf("body at limit: %v", err)
 	}
 	if len(body) != 10 {
 		t.Fatalf("len=%d, want 10", len(body))

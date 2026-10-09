@@ -168,9 +168,15 @@ func (h *HTTP) Fetch(ctx context.Context, rawURL string) ([]byte, error) {
 			return nil, fmt.Errorf("GET %s: %s", rawURL, resp.Status)
 		}
 
-		b, err := io.ReadAll(io.LimitReader(resp.Body, h.limit))
+		// Читаем на 1 байт больше лимита: тело больше лимита — ошибка, а не
+		// молча усечённый список (иначе усечённый официальный список CDN
+		// принимался бы за полный — против fail-closed).
+		b, err := io.ReadAll(io.LimitReader(resp.Body, h.limit+1))
 		if err != nil {
 			return nil, err
+		}
+		if int64(len(b)) > h.limit {
+			return nil, fmt.Errorf("GET %s: response exceeds %d bytes limit", rawURL, h.limit)
 		}
 		return b, nil
 	})
