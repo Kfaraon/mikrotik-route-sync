@@ -10,6 +10,7 @@ package presets
 // входа, map-итерация никогда не влияет на результат.
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -572,6 +573,49 @@ func (s *Stats) sortAll() {
 	sort.Strings(s.Skipped)
 	sort.Strings(s.MissingIncludes)
 	sort.Strings(s.ShowcaseFallback)
+}
+
+// ParseSingleUpstream конвертирует один апстрим-файл в пресет.
+// Используется runtime: пользователь выбрал невендоренный слаг из
+// подсказки и хочет сделать из него пресет (кнопка «создать из списка»).
+//
+// Правила те же, что и у ParseUpstream: full:/domain: с точкой,
+// include: рекурсивно, @ads/@telemetry/keyword:/regexp: — отбрасываются,
+// кап MaxDomains=50 с предупреждением. Витринный домен — эвристика.
+// slug должен пройти validSlug (без "!" и спецсимволов).
+func ParseSingleUpstream(files map[string]string, slug string, src PresetSource) (Preset, Stats, error) {
+	var st Stats
+	if slug == "" || !validSlug.MatchString(slug) {
+		return Preset{}, st, fmt.Errorf("invalid slug: %q", slug)
+	}
+	if _, ok := files[slug]; !ok {
+		return Preset{}, st, fmt.Errorf("upstream file not found: %s", slug)
+	}
+	p := &parser{files: files, stats: &st}
+	p.reset()
+	raw := p.resolve(slug)
+
+	domains, dup := dedupe(raw)
+	st.Duplicates += dup
+
+	showcase := heuristicShowcase(slug, domains)
+	domains = orderDomains(domains, showcase)
+	if len(domains) > MaxDomains {
+		st.Truncated += len(domains) - MaxDomains
+		domains = domains[:MaxDomains]
+	}
+
+	if len(domains) == 0 {
+		return Preset{}, st, fmt.Errorf("no valid domains after parsing")
+	}
+
+	return Preset{
+		Slug:    slug,
+		Title:   slug, // title = slug; UI покажет слаг, пользователь переименует при создании сервиса
+		Domains: domains,
+		Method:  DefaultMethod,
+		Source:  src,
+	}, st, nil
 }
 
 // Slugs — список слагов пресетов, которые ParseUpstream может вернуть

@@ -1511,10 +1511,12 @@
       // Применяем только вендоренный (его option есть в select);
       // невендоренные показываем текстом — их нельзя создать.
       var vendored = null;
+      var nonVendoredFirst = null;
       var names = [];
       each(list, function (m) {
         names.push(m.title || m.slug);
         if (!vendored && m.vendored) vendored = m;
+        if (!nonVendoredFirst && !m.vendored) nonVendoredFirst = m;
       });
       hint.innerHTML = "";
       if (vendored) {
@@ -1523,8 +1525,6 @@
         b.className = "btn btn-small btn-outline";
         b.textContent = "Похоже: " + (vendored.title || vendored.slug) + " — применить";
         b.addEventListener("click", function () {
-          // Опция обязана существовать (список пресетов уже загружен);
-          // иначе — добавляем явно, чтобы выбор был виден.
           var found = false;
           each(els.addPreset.options, function (o) {
             if (o.value === vendored.slug) found = true;
@@ -1540,6 +1540,47 @@
           els.addPreset.focus();
         });
         hint.appendChild(b);
+        // Вторая кнопка: создать пресет из первого невендоренного списка.
+        if (nonVendoredFirst) {
+          var b2 = document.createElement("button");
+          b2.type = "button";
+          b2.className = "btn btn-small btn-outline";
+          b2.style.marginLeft = "6px";
+          b2.textContent = "Создать из списка «" + (nonVendoredFirst.title || nonVendoredFirst.slug) + "»";
+          b2.addEventListener("click", function () {
+            b2.disabled = true;
+            b2.textContent = "Создание…";
+            api("/api/v1/presets/create-from-upstream", {
+              method: "POST",
+              body: JSON.stringify({ slug: nonVendoredFirst.slug })
+            }).then(function (resp) {
+              var warn = resp.warning ? " ⚠ " + resp.warning : "";
+              showToast("Пресет создан: " + resp.title + " (" + resp.domains + " доменов)" + warn);
+              // Перезагружаем список пресетов и ставим только что созданный.
+              state.presets = undefined;
+              loadPresets().then(function () {
+                var found = false;
+                each(els.addPreset.options, function (o) {
+                  if (o.value === resp.slug) found = true;
+                });
+                if (!found) {
+                  var opt = document.createElement("option");
+                  opt.value = resp.slug;
+                  opt.textContent = resp.title || resp.slug;
+                  els.addPreset.appendChild(opt);
+                }
+                els.addPreset.value = resp.slug;
+                hint.textContent = "";
+              });
+            }).catch(function (e) {
+              showToast("Ошибка: " + (e && e.message ? e.message : e));
+            }).finally(function () {
+              b2.disabled = false;
+              b2.textContent = "Создать из списка «" + (nonVendoredFirst.title || nonVendoredFirst.slug) + "»";
+            });
+          });
+          hint.appendChild(b2);
+        }
       } else {
         hint.textContent = "Похоже: " + names.slice(0, 3).join(", ") + " (нет в каталоге)";
       }

@@ -35,6 +35,7 @@ func newTestServer(t *testing.T) (*Server, *config.Config) {
 	cfgPath := filepath.Join(dir, "config.yaml")
 	body := `
 timezone: UTC
+cache_path: ` + filepath.Join(dir, "cache.db") + `
 mikrotik:
   host: 127.0.0.1
   port: 9
@@ -63,6 +64,11 @@ web:
 schedules:
   global: "every 6h"
 services: [testsvc]
+suggest:
+  v2fly_enabled: true
+  ru_enabled: true
+  urlscan_mode: off
+  sources: [preset, urlscan]
 `
 	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -106,6 +112,29 @@ func doAuth(c *http.Client, base, method, path, csrf string, body io.Reader) (*h
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	return resp, string(b)
+}
+
+func doAuthJSON(c *http.Client, base, path string, payload any) (*http.Response, string) {
+	var body io.Reader
+	if payload != nil {
+		b, _ := json.Marshal(payload)
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest("POST", base+path, body)
+	if err != nil {
+		panic(err)
+	}
+	req.SetBasicAuth("admin", "secret-pass")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.Do(req)
 	if err != nil {
@@ -1784,5 +1813,96 @@ func TestAPIPresetsMatchVendoredFirst(t *testing.T) {
 	m0, _ := matches[0].(map[string]any)
 	if m0["slug"] != "netflix" || m0["vendored"] != true {
 		t.Fatalf("vendored must be first: %+v", matches)
+	}
+}
+
+// TestAPIPresetsCreateFromUpstream — создание пресета из upstream-файла.
+func TestAPIPresetsCreateFromUpstream(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	// cache_path уже задан в конфиге newTestServer.
+	cfg.RLock()
+	absCache := cfg.CachePath
+	cfg.RUnlock()
+	t.Cleanup(func() { presets.FlushAll() })
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// Подготовка upstream-файла (как при скачивании зеркала).
+	dir := filepath.Join(filepath.Dir(absCache), "presets", "upstream")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Файл с include: и full:/domain: для проверки парсера.
+	content := `include:google
+full:abc.xyz
+domain:test.example.com
+keyword:tracking
+regexp:.*\.ads\.
+@ads
+`
+	if err := os.WriteFile(filepath.Join(dir, "alphabet"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := presets.RebuildUpstreamIndex(filepath.Join(filepath.Dir(absCache), "presets")); err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+
+	client := &http.Client{Jar: newJar(t)}
+	// Создаём пресет.
+	_, body := doAuthJSON(client, ts.URL, "/api/v1/presets/create-from-upstream", map[string]string{"slug": "alphabet"})
+	var v apiEnvelope
+	if err := json.Unmarshal([]byte(body), &v); err != nil || !v.OK {
+		t.Fatalf("create failed: %s", body)
+	}
+	data, _ := v.Data.(map[string]any)
+	if data["slug"] != "alphabet" {
+		t.Fatalf("unexpected slug: %+v", data)
+	}
+	if data["truncated"] != float64(0) {
+		t.Fatalf("expected no truncation: %+v", data)
+	}
+	// Домены должны быть: abc.xyz (showcase, из full:) + test.example.com (из domain:)
+	// include:google раскрывается, но google нет в files — будет MissingIncludes (warn, не ошибка).
+	domainsCount := int(data["domains"].(float64))
+	if domainsCount < 1 {
+		t.Fatalf("expected domains > 0, got %d", domainsCount)
+	}
+
+	// Пресет должен появиться в списке.
+	_, body = doAuth(client, ts.URL, "GET", "/api/v1/presets", "", nil)
+	if err := json.Unmarshal([]byte(body), &v); err != nil || !v.OK {
+		t.Fatalf("list failed: %s", body)
+	}
+	data, _ = v.Data.(map[string]any)
+	presetsList, _ := data["presets"].([]any)
+	found := false
+	for _, p := range presetsList {
+		pm, _ := p.(map[string]any)
+		if pm["slug"] == "alphabet" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("created preset not in list: %+v", presetsList)
+	}
+
+	// Невалидный слаг (с "!") — 400.
+	_, body = doAuthJSON(client, ts.URL, "/api/v1/presets/create-from-upstream", map[string]string{"slug": "geolocation-!cn"})
+	if err := json.Unmarshal([]byte(body), &v); err != nil || v.OK {
+		t.Fatalf("expected error for invalid slug, got: %s", body)
+	}
+	if !strings.Contains(body, "invalid slug") {
+		t.Fatalf("expected invalid slug error: %s", body)
+	}
+
+	// Несуществующий файл — 404.
+	_, body = doAuthJSON(client, ts.URL, "/api/v1/presets/create-from-upstream", map[string]string{"slug": "nonexistent"})
+	if err := json.Unmarshal([]byte(body), &v); err != nil || v.OK {
+		t.Fatalf("expected error for missing file, got: %s", body)
+	}
+	if !strings.Contains(body, "not found") {
+		t.Fatalf("expected not found error: %s", body)
 	}
 }

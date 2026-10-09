@@ -263,6 +263,12 @@ func Domains(slug string) ([]string, bool) {
 // traversal через DiskDir (filepath.Join схлопывает "..").
 var validSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
+// ValidSlug проверяет слаг на соответствие безопасному алфавиту.
+// Используется вебом при создании пресета из upstream.
+func ValidSlug(slug string) bool {
+	return validSlug.MatchString(slug)
+}
+
 // Get возвращает пресет по слагу. Второе значение false, если пресета
 // нет (в том числе если файл не распарсился).
 //

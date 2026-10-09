@@ -652,6 +652,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Get("/presets", s.apiPresets)
 		r.Get("/presets/match", s.apiPresetsMatch)
 		r.Post("/presets/refresh", s.apiPresetsRefresh)
+		r.Post("/presets/create-from-upstream", s.apiPresetsCreateFromUpstream)
 		r.Get("/schedules", s.apiSchedules)
 		r.Put("/schedules/{service}", s.apiUpdateSchedule)
 		r.Get("/logs", s.apiLogs)
@@ -1727,6 +1728,96 @@ func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditChange(r, "api", "presets_refresh", fmt.Sprintf("%v", out))
 	writeOK(w, out)
+}
+
+// apiPresetsCreateFromUpstream — создаёт пресет из upstream-файла зеркала
+// (кнопка «создать из списка» в подсказке невендоренного совпадения).
+// Сохраняет результат в DiskDir как <slug>.yaml — кастомный пресет,
+// который Generator не трогает, он живёт до ручного удаления файла.
+// body: { "slug": "geolocation-cn" }
+func (s *Server) apiPresetsCreateFromUpstream(w http.ResponseWriter, r *http.Request) {
+	dir := s.presetsDir()
+	if dir == "" {
+		writeErr(w, http.StatusBadRequest, "cache_path not configured")
+		return
+	}
+	var req struct {
+		Slug string `json:"slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Slug == "" {
+		writeErr(w, http.StatusBadRequest, "slug required")
+		return
+	}
+	slug := strings.ToLower(strings.TrimSpace(req.Slug))
+	if !presets.ValidSlug(slug) {
+		writeErr(w, http.StatusBadRequest, "invalid slug: only a-z0-9_- allowed, no '!'")
+		return
+	}
+	// Читаем upstream-файл с диска (dir/upstream/<slug>).
+	upDir := filepath.Join(dir, "upstream")
+	raw, err := os.ReadFile(filepath.Join(upDir, slug))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "upstream file not found: "+slug)
+		return
+	}
+	files := map[string]string{slug: string(raw)}
+	src := presets.PresetSource{
+		Repo:   presets.SourceV2Fly,
+		Commit: "runtime-mirror",
+		Date:   time.Now().UTC().Format(time.RFC3339),
+	}
+	p, st, err := presets.ParseSingleUpstream(files, slug, src)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Сохраняем в DiskDir (кастомные пресеты).
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeErr(w, http.StatusInternalServerError, "mkdir: "+err.Error())
+		return
+	}
+	dst := filepath.Join(dir, slug+".yaml")
+	rawYaml, err := yaml.Marshal(p)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "marshal: "+err.Error())
+		return
+	}
+	// Атомарная запись через tmp+rename.
+	tmp, err := os.CreateTemp(dir, ".preset-*.tmp")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "tmp: "+err.Error())
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(rawYaml); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		writeErr(w, http.StatusInternalServerError, "write: "+err.Error())
+		return
+	}
+	_ = tmp.Close()
+	if err := os.Rename(tmpName, dst); err != nil {
+		_ = os.Remove(tmpName)
+		writeErr(w, http.StatusInternalServerError, "rename: "+err.Error())
+		return
+	}
+	// Сброс кэша пресетов — List() сразу покажет новый.
+	presets.FlushAll()
+	// Аудит + ответ с предупреждением о капе, если было.
+	s.auditChange(r, "api", "preset_create_from_upstream", slug)
+	resp := map[string]any{
+		"slug":       p.Slug,
+		"title":      p.Title,
+		"domains":    len(p.Domains),
+		"method":     p.Method,
+		"source":     p.Source.String(),
+		"truncated":  st.Truncated,
+		"showcase":   p.Domains[0],
+	}
+	if st.Truncated > 0 {
+		resp["warning"] = fmt.Sprintf("list truncated to %d domains (original had %d)", presets.MaxDomains, len(p.Domains)+st.Truncated)
+	}
+	writeOK(w, resp)
 }
 
 // apiPresetsMatch — какие пресеты содержат домен (инвертированный индекс
