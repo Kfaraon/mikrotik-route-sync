@@ -103,6 +103,7 @@ func (c *CDNCollector) Collect(ctx context.Context, service string, opts Options
 		return nil, fmt.Errorf("no CDN source for ASN %d (use 'asn' method instead)", c.asn)
 	}
 
+	ReportCreep(ctx, "загрузка списка "+src.name)
 	lines, err := c.fetchSource(ctx, src.kind, src.url)
 	if err != nil {
 		return nil, err

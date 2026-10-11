@@ -120,7 +120,7 @@ func (s *Syncer) fillQuality(ctx context.Context, name string, ov config.Service
 	if !inCfg || len(adv.Domains) == 0 {
 		return
 	}
-	prefixes, _, err := s.collectOrStub(ctx, name, ov, maxASN)
+	prefixes, _, err := s.collectOrStub(ctx, name, ov, maxASN, nil)
 	if err != nil {
 		return
 	}

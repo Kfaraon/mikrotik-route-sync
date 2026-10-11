@@ -25,6 +25,7 @@ func NewStaticURLCollector(u string, h *HTTP) (*StaticURLCollector, error) {
 func (c *StaticURLCollector) Name() string { return "static_url" }
 
 func (c *StaticURLCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
+	ReportCreep(ctx, "загрузка списка "+c.url)
 	lines, err := c.http.FetchLines(ctx, c.url)
 	if err != nil {
 		return nil, fmt.Errorf("static_url: %w", err)

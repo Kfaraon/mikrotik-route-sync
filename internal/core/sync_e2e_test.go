@@ -721,6 +721,82 @@ func TestProgressClearedAfterSuccessAndError(t *testing.T) {
 	}
 }
 
+// Подробная строка прогресса сбора: подшаги коллекторов доходят до снапшота
+// как Detail, а сам процент остаётся внутри фазы сбора [15,40].
+func TestProgressDetailFlowsFromCollect(t *testing.T) {
+	fr := newFakeRouter()
+	src := &fakeSource{}
+	src.set([]string{addrA, addrB}, nil)
+	s := newE2ESyncer(t, fr, src, true)
+
+	var mu sync.Mutex
+	type sample struct {
+		phase  string
+		detail string
+		pct    int
+	}
+	var seen []sample
+	s.SetEventHook(func(event string, data any) {
+		if event != "sync_progress" {
+			return
+		}
+		m, ok := data.(map[string]any)
+		if !ok {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, sample{
+			phase:  fmt.Sprint(m["phase"]),
+			detail: fmt.Sprint(m["detail"]),
+			pct:    m["percent"].(int),
+		})
+	})
+
+	if _, err := s.SyncService(context.Background(), "demo", false, false); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Фаза сбора должна нести непустой Detail (подпись подшага коллектора).
+	foundCollectDetail := false
+	for _, smp := range seen {
+		if smp.phase != "сбор адресов из источников" {
+			continue
+		}
+		if smp.pct < 15 || smp.pct > 40 {
+			t.Fatalf("collect percent out of [15,40]: %+v", smp)
+		}
+		if smp.detail != "" {
+			foundCollectDetail = true
+		}
+	}
+	if !foundCollectDetail {
+		t.Fatalf("no collect phase with non-empty detail; events=%+v", seen)
+	}
+}
+
+// Подпись подшага не должна «протекать» в следующие фазы: Detail сбрасывается
+// вехами после сбора (валидация и далее идут с пустым Detail).
+func TestProgressDetailClearedAfterCollect(t *testing.T) {
+	fr := newFakeRouter()
+	src := &fakeSource{}
+	src.set([]string{addrA}, nil)
+	s := newE2ESyncer(t, fr, src, true)
+
+	// setProgress (без detail) обязан очищать ранее показанную деталь.
+	s.setProgressDetail("demo", "сбор адресов из источников", 25, false, "DNS: x.com (2/3)")
+	if got := s.ProgressSnapshot()["demo"]; got.Detail != "DNS: x.com (2/3)" {
+		t.Fatalf("detail not stored: %+v", got)
+	}
+	s.setProgress("demo", "валидация адресов", 40, false)
+	if got := s.ProgressSnapshot()["demo"]; got.Detail != "" {
+		t.Fatalf("detail leaked into next phase: %+v", got)
+	}
+}
+
 // Фаза 1.4: отсев валидатора виден в результате синка (rejected breakdown).
 func TestE2ESyncReportsRejectedPrefixes(t *testing.T) {
 	fr := newFakeRouter()

@@ -245,6 +245,15 @@
   color: var(--muted, #666);
 }
 
+.svc-progress-detail {
+  margin-top: 0.1rem;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  color: var(--muted, #666);
+  opacity: 0.85;
+  word-break: break-word;
+}
+
 @keyframes svc-progress-stripes {
   to { background-position: 12px 0; }
 }

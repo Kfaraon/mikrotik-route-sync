@@ -42,6 +42,13 @@ func bgpToolsLineMatch(line, target string) (string, bool) {
 	return prefix, true
 }
 
+// bgpToolsEstLines — грубая оценка числа строк дампа bgp.tools (~30 МБ) для
+// сглаженного прогресса загрузки: точный размер заранее неизвестен.
+const bgpToolsEstLines = 1_000_000
+
+// bgpToolsReportEvery — как часто обновлять прогресс при потоковом разборе.
+const bgpToolsReportEvery = 20_000
+
 // BGPToolsASN возвращает анонсированные IPv4-префиксы ASN из дампа таблицы
 // bgp.tools. Потоковая фильтрация: тело не буферизуется целиком.
 func BGPToolsASN(ctx context.Context, h *HTTP, asn int) ([]string, error) {
@@ -53,7 +60,13 @@ func BGPToolsASN(ctx context.Context, h *HTTP, asn int) ([]string, error) {
 
 	target := strconv.Itoa(asn)
 	out := make([]string, 0, 64)
+	lines := 0
 	err := h.StreamLines(ctx, bgpToolsTableURL, func(line string) error {
+		lines++
+		if lines%bgpToolsReportEvery == 0 {
+			frac := float64(lines) / float64(bgpToolsEstLines)
+			ReportFraction(ctx, fmt.Sprintf("загрузка таблицы bgp.tools (%d строк)", lines), frac)
+		}
 		if prefix, ok := bgpToolsLineMatch(line, target); ok {
 			out = append(out, prefix)
 		}
@@ -79,6 +92,7 @@ func getASPrefixes(ctx context.Context, h *HTTP, cache PrefixCache, ttl time.Dur
 
 	prefixes, toolsErr := BGPToolsASN(ctx, h, asn)
 	if toolsErr != nil {
+		ReportCreep(ctx, fmt.Sprintf("bgp.tools недоступен, fallback RIPEstat (AS%d)", asn))
 		var ripeErr error
 		prefixes, ripeErr = RIPEstatASN(ctx, h, asn)
 		if ripeErr != nil {

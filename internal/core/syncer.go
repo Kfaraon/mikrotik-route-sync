@@ -291,26 +291,41 @@ type SyncProgress struct {
 	Phase   string `json:"phase"`
 	Percent int    `json:"percent"`
 	DryRun  bool   `json:"dry_run"`
+	Detail  string `json:"detail,omitempty"`
 }
 
 // setProgress фиксирует текущую фазу синхронизации и рассылает событие
 // sync_progress (уходит в WS-hub и поллер /api/v1/progress).
 
 func (s *Syncer) setProgress(name, phase string, percent int, dry bool) {
+	s.setProgressDetail(name, phase, percent, dry, "")
+}
+
+// setProgressDetail — как setProgress, но с текстовой детализацией текущего
+// подшага (например, «DNS: x.com (3/7)»). Деталь показывается в UI второй
+// строкой; при переходе к следующей вехе сбрасывается.
+func (s *Syncer) setProgressDetail(name, phase string, percent int, dry bool, detail string) {
 	s.progressMu.Lock()
-	s.progress[name] = SyncProgress{Service: name, Phase: phase, Percent: percent, DryRun: dry}
+	s.progress[name] = SyncProgress{Service: name, Phase: phase, Percent: percent, DryRun: dry, Detail: detail}
 	s.progressMu.Unlock()
 	s.emit("sync_progress", map[string]any{
-		"service": name, "phase": phase, "percent": percent, "dry_run": dry,
+		"service": name, "phase": phase, "percent": percent, "dry_run": dry, "detail": detail,
 	})
 }
 
 // clearProgress убирает сервис из активных прогрессов (defer в SyncService).
-
 func (s *Syncer) clearProgress(name string) {
 	s.progressMu.Lock()
 	delete(s.progress, name)
 	s.progressMu.Unlock()
+}
+
+// collectProgressFunc возвращает приёмник прогресса сбора: подшаги коллекторов
+// обновляют Detail текущей фазы, не меняя её название.
+func (s *Syncer) collectProgressFunc(name string, dry bool) collectors.ProgressFunc {
+	return func(percent int, label string) {
+		s.setProgressDetail(name, "сбор адресов из источников", percent, dry, label)
+	}
 }
 
 // ProgressSnapshot — копия карты активных синхронизаций (GET /api/v1/progress).
@@ -436,7 +451,9 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	s.setProgress(name, "сбор адресов из источников", 15, dry)
 
 	// 2. Сбор IPv4 CIDR (лимит ASN — из стартового снапшота конфига).
-	raw, method, err := s.collectOrStub(ctx, name, ov, maxASNPrefixes)
+	// Детализация: подшаги сбора (DNS/ASN/загрузки) двигают процент в [15,40]
+	// и обновляют вторую строку прогресса в UI.
+	raw, method, err := s.collectOrStub(ctx, name, ov, maxASNPrefixes, s.collectProgressFunc(name, dry))
 	if err != nil {
 		res.Error = fmt.Sprintf("collect: %v", err)
 		log.Error("failed to collect prefixes", "err", err)

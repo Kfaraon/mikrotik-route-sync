@@ -30,7 +30,8 @@ func (c *DynamicCollector) Name() string { return "dynamic" }
 func (c *DynamicCollector) Collect(ctx context.Context, service string, opts Options) (*Result, error) {
 	var all []netip.Prefix
 
-	for _, domain := range c.domains {
+	for i, domain := range c.domains {
+		Report(ctx, fmt.Sprintf("DNS: %s (%d/%d)", domain, i+1, len(c.domains)), i+1, len(c.domains))
 		ips, err := c.resolver.ResolveDomain(ctx, domain)
 		if err != nil {
 			continue
@@ -47,13 +48,15 @@ func (c *DynamicCollector) Collect(ctx context.Context, service string, opts Opt
 	// Официальные Google-диапазоны — только для сервисов Google
 	// (youtube/google): остальным они не нужны и засоряют маршруты.
 	if c.includeGoogle && c.http != nil {
+		ReportCreep(ctx, "официальные диапазоны Google")
 		if g, err := fetchGoogleRanges(ctx, c.http); err == nil {
 			all = append(all, g...)
 		}
 	}
 
 	// Дополнительные CDN-источники (also_cdn)
-	for _, asn := range c.alsoCDN {
+	for i, asn := range c.alsoCDN {
+		Report(ctx, fmt.Sprintf("доп. CDN AS%d (%d/%d)", asn, i+1, len(c.alsoCDN)), i+1, len(c.alsoCDN))
 		if r, err := NewCDNCollector(asn, c.http).Collect(ctx, service, Options{}); err == nil {
 			all = append(all, r.Prefixes...)
 		}

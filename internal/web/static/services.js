@@ -1091,6 +1091,7 @@
         '<div class="svc-progress" hidden>' +
           '<div class="svc-progress-track"><div class="svc-progress-fill"></div></div>' +
           '<div class="svc-progress-label"></div>' +
+          '<div class="svc-progress-detail"></div>' +
         "</div>" +
       "</td>" +
       '<td data-label="Состояние"><span class="svc-badge ' + esc(item.health.cls) + '">' + esc(item.health.label) + "</span></td>" +
@@ -1289,6 +1290,13 @@
       var label = box.querySelector(".svc-progress-label");
       if (label) {
         label.textContent = (p.dry_run ? "Тест: " : "") + text(p.phase) + " · " + pct + "%";
+      }
+
+      var detail = box.querySelector(".svc-progress-detail");
+      if (detail) {
+        var dtext = text(p.detail);
+        detail.textContent = dtext;
+        detail.hidden = !dtext;
       }
     });
   }

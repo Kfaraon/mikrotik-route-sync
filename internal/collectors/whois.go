@@ -42,7 +42,8 @@ func (c *WHOISCollector) Collect(ctx context.Context, service string, opts Optio
 	}
 
 	var addresses []string
-	for _, domain := range c.domains {
+	for i, domain := range c.domains {
+		Report(ctx, fmt.Sprintf("DNS: %s (%d/%d)", domain, i+1, len(c.domains)), i+1, len(c.domains))
 		ips, err := c.resolver.ResolveDomain(ctx, domain)
 		if err != nil {
 			continue
@@ -56,7 +57,8 @@ func (c *WHOISCollector) Collect(ctx context.Context, service string, opts Optio
 	}
 
 	asns := map[int]bool{}
-	for _, ipStr := range addresses {
+	for i, ipStr := range addresses {
+		Report(ctx, fmt.Sprintf("определение ASN: %s (%d/%d)", ipStr, i+1, len(addresses)), i+1, len(addresses))
 		asn, err := c.resolver.ASNByIP(ctx, ipStr)
 		if err != nil {
 			continue
@@ -77,7 +79,8 @@ func (c *WHOISCollector) Collect(ctx context.Context, service string, opts Optio
 		ordered = append(ordered, asn)
 	}
 	sort.Ints(ordered)
-	for _, asn := range ordered {
+	for i, asn := range ordered {
+		Report(ctx, fmt.Sprintf("префиксы AS%d (%d/%d)", asn, i+1, len(ordered)), i+1, len(ordered))
 		lines, err := getASPrefixes(ctx, c.http, c.cache, c.ttl, asn)
 		if err != nil {
 			continue

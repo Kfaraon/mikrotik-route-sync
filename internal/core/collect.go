@@ -14,18 +14,34 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
 )
 
-func (s *Syncer) collectOrStub(ctx context.Context, name string, ov config.ServiceOverride, maxASN int) ([]netip.Prefix, string, error) {
+func (s *Syncer) collectOrStub(ctx context.Context, name string, ov config.ServiceOverride, maxASN int, prog collectors.ProgressFunc) ([]netip.Prefix, string, error) {
 	if s.collectFn != nil {
 		return s.collectFn(ctx, name, ov)
 	}
-	return s.collect(ctx, name, ov, maxASN)
+	return s.collect(ctx, name, ov, maxASN, prog)
 }
+
+// collectProgress* — диапазон процента фазы сбора в общей шкале синка
+// (совпадает с setProgress("сбор адресов из источников", 15)). Подшаги
+// двигают процент внутри [15,40], не выходя за границы фазы.
+const (
+	collectProgressLo = 15
+	collectProgressHi = 40
+	// Поддиапазоны внутри фазы сбора.
+	collectASNLo, collectASNHi         = 15, 19 // определение ASN
+	collectMethodsLo, collectMethodsHi = 19, 36
+	collectVerifyLo, collectVerifyHi   = 36, 40 // RDAP-проверка владения ASN
+)
 
 // ============================================================================
 // Сбор префиксов
 // ============================================================================
 
-func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOverride, maxASN int) ([]netip.Prefix, string, error) {
+func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOverride, maxASN int, prog collectors.ProgressFunc) ([]netip.Prefix, string, error) {
+	if prog != nil {
+		ctx = collectors.WithProgress(ctx, collectProgressLo, collectProgressHi, prog)
+	}
+
 	class := classifier.Classify(name, ov.Method)
 
 	opts := collectors.Options{
@@ -66,11 +82,14 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 		}
 	}
 	if asn == 0 && (hasMethod(class.Methods, "asn") || hasMethod(class.Methods, "cdn")) && len(domains) > 0 {
-		if resolved, err := s.resolver().ResolveASN(ctx, domains[0]); err == nil {
+		ctxASN, restore := collectors.Scope(ctx, collectASNLo, collectASNHi)
+		collectors.ReportCreep(ctxASN, "определение ASN: "+domains[0])
+		if resolved, err := s.resolver().ResolveASN(ctxASN, domains[0]); err == nil {
 			asn = resolved
 		} else {
 			s.log.Warn("cannot resolve ASN", "service", name, "err", err)
 		}
+		restore()
 	}
 
 	alsoCDN := make([]int, 0, len(ov.AlsoCDN))
@@ -96,8 +115,14 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 		used    []string
 		lastErr error
 	)
-	for _, method := range class.Methods {
-		res, err := s.registry().Collect(ctx, method, params, opts)
+	nMethods := len(class.Methods)
+	for i, method := range class.Methods {
+		lo := collectMethodsLo + (collectMethodsHi-collectMethodsLo)*i/nMethods
+		hi := collectMethodsLo + (collectMethodsHi-collectMethodsLo)*(i+1)/nMethods
+		mctx, restore := collectors.Scope(ctx, lo, hi)
+		collectors.ReportCreep(mctx, "сбор: "+method)
+		res, err := s.registry().Collect(mctx, method, params, opts)
+		restore()
 		if err != nil {
 			s.log.Warn("collector failed, trying next method", "method", method, "service", name, "err", err)
 			lastErr = err
@@ -123,7 +148,9 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	// ВСЕХ ASN, найденных по резолвленным IP: проверка против одного
 	// (основного) ASN отвергала бы легитимные префиксы вторичных ASN.
 	if shouldVerifyASNOwnership(usedMethod, asn) {
-		acc = s.verifyASNOwnership(ctx, acc, asn)
+		vctx, restore := collectors.Scope(ctx, collectVerifyLo, collectVerifyHi)
+		acc = s.verifyASNOwnership(vctx, acc, asn)
+		restore()
 	}
 
 	return acc, usedMethod, nil
@@ -167,6 +194,7 @@ func (s *Syncer) verifyASNOwnership(ctx context.Context, in []netip.Prefix, asn 
 	step := rdapVerifyStep(len(in))
 	rejected := 0
 	checked := 0
+	checkedTotal := (len(in) + step - 1) / step
 	dropped := make(map[netip.Prefix]bool)
 
 	for i := 0; i < len(in); i += step {
@@ -174,6 +202,7 @@ func (s *Syncer) verifyASNOwnership(ctx context.Context, in []netip.Prefix, asn 
 			break
 		}
 		checked++
+		collectors.Report(ctx, fmt.Sprintf("проверка AS%d: %d/%d", asn, checked, checkedTotal), checked, checkedTotal)
 		ok, err := s.resolver().VerifyPrefixBelongsToASN(ctx, in[i], asn)
 		if err == nil && !ok {
 			dropped[in[i]] = true

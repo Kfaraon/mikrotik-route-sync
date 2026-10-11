@@ -36,7 +36,7 @@ func (s *Syncer) DiffService(ctx context.Context, name string) (*addresslist.Dif
 	existing := addresslist.FilterManaged(all, list, comment)
 	foreign := addresslist.ForeignEntries(all, list, comment)
 
-	raw, _, err := s.collectOrStub(ctx, name, ov, maxASN)
+	raw, _, err := s.collectOrStub(ctx, name, ov, maxASN, nil)
 	if err != nil {
 		return nil, fmt.Errorf("collect: %w", err)
 	}
@@ -223,5 +223,3 @@ func (s *Syncer) RemoveServiceEntries(ctx context.Context, name string) (int, er
 	}
 	return deleted, nil
 }
-
-// collectOrStub — сбор префиксов (подмена в тестах через collectFn).
