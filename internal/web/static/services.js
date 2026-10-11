@@ -141,6 +141,7 @@
     addMethod: byId("svc-add-method"),
     addPreset: byId("svc-add-preset"),
     addBtn: byId("svc-add-btn"),
+    addStatus: byId("svc-add-status"),
     body: byId("services-body"),
     empty: byId("services-empty"),
     drawer: byId("svc-drawer"),
@@ -1360,12 +1361,12 @@
     updateSelectionUI();
   }
 
-  function withButton(btn, fn) {
+  function withButton(btn, fn, busyLabel) {
     if (!btn) return Promise.resolve(fn());
 
     var old = btn.textContent;
     btn.disabled = true;
-    btn.textContent = "…";
+    btn.textContent = busyLabel || "…";
 
     return Promise.resolve()
       .then(fn)
@@ -1494,13 +1495,63 @@
     var body = { name: name };
     if (method) body.method = method;
     if (preset) body.preset = preset;
+
+    // Пока идёт автоопределение CDN (может занять секунды), показываем
+    // подшаги: POST висит, поэтому статус тянем отдельным эндпоинтом.
+    // При явном методе детект на сервере не запускается — не поллим.
+    var poll = method ? null : startAddStatusPoll(name);
     return api("/api/v1/services", {
       method: "POST",
       body: JSON.stringify(body)
     }).then(function () {
       showToast("Сервис добавлен: " + name);
       return loadAll(true);
+    }).then(function (v) {
+      stopAddStatusPoll(poll);
+      return v;
+    }, function (err) {
+      stopAddStatusPoll(poll);
+      throw err;
     });
+  }
+
+  // startAddStatusPoll опрашивает статус добавления, пока идёт POST.
+  function startAddStatusPoll(name) {
+    var poll = { timer: null, stopped: false };
+    if (!els.addStatus) return poll;
+
+    els.addStatus.hidden = false;
+    els.addStatus.textContent = "проверка источника…";
+
+    function tick() {
+      if (poll.stopped) return;
+      api("/api/v1/services/add-status?name=" + encodeURIComponent(name))
+        .then(function (data) {
+          if (poll.stopped) return;
+          var detail = data && data.detail ? text(data.detail) : "";
+          if (detail) els.addStatus.textContent = detail;
+        })
+        .catch(function () {
+          // Статус — вспомогательный: сеть моргнула, продолжаем молча.
+        });
+    }
+
+    tick();
+    poll.timer = setInterval(tick, 500);
+    return poll;
+  }
+
+  function stopAddStatusPoll(poll) {
+    if (!poll) return;
+    poll.stopped = true;
+    if (poll.timer) {
+      clearInterval(poll.timer);
+      poll.timer = null;
+    }
+    if (els.addStatus) {
+      els.addStatus.hidden = true;
+      els.addStatus.textContent = "";
+    }
   }
 
   // Автоподсказка пресета по вводимому имени (инвертированный индекс
@@ -2717,15 +2768,15 @@
           return;
         }
 
+        var method = els.addMethod ? trim(els.addMethod.value) : "";
+        var preset = els.addPreset ? trim(els.addPreset.value) : "";
         handlePromise(withButton(els.addBtn, function () {
-          var method = els.addMethod ? trim(els.addMethod.value) : "";
-          var preset = els.addPreset ? trim(els.addPreset.value) : "";
           return addService(name, method, preset).then(function () {
             if (els.addInput) els.addInput.value = "";
             if (els.addMethod) els.addMethod.value = "";
             if (els.addPreset) els.addPreset.value = "";
           });
-        }));
+        }, method ? "" : "Проверяю источник…"));
       });
     }
 

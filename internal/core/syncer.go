@@ -90,6 +90,12 @@ type Syncer struct {
 	progressMu sync.RWMutex
 	progress   map[string]SyncProgress
 
+	// addProgress — подшаги добавления сервиса (детект CDN): UI поллит статус,
+	// пока POST /services не вернул ответ. Отдельно от progress: добавление
+	// не является синхронизацией и не должно попадать в таблицу прогрессов.
+	addProgressMu sync.RWMutex
+	addProgress   map[string]string
+
 	degradedMu sync.Mutex
 	degraded   map[string]time.Time
 
@@ -130,18 +136,19 @@ func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, notif
 	hist.AttachStore(cache)
 
 	s := &Syncer{
-		cfg:        cfg,
-		cache:      cache,
-		log:        log,
-		audit:      auditLog,
-		history:    hist,
-		notify:     notify,
-		busy:       map[string]bool{},
-		progress:   map[string]SyncProgress{},
-		degraded:   map[string]time.Time{},
-		startTime:  time.Now(),
-		sniCache:   map[string]sniCacheEntry{},
-		sniAlerted: map[string]time.Time{},
+		cfg:         cfg,
+		cache:       cache,
+		log:         log,
+		audit:       auditLog,
+		history:     hist,
+		notify:      notify,
+		busy:        map[string]bool{},
+		progress:    map[string]SyncProgress{},
+		addProgress: map[string]string{},
+		degraded:    map[string]time.Time{},
+		startTime:   time.Now(),
+		sniCache:    map[string]sniCacheEntry{},
+		sniAlerted:  map[string]time.Time{},
 	}
 	s.mtPtr.Store(mt)
 	s.buildDepsLocked()
@@ -338,6 +345,27 @@ func (s *Syncer) ProgressSnapshot() map[string]SyncProgress {
 		out[k] = v
 	}
 	return out
+}
+
+// AddProgress — текущий подшаг добавления сервиса (для UI-статуса).
+// Второй результат — есть ли активное добавление с таким именем.
+func (s *Syncer) AddProgress(name string) (string, bool) {
+	s.addProgressMu.RLock()
+	defer s.addProgressMu.RUnlock()
+	detail, ok := s.addProgress[name]
+	return detail, ok
+}
+
+func (s *Syncer) setAddProgress(name, detail string) {
+	s.addProgressMu.Lock()
+	s.addProgress[name] = detail
+	s.addProgressMu.Unlock()
+}
+
+func (s *Syncer) clearAddProgress(name string) {
+	s.addProgressMu.Lock()
+	delete(s.addProgress, name)
+	s.addProgressMu.Unlock()
 }
 
 func (s *Syncer) ResolveDomain(ctx context.Context, domain string) ([]string, error) {

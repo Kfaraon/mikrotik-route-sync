@@ -132,6 +132,13 @@
 
 .svc-add-form input { flex: 1; min-width: 200px; }
 
+/* Статус добавления сервиса: подшаги автоопределения CDN (POST висит). */
+.svc-add-status {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--muted, #666);
+}
+
 /* Таблица сервисов */
 .svc-table-wrap {
   background: var(--bg, #fff);

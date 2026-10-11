@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
@@ -65,7 +66,7 @@ func okDeps() *cdnProbeDeps {
 }
 
 func TestRunCDNProbeDetected(t *testing.T) {
-	adv := runCDNProbe(context.Background(), "rutracker.net", []string{"rutracker.net"}, okDeps())
+	adv := runCDNProbe(context.Background(), "rutracker.net", []string{"rutracker.net"}, okDeps(), nil)
 
 	if !adv.Detected {
 		t.Fatalf("expected detected, got reason=%q", adv.Reason)
@@ -89,7 +90,7 @@ func TestRunCDNProbeWhoisCountBestEffort(t *testing.T) {
 	deps.collectWhois = func(_ context.Context, _ []string) (int, error) {
 		return 0, context.DeadlineExceeded
 	}
-	adv := runCDNProbe(context.Background(), "x.net", []string{"x.net"}, deps)
+	adv := runCDNProbe(context.Background(), "x.net", []string{"x.net"}, deps, nil)
 	if !adv.Detected {
 		t.Fatalf("whois failure must not break detection: %q", adv.Reason)
 	}
@@ -195,7 +196,7 @@ func TestRunCDNProbeNotDetected(t *testing.T) {
 				return origCDN(ctx, asn)
 			}
 
-			adv := runCDNProbe(context.Background(), "x.net", []string{"x.net", "y.net"}, deps)
+			adv := runCDNProbe(context.Background(), "x.net", []string{"x.net", "y.net"}, deps, nil)
 			if adv.Detected {
 				t.Fatalf("expected not detected, got %+v", adv)
 			}
@@ -383,6 +384,68 @@ func TestAddServiceDetectionNotDetectedKeepsDefault(t *testing.T) {
 	}
 	if got := s.GetServiceOverride("example.org").Method; got != "" {
 		t.Fatalf("method=%q, want empty (default)", got)
+	}
+}
+
+// WithSkipWhois убирает дорогое whois-сравнение из пробника.
+func TestBuildProbeDepsSkipWhois(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+
+	if deps := s.buildProbeDeps("svc", &adviseConfig{skipWhois: true}); deps.collectWhois != nil {
+		t.Fatal("collectWhois must be nil when skipWhois is set")
+	}
+	if deps := s.buildProbeDeps("svc", &adviseConfig{}); deps.collectWhois == nil {
+		t.Fatal("collectWhois must be set by default (recommend/CLI path)")
+	}
+}
+
+// После возврата AddServiceWithConfig статус добавления очищается:
+// UI перестаёт показывать подшаг, а фоллбэк-ветка не оставляет мусор.
+func TestAddServiceClearsAddProgress(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	s.SetNotifier(&captureNotifier{})
+	s.cdnProbeFn = fakeProbe(false)
+
+	if err := s.AddServiceWithConfig(context.Background(), "example.org", config.ServiceOverride{}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, active := s.AddProgress("example.org"); active {
+		t.Fatal("add progress must be cleared after AddServiceWithConfig returns")
+	}
+}
+
+// WithReporter получает подшаги детекта; AddProgress их видит.
+func TestAdviseCDNReportsSteps(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	s.cdnProbeFn = fakeProbe(false) // офлайн: реальная сеть в тестах не нужна
+	var steps []string
+
+	adv := s.AdviseCDN(context.Background(), "svc", config.ServiceOverride{},
+		WithReporter(func(d string) { steps = append(steps, d) }))
+	_ = adv
+
+	if len(steps) == 0 || steps[0] != "подготовка проверки" {
+		t.Fatalf("expected first step 'подготовка проверки', got %v", steps)
+	}
+}
+
+// При истёкшем родительском контексте детект завершается и не блокирует
+// добавление: сервис создаётся с методом по умолчанию.
+func TestAddServiceDetectionRespectsContextDeadline(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	s.SetNotifier(&captureNotifier{})
+	// Пробник игнорирует ctx и возвращает «не CDN»: важно, что добавление
+	// завершается по истёкшему дедлайну родителя, а не висит.
+	s.cdnProbeFn = fakeProbe(false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+
+	if err := s.AddServiceWithConfig(ctx, "example.org", config.ServiceOverride{}); err != nil {
+		t.Fatalf("add must not fail because detection timed out: %v", err)
+	}
+	if _, active := s.AddProgress("example.org"); active {
+		t.Fatal("add progress must be cleared after add returns")
 	}
 }
 
@@ -591,7 +654,7 @@ func TestRunCDNProbeSkipsUnresolvableDomain(t *testing.T) {
 		return []string{"104.16.1.1"}, nil
 	}
 	adv := runCDNProbe(context.Background(), "youtube",
-		[]string{"youtube.com", "ytimg.com"}, deps)
+		[]string{"youtube.com", "ytimg.com"}, deps, nil)
 	if !adv.Detected {
 		t.Fatalf("one dead domain must not kill detection: %q", adv.Reason)
 	}

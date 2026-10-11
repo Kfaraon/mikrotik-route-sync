@@ -332,6 +332,24 @@ func TestAPIProgressEnvelope(t *testing.T) {
 	}
 }
 
+// GET /api/v1/services/add-status — статус добавления сервиса (in-memory).
+// Несуществующий сервис => active:false, без ошибок.
+func TestAPIAddStatusEnvelope(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	resp, body := doAuth(client, ts.URL, "GET", "/api/v1/services/add-status?name=nope", "", nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d %s", resp.StatusCode, body)
+	}
+	var v apiEnvelope
+	if err := json.Unmarshal([]byte(body), &v); err != nil || !v.OK {
+		t.Fatalf("bad envelope: %s err=%v", body, err)
+	}
+}
+
 func TestSettingsPageComplete(t *testing.T) {
 	srv, cfg := newTestServer(t)
 	ts := httptest.NewServer(srv)

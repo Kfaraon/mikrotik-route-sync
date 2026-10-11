@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,6 +15,10 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/validator"
 )
+
+// addDetectTimeout — предел на автоопределение CDN при добавлении сервиса.
+// Детект best-effort: не уложился — сервис добавляется с обычным методом.
+const addDetectTimeout = 20 * time.Second
 
 type ServiceInfo struct {
 	Name          string                 `json:"name"`
@@ -89,9 +94,28 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	// обслуживается ли домен за CDN (Cloudflare и др.), и сразу ставим
 	// метод cdn. Ручной выбор (метод/static_url) не переопределяется;
 	// сбой проверки не блокирует добавление (детект best-effort).
+	//
+	// Детект ограничен таймаутом и не выполняет дорогое whois-сравнение
+	// (WithSkipWhois): иначе добавление крупного сервиса держало пользователя
+	// минутами (скачивание bgp.tools на каждый ASN ради цифры в отчёте).
 	var detected *CDNAdvice
 	if override.Method == "" && override.StaticURL == "" {
-		if adv := s.AdviseCDN(ctx, name, override); adv.Detected {
+		s.clearAddProgress(name)
+		defer s.clearAddProgress(name)
+		dctx, cancel := context.WithTimeout(ctx, addDetectTimeout)
+		adv := s.AdviseCDN(dctx, name, override,
+			WithSkipWhois(),
+			WithReporter(func(detail string) { s.setAddProgress(name, detail) }),
+		)
+		// dctx.Err() читаем ДО cancel(): после cancel() он всегда
+		// context.Canceled, и предупреждение логировалось бы всегда.
+		timedOut := errors.Is(dctx.Err(), context.DeadlineExceeded)
+		cancel()
+		if timedOut {
+			s.log.Warn("cdn auto-detection timed out, adding with default method",
+				"service", name, "timeout", addDetectTimeout)
+		}
+		if adv.Detected {
 			override.Method = "cdn"
 			// Фиксируем домены проверки — см. ApplyCDNRecommendation.
 			if len(override.Domains) == 0 && len(adv.Domains) > 0 {

@@ -51,10 +51,39 @@ type cdnProbeDeps struct {
 	collectWhois  func(ctx context.Context, domains []string) (int, error)
 }
 
+// adviseConfig — поведение проверки для конкретного вызова (опции AdviseCDN).
+type adviseConfig struct {
+	// skipWhois отключает дорогое сравнение с whois-сбором (скачивание
+	// bgp.tools на каждый ASN). Нужно в пути добавления сервиса: цифра
+	// «cdn N против whois M» не влияет на выбор метода, но занимает минуты.
+	skipWhois bool
+	// report — приёмник подшагов проверки (best-effort, может быть nil).
+	report func(string)
+}
+
+// AdviseOption настраивает конкретный вызов AdviseCDN.
+type AdviseOption func(*adviseConfig)
+
+// WithSkipWhois пропускает сравнение с whois-сбором (быстрый детект).
+func WithSkipWhois() AdviseOption {
+	return func(c *adviseConfig) { c.skipWhois = true }
+}
+
+// WithReporter подключает приёмник подшагов проверки (для UI-статуса).
+func WithReporter(fn func(string)) AdviseOption {
+	return func(c *adviseConfig) { c.report = fn }
+}
+
 // AdviseCDN проверяет, обслуживается ли сервис за CDN, и возвращает
 // рекомендацию по источнику. Чистая сетевая операция без побочных эффектов;
 // никогда не возвращает ошибку (при сбоях — Detected=false с причиной).
-func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOverride) *CDNAdvice {
+func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOverride, opts ...AdviseOption) *CDNAdvice {
+	var cfg adviseConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+	report(cfg.report, "подготовка проверки")
+
 	name = strings.ToLower(strings.TrimSpace(name))
 	cur := currentMethodName(name, ov)
 	adv := &CDNAdvice{CurrentMethod: cur, Domains: adviseDomains(name, ov)}
@@ -64,7 +93,7 @@ func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOv
 		return adv
 	}
 
-	var p = s.adviseProbe(ctx, name, adv.Domains)
+	var p = s.adviseProbe(ctx, name, adv.Domains, &cfg)
 	if p != nil {
 		adv.Detected = p.Detected
 		adv.CDN = p.CDN
@@ -136,15 +165,23 @@ func (s *Syncer) fillQuality(ctx context.Context, name string, ov config.Service
 }
 
 // adviseProbe — точка подмены пробника в тестах (cdnProbeFn).
-func (s *Syncer) adviseProbe(ctx context.Context, name string, domains []string) *CDNAdvice {
+func (s *Syncer) adviseProbe(ctx context.Context, name string, domains []string, cfg *adviseConfig) *CDNAdvice {
 	if s.cdnProbeFn != nil {
 		return s.cdnProbeFn(ctx, name, domains)
 	}
-	return s.probeCDN(ctx, name, domains)
+	return s.probeCDN(ctx, name, domains, cfg)
 }
 
 // probeCDN — реальный пробник: DNS/ASN через resolver, списки через registry.
-func (s *Syncer) probeCDN(ctx context.Context, name string, domains []string) *CDNAdvice {
+func (s *Syncer) probeCDN(ctx context.Context, name string, domains []string, cfg *adviseConfig) *CDNAdvice {
+	deps := s.buildProbeDeps(name, cfg)
+	return runCDNProbe(ctx, name, domains, deps, cfg.report)
+}
+
+// buildProbeDeps собирает зависимости пробника. Дорогое whois-сравнение
+// (скачивание bgp.tools на каждый ASN) подключается только когда оно реально
+// нужно — не в пути добавления сервиса (cfg.skipWhois).
+func (s *Syncer) buildProbeDeps(name string, cfg *adviseConfig) *cdnProbeDeps {
 	s.cfg.RLock()
 	maxASN := s.cfg.Safety.MaxASNPrefixes
 	s.cfg.RUnlock()
@@ -162,23 +199,33 @@ func (s *Syncer) probeCDN(ctx context.Context, name string, domains []string) *C
 			}
 			return res.Prefixes, res.Source, nil
 		},
-		collectWhois: func(ctx context.Context, doms []string) (int, error) {
-			res, err := s.registry().Collect(ctx, "whois", &collectors.Params{
-				Service:     name,
-				Domains:     doms,
-				MaxPrefixes: maxASN,
-			}, collectors.Options{})
-			if err != nil {
-				return 0, err
-			}
-			return len(res.Prefixes), nil
-		},
 	}
-	return runCDNProbe(ctx, name, domains, deps)
+	if cfg.skipWhois {
+		return deps
+	}
+	deps.collectWhois = func(ctx context.Context, doms []string) (int, error) {
+		res, err := s.registry().Collect(ctx, "whois", &collectors.Params{
+			Service:     name,
+			Domains:     doms,
+			MaxPrefixes: maxASN,
+		}, collectors.Options{})
+		if err != nil {
+			return 0, err
+		}
+		return len(res.Prefixes), nil
+	}
+	return deps
+}
+
+// report вызывает приёмник подшагов, если он задан.
+func report(fn func(string), detail string) {
+	if fn != nil {
+		fn(detail)
+	}
 }
 
 // runCDNProbe — чистая логика детекции (тестируется с фейковыми deps).
-func runCDNProbe(ctx context.Context, name string, domains []string, deps *cdnProbeDeps) *CDNAdvice {
+func runCDNProbe(ctx context.Context, name string, domains []string, deps *cdnProbeDeps, rep func(string)) *CDNAdvice {
 	adv := &CDNAdvice{Domains: domains}
 	if err := ctx.Err(); err != nil {
 		adv.Reason = "проверка прервана"
@@ -188,7 +235,12 @@ func runCDNProbe(ctx context.Context, name string, domains []string, deps *cdnPr
 	var allIPs []string
 	var asn int
 	var resolved int
-	for _, d := range domains {
+	for i, d := range domains {
+		report(rep, fmt.Sprintf("проверка домена: %s (%d/%d)", d, i+1, len(domains)))
+		if ctx.Err() != nil {
+			adv.Reason = "проверка прервана (таймаут)"
+			return adv
+		}
 		ips, err := deps.resolveDomain(ctx, d)
 		if err != nil || len(ips) == 0 {
 			// Apex без A-записей (ytimg.com) — не приговор всему сервису:
@@ -224,6 +276,7 @@ func runCDNProbe(ctx context.Context, name string, domains []string, deps *cdnPr
 	adv.CDN = cdnName
 	adv.URL = url
 
+	report(rep, fmt.Sprintf("загрузка официального списка %s", cdnName))
 	prefixes, src, err := deps.collectCDN(ctx, asn)
 	if err != nil || len(prefixes) == 0 {
 		adv.Reason = fmt.Sprintf("официальный список CDN недоступен (%s)", url)
@@ -279,7 +332,10 @@ func runCDNProbe(ctx context.Context, name string, domains []string, deps *cdnPr
 	}
 
 	// Сравнение с whois — best-effort (в отчёте цифра «15 против 86»).
+	// В пути добавления сервиса пропускается (WithSkipWhois): не влияет на
+	// выбор метода, но скачивает bgp.tools на каждый ASN.
 	if deps.collectWhois != nil {
+		report(rep, "сравнение с whois-сбором")
 		if n, werr := deps.collectWhois(ctx, domains); werr == nil && n > 0 {
 			adv.WhoisCount = n
 		}

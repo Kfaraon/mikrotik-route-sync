@@ -649,6 +649,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 
 		r.Get("/status", s.apiStatus)
 		r.Get("/progress", s.apiProgress)
+		r.Get("/services/add-status", s.apiAddStatus)
 		r.Get("/services", s.apiServices)
 		r.Post("/services", s.apiAddService)
 		r.Put("/services/{name}", s.apiUpdateService)
@@ -1550,6 +1551,14 @@ func (s *Server) apiServices(w http.ResponseWriter, r *http.Request) {
 // без обращений к MikroTik); поллится страницей «Сервисы».
 func (s *Server) apiProgress(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, s.syncer.ProgressSnapshot())
+}
+
+// apiAddStatus — подшаг текущего добавления сервиса (детект CDN).
+// UI поллит его, пока POST /services не вернул ответ. Имя — в query.
+func (s *Server) apiAddStatus(w http.ResponseWriter, r *http.Request) {
+	name := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("name")))
+	detail, active := s.syncer.AddProgress(name)
+	writeOK(w, map[string]any{"active": active, "detail": detail})
 }
 
 func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
