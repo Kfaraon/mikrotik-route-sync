@@ -10,17 +10,21 @@ import (
 
 // Record — одна запись истории.
 type Record struct {
-	Time       time.Time `json:"time"`
-	Service    string    `json:"service"`
-	Method     string    `json:"method,omitempty"`
-	Status     string    `json:"status,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	Collected  int       `json:"collected,omitempty"`
-	Aggregated int       `json:"aggregated,omitempty"`
-	Added      int       `json:"added"`
-	Removed    int       `json:"removed"`
-	Unchanged  int       `json:"unchanged"`
-	DurationMS int64     `json:"duration_ms"`
+	Time    time.Time `json:"time"`
+	Service string    `json:"service"`
+	// ServiceID — UUID v4 воплощения сервиса на момент записи. Пусто у
+	// записей, созданных до появления идентификаторов. UI не показывает
+	// записи с чужим id для текущего сервиса (после «удалил → добавил»).
+	ServiceID  string `json:"service_id,omitempty"`
+	Method     string `json:"method,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Collected  int    `json:"collected,omitempty"`
+	Aggregated int    `json:"aggregated,omitempty"`
+	Added      int    `json:"added"`
+	Removed    int    `json:"removed"`
+	Unchanged  int    `json:"unchanged"`
+	DurationMS int64  `json:"duration_ms"`
 	// Сводка качества последнего сбора (omitempty: старые записи без неё —
 	// «без данных», не «плохо»). UI красит health/проблемы по этим полям.
 	CovChecked       int  `json:"cov_checked,omitempty"`
@@ -106,6 +110,44 @@ func (h *History) Records(service string, n int) []Record {
 // Last возвращает последнюю запись для сервиса.
 func (h *History) Last(service string) (Record, bool) {
 	recs := h.Records(service, 1)
+	if len(recs) == 0 {
+		return Record{}, false
+	}
+	return recs[0], true
+}
+
+// RecordsByID возвращает последние n записей сервиса, относящиеся к его
+// текущему воплощению: service == "" — все сервисы, serviceID != "" — только
+// записи с совпадающим Record.ServiceID. Пустой serviceID — без фильтра по
+// id (сервисы, добавленные до появления идентификаторов, показывают всё).
+func (h *History) RecordsByID(service, serviceID string, n int) []Record {
+	if serviceID == "" {
+		return h.Records(service, n)
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if n <= 0 || n > h.limit {
+		n = h.limit
+	}
+	out := make([]Record, 0, n)
+	for i := len(h.records) - 1; i >= 0 && len(out) < n; i-- {
+		rec := h.records[i]
+		if service != "" && rec.Service != service {
+			continue
+		}
+		if rec.ServiceID != serviceID {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+// LastByID возвращает последнюю запись сервиса текущего воплощения.
+func (h *History) LastByID(service, serviceID string) (Record, bool) {
+	recs := h.RecordsByID(service, serviceID, 1)
 	if len(recs) == 0 {
 		return Record{}, false
 	}

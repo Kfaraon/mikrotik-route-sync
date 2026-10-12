@@ -146,6 +146,14 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	prevOv, hadOv := s.cfg.Overrides[name]
 	s.cfg.Overrides[name] = override
 
+	// Новый UUID v4 — идентичность текущего воплощения сервиса. Старые
+	// история/логи остаются с чужим id и в UI текущего сервиса не попадут.
+	if s.cfg.ServiceIDs == nil {
+		s.cfg.ServiceIDs = make(map[string]string)
+	}
+	prevID, hadID := s.cfg.ServiceIDs[name]
+	s.cfg.ServiceIDs[name] = newServiceID()
+
 	if err := s.cfg.Save(); err != nil {
 		// Откат: файл не изменился — память тоже не должна.
 		kept := s.cfg.Services[:0]
@@ -159,6 +167,11 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 			s.cfg.Overrides[name] = prevOv
 		} else {
 			delete(s.cfg.Overrides, name)
+		}
+		if hadID {
+			s.cfg.ServiceIDs[name] = prevID
+		} else {
+			delete(s.cfg.ServiceIDs, name)
 		}
 		s.cfg.Unlock()
 		return err
@@ -227,6 +240,8 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	prevOverride, hadOverride := s.cfg.Overrides[name]
 	s.cfg.Services = newServices
 	delete(s.cfg.Overrides, name)
+	prevID, hadID := s.cfg.ServiceIDs[name]
+	delete(s.cfg.ServiceIDs, name)
 
 	// Расписание сервиса: удалённый сервис не должен оставаться
 	// в schedules.services (иначе светится на странице расписаний).
@@ -244,6 +259,9 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 		s.cfg.Services = prevServices
 		if hadOverride {
 			s.cfg.Overrides[name] = prevOverride
+		}
+		if hadID {
+			s.cfg.ServiceIDs[name] = prevID
 		}
 		if hadSched {
 			if s.cfg.Schedules.Services == nil {
@@ -272,6 +290,12 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	// Флаг деградации сбрасывается: удалённый сервис не должен светиться
 	// в дашборде и боте. История при этом сохраняется (для страницы логов).
 	s.ClearDegraded(name)
+
+	// Троттлинг SNI-алертов: сбрасываем метку, чтобы новое воплощение сервиса
+	// с тем же именем снова могло уведомить о провале, не дожидаясь суток.
+	s.sniMu.Lock()
+	delete(s.sniAlerted, name)
+	s.sniMu.Unlock()
 
 	s.audit.LogServiceDelete("", "core", name)
 	s.emit("service_removed", map[string]any{"service": name})
@@ -418,6 +442,14 @@ func (s *Syncer) ListServices() []string {
 	s.cfg.RLock()
 	defer s.cfg.RUnlock()
 	return append([]string(nil), s.cfg.Services...)
+}
+
+// ServiceID — UUID v4 текущего воплощения сервиса (пусто, если не задан:
+// сервисы, добавленные до появления идентификаторов).
+func (s *Syncer) ServiceID(name string) string {
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
+	return s.cfg.ServiceIDs[name]
 }
 
 // ServiceSchedules — снимок эффективных расписаний одним чтением

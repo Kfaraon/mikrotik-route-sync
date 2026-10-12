@@ -1146,6 +1146,10 @@ type serviceRow struct {
 	Routes    int
 	LastSync  string
 	Overrides bool
+	// GUID — идентификатор текущего воплощения сервиса (UUID v4): UI
+	// сопоставляет с ним историю, чтобы не показывать данные прежнего
+	// сервиса с тем же именем.
+	GUID string
 	// Текущий override для редактора источника (UI): пусто — авто.
 	Method  string
 	Domains []string
@@ -1179,6 +1183,7 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 			Comment:   addresslist.CommentFor(prefix, name),
 			Schedule:  s.cfg.EffectiveSchedule(name),
 			Overrides: hasOverrideLocked(s.cfg, name),
+			GUID:      s.cfg.ServiceIDs[name],
 		}
 		if ov, ok := s.cfg.Overrides[name]; ok {
 			row.Method = ov.Method
@@ -1198,7 +1203,7 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 	rows := make([]serviceRow, 0, len(statics))
 	for _, row := range statics {
 		row.Routes = counts[row.Name]
-		if rec, ok := s.syncer.History().Last(row.Name); ok {
+		if rec, ok := s.syncer.History().LastByID(row.Name, row.GUID); ok {
 			status := "успех"
 			if rec.Status == "failed" || rec.Error != "" {
 				status = "ошибка"
@@ -2234,7 +2239,13 @@ func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	writeOK(w, s.syncer.History().Records(service, limit))
+	// Конкретный сервис — только записи его текущего воплощения (записи
+	// прежнего воплощения с тем же именем отсекаются по id).
+	serviceID := ""
+	if service != "" {
+		serviceID = s.syncer.ServiceID(service)
+	}
+	writeOK(w, s.syncer.History().RecordsByID(service, serviceID, limit))
 }
 
 // ============================================================================

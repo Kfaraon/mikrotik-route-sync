@@ -75,6 +75,14 @@ type Config struct {
 
 	Services  []string                   `yaml:"services"`
 	Overrides map[string]ServiceOverride `yaml:"overrides"`
+
+	// ServiceIDs — идентификатор текущего воплощения сервиса (UUID v4),
+	// выдаётся при добавлении и удаляется при удалении. Нужен, чтобы после
+	// «удалил → добавил заново» история/логи/дашборд не показывали данные
+	// старого воплощения с тем же именем. Отдельная карта, а не поле в
+	// ServiceOverride: override сбрасывается пустым через UI (см.
+	// UpdateServiceOverride), и id там был бы затёрт.
+	ServiceIDs map[string]string `yaml:"service_ids,omitempty"`
 }
 
 // CDNSourceConfig — один официальный источник диапазонов CDN-провайдера.
@@ -503,6 +511,7 @@ func (c *Config) replaceFromLocked(src *Config) {
 	c.CDNSources = src.CDNSources
 	c.Services = src.Services
 	c.Overrides = src.Overrides
+	c.ServiceIDs = src.ServiceIDs
 }
 
 // SnapshotSafety возвращает копию Safety с собственными флагами:
@@ -597,6 +606,11 @@ func (c *Config) Validate() error {
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 				return fmt.Errorf("service %q: static_url must be http/https", name)
 			}
+		}
+	}
+	for name := range c.ServiceIDs {
+		if !ValidateServiceName(name) {
+			return fmt.Errorf("invalid service_ids name %q", name)
 		}
 	}
 	switch c.Suggest.UrlscanMode {

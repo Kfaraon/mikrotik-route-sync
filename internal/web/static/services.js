@@ -572,6 +572,12 @@
     return Boolean(row.Overrides || row.overrides || row.HasOverride || row.has_override);
   }
 
+  // serviceGUID — идентификатор текущего воплощения сервиса (UUID v4).
+  function serviceGUID(row) {
+    if (!row) return "";
+    return text(row.GUID || row.guid || row.ServiceID || row.service_id);
+  }
+
   function getScheduleOverrideSpec(name) {
     var n = text(name);
     var ln = lower(n);
@@ -691,6 +697,13 @@
   function historyService(rec) {
     if (!rec) return "";
     return text(rec.service || rec.name || rec.Service || rec.Name);
+  }
+
+  // historyServiceID — id воплощения сервиса у записи истории (пусто у
+  // записей прежних версий/до появления идентификаторов).
+  function historyServiceID(rec) {
+    if (!rec) return "";
+    return text(rec.service_id || rec.ServiceID || rec.serviceId || rec.guid || rec.GUID);
   }
 
   function historyError(rec) {
@@ -842,6 +855,28 @@
     return text(entry && (entry.err || entry.error || entry.Error));
   }
 
+  // currentServiceGUID — id текущего воплощения сервиса по имени (из строк
+  // таблицы сервисов). Пусто — идентификаторов нет (старые записи/логи).
+  function currentServiceGUID(name) {
+    var key = lower(name);
+    if (!key) return "";
+    for (var i = 0; i < state.services.length; i++) {
+      var row = state.services[i];
+      if (lower(serviceName(row)) === key) return serviceGUID(row);
+    }
+    return "";
+  }
+
+  // historyMatchesService — запись относится к текущему воплощению сервиса.
+  // Если у сервиса есть id, берём только записи с этим id (записи прежнего
+  // воплощения, в т.ч. без id, отсекаются). Если id нет (старые сервисы,
+  // добавленные до появления идентификаторов) — не фильтруем.
+  function historyMatchesService(rec, name) {
+    var guid = currentServiceGUID(name || historyService(rec));
+    if (!guid) return true;
+    return historyServiceID(rec) === guid;
+  }
+
   function logLevelBadge(level) {
     var cls = "svc-badge-muted";
     if (level === "ERROR") cls = "svc-badge-err";
@@ -883,9 +918,11 @@
     state.historyByService = {};
     each(state.allHistorySorted, function (rec) {
       var name = lower(historyService(rec));
-      if (name && !state.historyByService[name]) {
-        state.historyByService[name] = rec;
-      }
+      if (!name || state.historyByService[name]) return;
+      // Записи чужого воплощения (id не совпадает с текущим) не берём:
+      // после «удалил → добавил» история должна выглядеть пустой.
+      if (!historyMatchesService(rec, name)) return;
+      state.historyByService[name] = rec;
     });
 
     state.errorCountByService = {};
@@ -2621,9 +2658,15 @@
     ]).then(function (results) {
       if (state.details.name !== name) return;
 
-      state.details.history = results[0].status === "fulfilled" && Array.isArray(results[0].value)
+      var hist = results[0].status === "fulfilled" && Array.isArray(results[0].value)
         ? results[0].value
         : [];
+
+      // Отсекаем записи прежнего воплощения сервиса с тем же именем.
+      var guid = currentServiceGUID(name);
+      state.details.history = hist.filter(function (rec) {
+        return historyMatchesService(rec, guid);
+      });
 
       state.details.logs = results[1].status === "fulfilled" && Array.isArray(results[1].value)
         ? results[1].value

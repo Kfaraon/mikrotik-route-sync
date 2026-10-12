@@ -763,6 +763,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// операции с сервисами. lastSync под serviceMu — коротко.
 	rec := history.Record{
 		Service:    name,
+		ServiceID:  s.ServiceID(name),
 		Method:     method,
 		Status:     "success",
 		Collected:  len(raw),

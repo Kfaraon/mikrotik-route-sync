@@ -439,6 +439,27 @@
     return text(row.Schedule || row.schedule);
   }
 
+  // serviceGUID — идентификатор текущего воплощения сервиса (UUID v4).
+  function serviceGUID(row) {
+    if (!row) return "";
+    return text(row.GUID || row.guid || row.ServiceID || row.service_id);
+  }
+
+  // historyServiceID — id воплощения сервиса у записи истории (пусто у
+  // записей, созданных до появления идентификаторов).
+  function historyServiceID(rec) {
+    if (!rec) return "";
+    return text(rec.service_id || rec.ServiceID || rec.serviceId || rec.guid || rec.GUID);
+  }
+
+  // historyMatchesService — запись относится к текущему воплощению сервиса.
+  // При наличии id берём только записи с этим id (в т.ч. отсекаем записи без
+  // id — они принадлежат прежнему воплощению). Без id — без фильтра.
+  function historyMatchesService(rec, guid) {
+    if (!guid) return true;
+    return historyServiceID(rec) === guid;
+  }
+
   function getEffective(name) {
     var n = text(name);
     var ln = lower(n);
@@ -533,9 +554,15 @@
     // Только активные сервисы: история хранит и удалённые (для страницы
     // логов), но в здоровье/внимание они попадать не должны.
     var active = {};
+    // guid текущего воплощения сервиса по имени: история прежнего сервиса
+    // с тем же именем (другой id) в проблемы/внимание не попадает.
+    var guidByName = {};
     for (var a = 0; a < state.services.length; a++) {
       var an = lower(serviceName(state.services[a]));
-      if (an) active[an] = true;
+      if (an) {
+        active[an] = true;
+        guidByName[an] = serviceGUID(state.services[a]);
+      }
     }
     function isActive(name) {
       // Пока список сервисов не загружен — не фильтруем, иначе при ошибке
@@ -598,9 +625,10 @@
       var rec = sortedHistory[k];
       var recService = lower(historyService(rec));
 
-      if (recService && isActive(recService) && !latestByService[recService]) {
-        latestByService[recService] = rec;
-      }
+      if (!recService || !isActive(recService)) continue;
+      // Записи чужого воплощения сервиса (id не совпадает) игнорируем.
+      if (!historyMatchesService(rec, guidByName[recService])) continue;
+      if (!latestByService[recService]) latestByService[recService] = rec;
     }
 
     for (var nameKey in latestByService) {
@@ -635,10 +663,12 @@
     var latestActive = null;
     for (var li = 0; li < sortedHistory.length; li++) {
       // Новейшая запись активного сервиса (история хранит и удалённые).
-      if (isActive(historyService(sortedHistory[li]))) {
-        latestActive = sortedHistory[li];
-        break;
-      }
+      var lrec = sortedHistory[li];
+      var lname = lower(historyService(lrec));
+      if (!isActive(lname)) continue;
+      if (!historyMatchesService(lrec, guidByName[lname])) continue;
+      latestActive = lrec;
+      break;
     }
 
     state.derived = {
