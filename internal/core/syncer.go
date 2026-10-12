@@ -327,6 +327,28 @@ func (s *Syncer) clearProgress(name string) {
 	s.progressMu.Unlock()
 }
 
+// Отрезки процента best-effort проверок после агрегации: контроль покрытия
+// занимает [50,52], SNI-проба — [52,55]. Внутри отрезка виден текущий домен
+// (done/total); без этого фаза «агрегация префиксов · 50%» замирала бы на
+// минуты, пока резолвятся домены и делаются handshake.
+const (
+	coverageProgressLo, coverageProgressHi = 50, 52
+	sniProgressLo, sniProgressHi           = 52, 55
+)
+
+// reportVerificationStep двигает прогресс best-effort проверки (покрытие/SNI)
+// внутри отрезка [lo, hi]: доля done/total доменов и подпись текущего домена.
+func (s *Syncer) reportVerificationStep(name, phase string, dry bool, lo, hi, done, total int, detail string) {
+	if total <= 0 {
+		return
+	}
+	pct := lo + (hi-lo)*done/total
+	if pct > hi {
+		pct = hi
+	}
+	s.setProgressDetail(name, phase, pct, dry, fmt.Sprintf("%s (%d/%d)", detail, done, total))
+}
+
 // collectProgressFunc возвращает приёмник прогресса сбора: подшаги коллекторов
 // обновляют Detail текущей фазы, не меняя её название.
 func (s *Syncer) collectProgressFunc(name string, dry bool) collectors.ProgressFunc {
@@ -528,8 +550,14 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// 4a. Контроль покрытия: текущие A-записи доменов должны входить в набор,
 	// иначе сервис через VPN работать не будет. Проверка best-effort —
 	// сбор не блокируется, только WARN и поле в результате.
+	// Долгая фаза (резолв десятков доменов): прогресс двигается по доменам
+	// в отрезке [50,52], иначе UI замирал бы на «агрегация префиксов · 50%».
 	svcDomains := serviceDomains(name, ov, classifier.Classify(name, ov.Method))
-	cov := s.checkServiceCoverage(ctx, name, svcDomains, agg)
+	cov := s.checkServiceCoverageProgress(ctx, svcDomains, agg,
+		func(done, total int, domain string) {
+			s.reportVerificationStep(name, "контроль покрытия", dry,
+				coverageProgressLo, coverageProgressHi, done, total, "DNS: "+domain)
+		})
 	res.Coverage = cov
 	if !cov.Complete() {
 		log.Warn("часть разрешённых адресов вне собранного набора, сервис может не работать через VPN",
@@ -551,8 +579,13 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// Шумят только провалы primary-домена (первый в списке — домен самого
 	// сервиса); aux-домены (googlevideo.com и т.п.) склонны к ложным
 	// срабатываниям и видны лишь в Verification.
+	// Прогресс по доменам в отрезке [52,55].
 	if verifySNI {
-		vds := s.verifyServiceSNI(ctx, svcDomains)
+		vds := s.verifyServiceSNIProgress(ctx, svcDomains,
+			func(done, total int, domain string) {
+				s.reportVerificationStep(name, "SNI-проба", dry,
+					sniProgressLo, sniProgressHi, done, total, "TLS: "+domain)
+			})
 		res.Verification = vds
 		if primary := primarySNIFailed(vds); len(primary) > 0 {
 			var ips []string

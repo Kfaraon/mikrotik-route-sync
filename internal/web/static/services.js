@@ -1290,6 +1290,26 @@
     pollProgressOnce();
   }
 
+  // resumeProgressPoll — возобновление поллинга при загрузке страницы
+  // (открыта/возврат с другой страницы во время чужого синка). Один раз
+  // спрашиваем /progress: если синк идёт — поднимаем интервал, иначе ничего.
+  function resumeProgressPoll() {
+    if (progressPoll.timer) return;
+    return api("/api/v1/progress").then(function (map) {
+      var active = map && typeof map === "object" ? map : {};
+      if (!Object.keys(active).length) {
+        state.progress = {};
+        updateProgressRows();
+        return;
+      }
+      progressPoll.sawActive = true;
+      progressPoll.empty = 0;
+      state.progress = active;
+      updateProgressRows();
+      progressPoll.timer = setInterval(pollProgressOnce, 900);
+    }).catch(function () { /* тихо */ });
+  }
+
   function stopProgressPoll() {
     if (progressPoll.timer) {
       clearInterval(progressPoll.timer);
@@ -1522,7 +1542,7 @@
       state.booted = true;
 
       // Страница могла быть открыта в момент чужой синхронизации.
-      pollProgressOnce();
+      resumeProgressPoll();
 
       if (state.details.open) {
         renderDetails();

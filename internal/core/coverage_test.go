@@ -82,3 +82,30 @@ func TestCoverageReportCompleteNil(t *testing.T) {
 		t.Fatal("nil report must be complete")
 	}
 }
+
+// checkCoverageProgress сообщает шаги по доменам (для UI-прогресса долгой
+// фазы контроля покрытия).
+func TestCheckCoverageProgressReportsSteps(t *testing.T) {
+	resolve := fakeResolve(map[string][]string{
+		"a.net": {"10.1.0.5"},
+		"b.net": {"10.1.0.6"},
+	}, nil)
+
+	type step struct {
+		done, total int
+		domain      string
+	}
+	var steps []step
+	checkCoverageProgress(context.Background(), resolve, []string{"a.net", "b.net"},
+		mustPrefixes("10.1.0.0/24"),
+		func(done, total int, domain string) {
+			steps = append(steps, step{done, total, domain})
+		})
+
+	if len(steps) != 2 {
+		t.Fatalf("expected 2 steps, got %+v", steps)
+	}
+	if steps[0] != (step{0, 2, "a.net"}) || steps[1] != (step{1, 2, "b.net"}) {
+		t.Fatalf("unexpected steps: %+v", steps)
+	}
+}

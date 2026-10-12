@@ -171,3 +171,31 @@ func (f *flakyNotifier) SyncDone(context.Context, []notifier.SyncResult, any, bo
 	return nil
 }
 func (f *flakyNotifier) Error(context.Context, string, error) error { return nil }
+
+// verifyServiceSNIProgress сообщает шаги по доменам для UI-прогресса; кэш не
+// мешает сосчитать шаги (колбэк вызывается до обращения к кэшу).
+func TestVerifyServiceSNIProgressReportsSteps(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+
+	// Резолвер в никуда: домены не резолвятся, вердикты пустые, но шаги идут.
+	s.resPtr.Store(deadEndResolver())
+
+	type step struct {
+		done, total int
+		domain      string
+	}
+	var steps []step
+	s.verifyServiceSNIProgress(context.Background(), []string{"a.net", "b.net", "c.net"},
+		func(done, total int, domain string) {
+			steps = append(steps, step{done, total, domain})
+		})
+
+	if len(steps) != 3 {
+		t.Fatalf("expected 3 steps, got %+v", steps)
+	}
+	for i, want := range []string{"a.net", "b.net", "c.net"} {
+		if steps[i].done != i || steps[i].total != 3 || steps[i].domain != want {
+			t.Fatalf("step %d: %+v", i, steps[i])
+		}
+	}
+}

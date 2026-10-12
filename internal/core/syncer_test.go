@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -281,5 +282,40 @@ func TestApplyPresetRefreshKeepsManual(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("manual domain lost after refresh")
+	}
+}
+
+// reportVerificationStep отображает долю done/total доменов в отрезок
+// [lo,hi] и несёт подпись текущего домена. Верхняя граница не превышается.
+func TestReportVerificationStep(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+
+	cases := []struct {
+		done, total int
+		wantPct     int
+	}{
+		{0, 4, 50}, // начало отрезка [50,52]
+		{1, 4, 50},
+		{2, 4, 51},
+		{3, 4, 51},
+		{4, 4, 52}, // конец отрезка
+		{5, 4, 52}, // переполнение зажато верхней границей
+	}
+	for _, c := range cases {
+		s.reportVerificationStep("yt", "контроль покрытия", false, 50, 52, c.done, c.total, "DNS: x")
+		got := s.ProgressSnapshot()["yt"]
+		if got.Percent != c.wantPct {
+			t.Fatalf("done=%d total=%d: pct=%d want %d", c.done, c.total, got.Percent, c.wantPct)
+		}
+		if got.Detail != fmt.Sprintf("DNS: x (%d/%d)", c.done, c.total) {
+			t.Fatalf("detail=%q", got.Detail)
+		}
+	}
+
+	// Нет доменов — шаг не двигает прогресс.
+	s.clearProgress("yt")
+	s.reportVerificationStep("yt", "контроль покрытия", false, 50, 52, 0, 0, "DNS: x")
+	if _, ok := s.ProgressSnapshot()["yt"]; ok {
+		t.Fatal("zero total must not set progress")
 	}
 }

@@ -130,11 +130,22 @@ const (
 // verifyServiceSNI — SNI-проба доменов сервиса с кэшем. Домены без резолва
 // пропускаются молча (о них уже сигналит контроль покрытия).
 func (s *Syncer) verifyServiceSNI(ctx context.Context, domains []string) []*SNIVerdict {
+	return s.verifyServiceSNIProgress(ctx, domains, nil)
+}
+
+// verifyServiceSNIProgress — как verifyServiceSNI, но с колбэком прогресса:
+// onStep(done, total, domain) вызывается перед проверкой каждого домена
+// (best-effort, только для UI-прогресса долгой фазы).
+func (s *Syncer) verifyServiceSNIProgress(ctx context.Context, domains []string, onStep func(done, total int, domain string)) []*SNIVerdict {
 	var out []*SNIVerdict
 	v := &SNIVerifier{}
-	for _, d := range domains {
+	total := len(domains)
+	for i, d := range domains {
 		if ctx.Err() != nil {
 			break
+		}
+		if onStep != nil {
+			onStep(i, total, d)
 		}
 		s.sniMu.Lock()
 		e, ok := s.sniCache[d]

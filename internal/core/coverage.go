@@ -27,11 +27,22 @@ func (r *CoverageReport) Complete() bool {
 // сверка каждого IPv4-адреса с набором префиксов. IPv6 не участвует
 // (проект работает только с IPv4).
 func checkCoverage(ctx context.Context, resolve func(context.Context, string) ([]string, error), domains []string, prefixes []netip.Prefix) *CoverageReport {
+	return checkCoverageProgress(ctx, resolve, domains, prefixes, nil)
+}
+
+// checkCoverageProgress — как checkCoverage, но с колбэком прогресса:
+// onStep(done, total, domain) вызывается перед резолвом каждого домена
+// (best-effort, только для UI-прогресса долгой фазы).
+func checkCoverageProgress(ctx context.Context, resolve func(context.Context, string) ([]string, error), domains []string, prefixes []netip.Prefix, onStep func(done, total int, domain string)) *CoverageReport {
 	rep := &CoverageReport{}
 	seen := map[string]bool{}
-	for _, d := range domains {
+	total := len(domains)
+	for i, d := range domains {
 		if ctx.Err() != nil {
 			break
+		}
+		if onStep != nil {
+			onStep(i, total, d)
 		}
 		ips, err := resolve(ctx, d)
 		if err != nil || len(ips) == 0 {
@@ -64,10 +75,17 @@ func checkCoverage(ctx context.Context, resolve func(context.Context, string) ([
 // checkServiceCoverage — покрытие для сервиса: домены через serviceDomains,
 // резолв через резолвер синкера.
 func (s *Syncer) checkServiceCoverage(ctx context.Context, name string, domains []string, prefixes []netip.Prefix) *CoverageReport {
+	return s.checkServiceCoverageProgress(ctx, domains, prefixes, nil)
+}
+
+// checkServiceCoverageProgress — как checkServiceCoverage, но с колбэком
+// прогресса по доменам (для UI в долгой фазе синка; name не нужен —
+// подпись фазы формирует вызывающий).
+func (s *Syncer) checkServiceCoverageProgress(ctx context.Context, domains []string, prefixes []netip.Prefix, onStep func(done, total int, domain string)) *CoverageReport {
 	if len(domains) == 0 {
 		return &CoverageReport{}
 	}
-	return checkCoverage(ctx, func(ctx context.Context, d string) ([]string, error) {
+	return checkCoverageProgress(ctx, func(ctx context.Context, d string) ([]string, error) {
 		return s.resolver().ResolveDomain(ctx, d)
-	}, domains, prefixes)
+	}, domains, prefixes, onStep)
 }
