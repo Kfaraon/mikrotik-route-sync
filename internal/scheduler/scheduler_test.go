@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 )
 
 func TestToCron(t *testing.T) {
@@ -94,9 +96,13 @@ func TestDispatchStopNoWaitGroupRace(t *testing.T) {
 	s := &Scheduler{log: slog.Default()} // nil syncer: run паникует и восстанавливается
 	s.sem = make(chan struct{}, 4)
 	s.semPub.Store(s.sem)
+	bctx, bcancel := context.WithCancel(context.Background())
+	s.basePub.Store(syncBase{ctx: bctx})
+	s.baseCancel = bcancel
 	s.runActive = true
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var callers sync.WaitGroup
 	for i := 0; i < 200; i++ {
 		callers.Add(1)
@@ -113,4 +119,39 @@ func TestDispatchStopNoWaitGroupRace(t *testing.T) {
 	s.runMu.Unlock()
 	s.wg.Wait()
 	callers.Wait()
+}
+
+// Reload не должен отменять базовый контекст идущего синка, а Stop — должен.
+func TestReloadKeepsSyncBaseContext(t *testing.T) {
+	s := &Scheduler{log: slog.Default(), cfg: &config.Config{}}
+	s.mu.Lock()
+	s.started = true
+	s.startLocked(true) // создаёт base-поколение
+	s.mu.Unlock()
+	base1, _ := s.basePub.Load().(syncBase)
+	if base1.ctx == nil || base1.invalid {
+		t.Fatal("startLocked must publish a valid sync base")
+	}
+
+	// Reload пересоздаёт машинерию, но base сохраняется.
+	if err := s.ReloadQuiet(); err != nil {
+		t.Fatalf("ReloadQuiet: %v", err)
+	}
+	base2, _ := s.basePub.Load().(syncBase)
+	if base2.ctx == nil || base2.invalid {
+		t.Fatal("reload must keep a valid sync base")
+	}
+	if base1.ctx.Err() != nil {
+		t.Fatal("reload must not cancel the running sync base context")
+	}
+
+	// Stop инвалидирует и отменяет базовый контекст.
+	s.Stop(context.Background())
+	base3, _ := s.basePub.Load().(syncBase)
+	if !base3.invalid {
+		t.Fatal("stop must invalidate the sync base")
+	}
+	if base1.ctx.Err() == nil {
+		t.Fatal("stop must cancel the running sync base context")
+	}
 }

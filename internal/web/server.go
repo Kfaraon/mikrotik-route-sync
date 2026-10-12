@@ -2088,10 +2088,13 @@ func (s *Server) apiSyncOne(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	tctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	tctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
 	defer cancel()
-	// Без WithoutCancel: обрыв соединения клиентом прерывает ожидание,
-	// дедлайн ограничивает висящий роутер (как у планировщика/бота).
+	// Без привязки к соединению клиента: транзакция применения изменений
+	// длится минутами (сбор + SNI), и обрыв связи (закрытие вкладки, таймаут
+	// клиента) не должен рушить её на середине — иначе частично применённые
+	// изменения и «rate limit wait: context canceled». Дедлайн ограничивает
+	// висящий роутер (как у планировщика/бота/веера).
 	res, err := s.syncer.SyncService(tctx, name, req.DryRun, req.Force)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -2106,9 +2109,9 @@ func (s *Server) apiSyncOne(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiDryRun(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	// Предел сверху как у одиночного синка; обрыв соединения клиентом
-	// тоже прерывает (r.Context) — ждать некого.
-	dctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	// Предел сверху как у одиночного синка; развязка от соединения клиента —
+	// как в apiSyncOne: обрыв связи не прерывает транзакцию на середине.
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
 	defer cancel()
 	res, err := s.syncer.SyncService(dctx, name, true, false)
 	if err != nil {

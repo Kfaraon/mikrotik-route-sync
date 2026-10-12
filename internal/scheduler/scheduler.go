@@ -24,10 +24,18 @@ type Scheduler struct {
 
 	mu      sync.Mutex
 	cron    *cron.Cron
-	cancel  context.CancelFunc
+	cancel  context.CancelFunc // отменяет планировочную машинерию (cron/heap), не сами синки
 	wg      sync.WaitGroup
 	sem     chan struct{}
 	started bool
+
+	// basePub/baseCancel — базовый контекст тел синков. В отличие от s.cancel
+	// он НЕ отменяется при Reload: иначе плановая перезагрузка (reload_interval,
+	// SIGHUP, смена расписания) обрывала идущий синк на середине транзакции
+	// («rate limit wait: context canceled»). Отменяется только в Stop.
+	// basePub — atomic: dispatch читает его без s.mu.
+	basePub    atomic.Value // syncBase
+	baseCancel context.CancelFunc
 
 	// semPub — публикация текущего семафора для dispatch без s.mu: иначе
 	// Reload (держит s.mu) → stopLocked (ждёт cron.Stop) → dispatch (ждёт
@@ -44,6 +52,14 @@ type Scheduler struct {
 	// вместо горутины на сервис. Это предотвращает утечку горутин
 	// при большом количестве сервисов.
 	intervalHeap *intervalHeap
+}
+
+// syncBase — базовый контекст тел синков. invalid помечает устаревшее
+// поколение (после Stop): dispatch, прочитавший такой снапшот, не запускает
+// синк, а снимает место в wg.
+type syncBase struct {
+	ctx     context.Context
+	invalid bool
 }
 
 func NewScheduler(cfg *config.Config, s *core.Syncer) *Scheduler {
@@ -95,6 +111,15 @@ func (s *Scheduler) startLocked(quiet bool) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
+
+	// Базовый контекст тел синков переживает Reload (см. поле basePub):
+	// иначе смена расписания каждую минуту рвала бы идущий синк.
+	// Переиспользуем прежний (валидный) — Stop инвалидирует его.
+	if prev, ok := s.basePub.Load().(syncBase); !ok || prev.invalid {
+		bctx, bcancel := context.WithCancel(context.Background())
+		s.basePub.Store(syncBase{ctx: bctx})
+		s.baseCancel = bcancel
+	}
 
 	// Разрешаем dispatch откладывать места в wg (до wg.Wait в Stop).
 	s.runMu.Lock()
@@ -215,12 +240,16 @@ func (s *Scheduler) addLocked(ctx context.Context, service, spec string) {
 	s.log.Warn("неподдерживаемое расписание", "service", service, "schedule", spec)
 }
 
-func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
+func (s *Scheduler) dispatch(schedCtx context.Context, service, spec string) {
 	// wg.Add(1) — до захвата семафора, под runMu: иначе Stop() успевал
 	// вызвать wg.Wait() (при уже отменённом ctx), а горутина после этого
 	// делала Add на счётчике с нулём — гонка "WaitGroup misuse".
+	// base — контекст тела синка: переживает Reload, отменяется только Stop.
+	// При невалидном поколении (после Stop) синк не запускаем.
+	base, _ := s.basePub.Load().(syncBase)
+
 	s.runMu.Lock()
-	if !s.runActive {
+	if !s.runActive || base.invalid || base.ctx == nil {
 		s.runMu.Unlock()
 		return
 	}
@@ -245,9 +274,9 @@ func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
 		go func(gate chan struct{}) {
 			defer s.wg.Done()
 			defer func() { <-gate }()
-			s.run(ctx, service, spec)
+			s.run(base.ctx, service, spec)
 		}(sem)
-	case <-ctx.Done():
+	case <-schedCtx.Done():
 		s.log.Warn("синхронизация по расписанию пропущена: контекст отменён", "service", service, "schedule", spec)
 	case <-time.After(5 * time.Minute):
 		s.log.Warn("синхронизация по расписанию пропущена: достигнут лимит параллельных", "service", service, "schedule", spec)
@@ -293,6 +322,13 @@ func (s *Scheduler) Stop(ctx context.Context) {
 
 	s.mu.Lock()
 	s.stopLocked(ctx)
+	// Инвалидируем базовый контекст синков и отменяем его: это единственное
+	// место, где идущий синк обрывается (Reload его больше не трогает).
+	if bc := s.baseCancel; bc != nil {
+		s.basePub.Store(syncBase{invalid: true})
+		bc()
+		s.baseCancel = nil
+	}
 	s.started = false
 	s.mu.Unlock()
 	done := make(chan struct{})
