@@ -1,6 +1,7 @@
 # === Бинарные файлы и артефакты сборки ===
-mikrotik-route-sync
-app
+# Слэш в начале: только корневой бинарник, иначе паттерн «app» глушит каталог cmd/app/.
+/mikrotik-route-sync
+/app
 bin/
 *.exe
 *.exe~

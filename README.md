@@ -744,6 +744,10 @@ ASN и сетевые данные кэшируются в `bbolt`, чтобы �
 - **Healthcheck** через `/healthz`
 - Ограничение ресурсов: `mem_limit: 128m`, `cpus: 1.0`
 
+`.dockerignore` не пускает в контекст сборки секреты и рантайм-данные
+(`config.yaml`, `data/`, `logs/`, `.git`) и тяжёлый `rublock.yaml` — иначе
+`COPY . .` вместе с `go:embed data/*.yaml` вшивал бы ~39 МБ RU-пресета в бинарь.
+
 ### Зеркала (для сетей без прямого доступа к Docker Hub / proxy.golang.org)
 
 Dockerfile по умолчанию тянет base-образы через зеркало и использует GOPROXY-зеркало:
