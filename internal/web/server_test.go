@@ -1892,6 +1892,77 @@ func TestSettingsHasSuggestRows(t *testing.T) {
 	}
 }
 
+// TestSettingsPresetsMirror — блок «Пресеты и зеркала» на странице настроек:
+// кнопки ручной докачки и статус обоих зеркал из mirror.json/upstream.json.
+func TestSettingsPresetsMirror(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	absCache := filepath.Join(t.TempDir(), "c.db")
+	cfg.Lock()
+	cfg.CachePath = absCache
+	cfg.Unlock()
+	dir := filepath.Join(filepath.Dir(absCache), "presets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Состояние обоих зеркал: дата в локальном времени + счётчики.
+	if err := os.WriteFile(filepath.Join(dir, "mirror.json"),
+		[]byte("updated_at: 2026-01-02T03:04:05Z\nsource: antifilter\nentries: 42\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "upstream.json"),
+		[]byte("updated_at: 2026-01-02T03:04:05Z\nfiles: 321\nsize: 2097152\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+
+	for _, want := range []string{
+		`id="settings-mirror"`,
+		`id="mirror-refresh-ru"`, `data-source="ru"`,
+		`id="mirror-refresh-upstream"`, `data-source="upstream"`,
+		`id="mirror-refresh-all"`, `data-source="all"`,
+		`42 доменов`,
+		`321 файлов`,
+		`2.0 МБ`,
+		`Пресеты и зеркала`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("settings page missing %q", want)
+		}
+	}
+	// Поле расписания переехало в новую группу, но осталось в форме.
+	if !strings.Contains(page, `name="presets.update_schedule"`) {
+		t.Fatal("presets.update_schedule must stay in the form")
+	}
+}
+
+// TestSettingsPresetsMirrorNoCache — без cache_path блок честно сообщает,
+// что зеркало недоступно, и не показывает кнопки докачки.
+func TestSettingsPresetsMirrorNoCache(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	cfg.Lock()
+	cfg.CachePath = ""
+	cfg.Unlock()
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/settings", "", nil)
+
+	if !strings.Contains(page, `id="settings-mirror"`) {
+		t.Fatal("mirror block must render even without cache_path")
+	}
+	if !strings.Contains(page, "Зеркало недоступно") {
+		t.Fatal("must warn about missing cache_path")
+	}
+	if strings.Contains(page, `id="mirror-refresh-all"`) {
+		t.Fatal("refresh buttons must be hidden without cache_path")
+	}
+}
+
 // TestMaxBodyLimit — тело больше 1МБ режется на всех методах с телом.
 func TestMaxBodyLimit(t *testing.T) {
 	srv, _ := newTestServer(t)

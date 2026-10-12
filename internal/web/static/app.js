@@ -751,5 +751,102 @@
     });
   })();
 
+  // Пресеты и зеркала: ручная докачка RU-блоклиста (rublock) и v2fly-пресетов.
+  // Кнопки блокируются на время операции (десятки МБ, минуты), у нажатой
+  // подпись «Обновление…»; по завершении — статус и тост.
+  (function () {
+    var root = document.getElementById("settings-mirror");
+    if (!root) return;
+
+    var buttons = [
+      document.getElementById("mirror-refresh-ru"),
+      document.getElementById("mirror-refresh-upstream"),
+      document.getElementById("mirror-refresh-all")
+    ].filter(Boolean);
+    if (!buttons.length) return;
+
+    var result = document.getElementById("mirror-result");
+
+    function fmtTime(s) {
+      if (!s) return "";
+      var d = new Date(s);
+      if (isNaN(d.getTime())) return s;
+      function p(n) { return (n < 10 ? "0" : "") + n; }
+      return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+        " " + p(d.getHours()) + ":" + p(d.getMinutes());
+    }
+
+    function fmtSize(n) {
+      if (!n && n !== 0) return "";
+      if (n >= 1073741824) return (n / 1073741824).toFixed(1) + " ГБ";
+      if (n >= 1048576) return (n / 1048576).toFixed(1) + " МБ";
+      if (n >= 1024) return (n / 1024).toFixed(1) + " КБ";
+      return n + " Б";
+    }
+
+    function setBusy(on, activeBtn) {
+      buttons.forEach(function (b) {
+        if (on && b.dataset.origLabel === undefined) {
+          b.dataset.origLabel = b.textContent;
+        }
+        b.disabled = !!on;
+        if (!on && b.dataset.origLabel !== undefined) {
+          b.textContent = b.dataset.origLabel;
+          delete b.dataset.origLabel;
+        }
+      });
+      if (on && activeBtn) activeBtn.textContent = "Обновление…";
+      if (result) result.textContent = on ? "Обновление… подождите." : "";
+    }
+
+    function refresh(source, btn) {
+      setBusy(true, btn);
+      fetch("/api/v1/presets/refresh?source=" + encodeURIComponent(source), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-CSRF-Token": csrf(), Accept: "application/json" }
+      }).then(function (response) {
+        return response.json().catch(function () { return null; }).then(function (body) {
+          if (!response.ok || !body || body.ok !== true) {
+            var msg = body && body.error ? body.error : "HTTP " + response.status;
+            throw new Error(msg);
+          }
+          return body.data || {};
+        });
+      }).then(function (data) {
+        var ru = document.getElementById("mirror-ru-status");
+        if (ru && data.ru) {
+          ru.textContent = "обновлено " + fmtTime(data.ru.updated_at) + " · " + data.ru.entries + " доменов";
+        }
+        var up = document.getElementById("mirror-up-status");
+        if (up && data.upstream) {
+          up.textContent = "обновлено " + fmtTime(data.upstream.updated_at) + " · " +
+            data.upstream.files + " файлов · " + fmtSize(data.upstream.size);
+        }
+        var parts = [];
+        if (data.ru) parts.push("RU: " + data.ru.entries + " доменов");
+        if (data.upstream) parts.push("v2fly: " + data.upstream.files + " файлов");
+        if (window.mrsToast) window.mrsToast("Зеркала обновлены. " + parts.join(", "));
+      }).catch(function (err) {
+        var msg = String((err && err.message) || err);
+        if (msg.indexOf("already running") !== -1 || msg.indexOf("429") !== -1) {
+          msg = "Обновление уже выполняется, дождитесь завершения.";
+        }
+        if (result) result.textContent = "";
+        if (window.mrsToast) window.mrsToast("Не удалось обновить зеркала: " + msg, true);
+      }).then(function () {
+        // finally: снять busy в любом случае.
+        setBusy(false);
+      });
+    }
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (btn.disabled) return;
+        refresh(btn.getAttribute("data-source"), btn);
+      });
+    });
+  })();
+
 })();
 

@@ -995,3 +995,32 @@ func TestDiskOverlay(t *testing.T) {
 		t.Fatal("disk overlay miss after flush")
 	}
 }
+
+// TestUpstreamInfo — читатель состояния v2fly-зеркала: nil без файла,
+// разобранные поля при наличии.
+func TestUpstreamInfo(t *testing.T) {
+	dir := t.TempDir()
+	if got := UpstreamInfo(dir); got != nil {
+		t.Fatalf("без upstream.json ожидался nil, got %+v", got)
+	}
+
+	raw := "updated_at: 2026-01-02T03:04:05Z\nsource: https://example\nfiles: 321\nsize: 1234567\n"
+	if err := os.WriteFile(dir+"/upstream.json", []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := UpstreamInfo(dir)
+	if got == nil {
+		t.Fatal("upstream.json не прочитан")
+	}
+	if got.Files != 321 || got.Size != 1234567 || got.UpdatedAt != "2026-01-02T03:04:05Z" {
+		t.Fatalf("неверные поля: %+v", got)
+	}
+
+	// Битый файл — nil, без паники.
+	if err := os.WriteFile(dir+"/upstream.json", []byte("files: [unclosed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := UpstreamInfo(dir); got != nil {
+		t.Fatalf("битый upstream.json должен давать nil, got %+v", got)
+	}
+}

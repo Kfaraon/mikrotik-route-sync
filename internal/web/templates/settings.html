@@ -85,6 +85,41 @@
           </div>
           {{ end }}
         </div>
+        {{ if eq $group.Title "Пресеты и зеркала" }}
+        <div class="settings-mirror" id="settings-mirror">
+          <p class="setting-help">
+            Ручная докачка зеркал пресетов. RU-зеркало — плоский список заблокированных в RU
+            доменов (antifilter.download, пресет <code>rublock</code>); v2fly — каталог сервисных
+            пресетов. Скачивается десятки мегабайт, поэтому операция может занять несколько минут.
+            Обновление продолжится на сервере, даже если закрыть страницу, но статус здесь
+            обновится только по завершении запроса на открытой вкладке.
+          </p>
+          {{ if not $.Mirror.Configured }}
+          <p class="svc-muted">Зеркало недоступно: в конфиге не задан <code>cache_path</code>.</p>
+          {{ else }}
+          <ul class="mirror-status">
+            <li>
+              <b>RU-зеркало (rublock)</b>
+              <span id="mirror-ru-status">
+                {{ if $.Mirror.RUUpdated }}обновлено {{ $.Mirror.RUUpdated }} · {{ $.Mirror.RUEntries }} доменов{{ else }}не скачано{{ end }}
+              </span>
+            </li>
+            <li>
+              <b>v2fly-пресеты</b>
+              <span id="mirror-up-status">
+                {{ if $.Mirror.UpUpdated }}обновлено {{ $.Mirror.UpUpdated }} · {{ $.Mirror.UpFiles }} файлов · {{ $.Mirror.UpSize }}{{ else }}не скачано{{ end }}
+              </span>
+            </li>
+          </ul>
+          <div class="row mirror-actions">
+            <button type="button" class="btn btn-outline" id="mirror-refresh-ru" data-source="ru">Обновить RU-зеркало</button>
+            <button type="button" class="btn btn-outline" id="mirror-refresh-upstream" data-source="upstream">Обновить v2fly-пресеты</button>
+            <button type="button" class="btn btn-primary" id="mirror-refresh-all" data-source="all">Обновить всё</button>
+            <span id="mirror-result" class="muted" role="status" aria-live="polite"></span>
+          </div>
+          {{ end }}
+        </div>
+        {{ end }}
       </article>
       {{ end }}
 

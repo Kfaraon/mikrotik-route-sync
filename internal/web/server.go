@@ -1455,8 +1455,8 @@ var settingsSpec = []settingSpec{
 		"off — кнопка скрыта; key — полный (нужен ключ); anonymous — разовый best-effort с длинным кэшем."},
 	{"Подбор доменов", "suggest.sources", "Порядок источников", "list",
 		"preset,urlscan через запятую. Ручной ввод доступен всегда."},
-	{"Подбор доменов", "presets.update_schedule", "Обновление зеркала", "text",
-		"Расписание докачки RU-зеркала (cron/every/daily как у синков). Пусто — только кнопкой."},
+	{"Пресеты и зеркала", "presets.update_schedule", "Автообновление зеркал", "text",
+		"Расписание фоновой докачки RU-зеркала и v2fly-пресетов (cron/every/daily как у синков). Пусто — только кнопкой ниже."},
 }
 
 type settingRow struct {
@@ -1522,7 +1522,64 @@ func (s *Server) pageSettings(w http.ResponseWriter, r *http.Request) {
 		"Groups":     s.settingGroups(),
 		"CDNSources": s.cdnSourceRows(),
 		"CDNParsers": cdnParsersList,
+		"Mirror":     s.presetsMirrorView(),
 	})
+}
+
+// presetsMirrorView — состояние зеркал пресетов для страницы настроек:
+// RU-блоклист (rublock) и v2fly-пресеты. Пустые даты означают «не скачано».
+type presetsMirrorView struct {
+	Configured bool   // задан ли каталог зеркала (cache_path)
+	RUUpdated  string // локальное время последней докачки RU-зеркала
+	RUEntries  int    // доменов в rublock
+	UpUpdated  string // локальное время последней докачки v2fly
+	UpFiles    int    // файлов data/* в upstream
+	UpSize     string // размер upstream, человекочитаемо
+}
+
+func (s *Server) presetsMirrorView() presetsMirrorView {
+	dir := s.presetsDir()
+	v := presetsMirrorView{Configured: dir != ""}
+	if dir == "" {
+		return v
+	}
+	if m := presets.MirrorInfo(dir); m != nil {
+		v.RUUpdated = formatMirrorTime(m.UpdatedAt)
+		v.RUEntries = m.Entries
+	}
+	if u := presets.UpstreamInfo(dir); u != nil {
+		v.UpUpdated = formatMirrorTime(u.UpdatedAt)
+		v.UpFiles = u.Files
+		v.UpSize = humanBytes(u.Size)
+	}
+	return v
+}
+
+// formatMirrorTime переводит RFC3339-отметку зеркала в локальное время.
+// Не распарсилось (пусто/битый файл) — возвращаем как есть.
+func formatMirrorTime(s string) string {
+	if s == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return s
+	}
+	return t.Local().Format("2006-01-02 15:04")
+}
+
+// humanBytes — размер в КБ/МБ/ГБ для подписи статуса зеркала.
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f ГБ", float64(n)/float64(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f МБ", float64(n)/float64(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f КБ", float64(n)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%d Б", n)
+	}
 }
 
 // cdnSourceRow — строка таблицы источников CDN в настройках.
@@ -1753,15 +1810,19 @@ func (s *Server) apiPresets(w http.ResponseWriter, r *http.Request) {
 			list[i].Domains = nil
 		}
 	}
-	var mirror any
+	var mirror, upstream any
 	if dir := s.presetsDir(); dir != "" {
 		if m := presets.MirrorInfo(dir); m != nil {
 			mirror = m
 		}
+		if u := presets.UpstreamInfo(dir); u != nil {
+			upstream = u
+		}
 	}
 	writeOK(w, map[string]any{
-		"presets": list,
-		"mirror":  mirror,
+		"presets":  list,
+		"mirror":   mirror,
+		"upstream": upstream,
 		"suggest": map[string]any{
 			"v2fly":   v2flyOn,
 			"ru":      ruOn,
@@ -1819,8 +1880,13 @@ func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
 		s.refreshMu.Unlock()
 	}()
 	out := map[string]any{}
+	// Докачка зеркал — десятки МБ и минуты: обрыв/таймаут клиента не должен
+	// рвать её на середине. Отмена — по остановке сервера (baseCtx), как у
+	// синков и удаления сервиса; таймаут ограничивает зависший источник.
+	dctx, cancel := context.WithTimeout(s.baseCtx(), 10*time.Minute)
+	defer cancel()
 	if need["ru"] {
-		st, err := presets.RefreshMirror(r.Context(), dir)
+		st, err := presets.RefreshMirror(dctx, dir)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "ru: "+err.Error())
 			return
@@ -1828,7 +1894,7 @@ func (s *Server) apiPresetsRefresh(w http.ResponseWriter, r *http.Request) {
 		out["ru"] = st
 	}
 	if need["upstream"] {
-		st, err := presets.RefreshUpstream(r.Context(), dir)
+		st, err := presets.RefreshUpstream(dctx, dir)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "upstream: "+err.Error())
 			return

@@ -183,6 +183,19 @@ type UpstreamMeta struct {
 	Size      int64  `yaml:"size" json:"size"`
 }
 
+// UpstreamInfo читает состояние v2fly-зеркала (nil если не скачивалось).
+func UpstreamInfo(dir string) *UpstreamMeta {
+	raw, err := os.ReadFile(filepath.Join(dir, "upstream.json"))
+	if err != nil {
+		return nil
+	}
+	var m UpstreamMeta
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	return &m
+}
+
 // maxUpstreamBytes — tarball ~1МБ, запас с головой.
 const maxUpstreamBytes = 32 << 20
 
