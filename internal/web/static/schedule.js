@@ -757,13 +757,6 @@
     applyViews();
     rows.forEach(bindRow);
     bindGlobal();
-    // На телефоне фильтры стартуют свёрнутыми (как в «Списках адресов»).
-    try {
-      if (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) {
-        var disc = document.getElementById("schedFilterDisclosure");
-        if (disc) disc.removeAttribute("open");
-      }
-    } catch (e) { /* без matchMedia — раскрыто */ }
   }
 
   init();

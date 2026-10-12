@@ -78,14 +78,6 @@
         }
     }
 
-    // На телефоне фильтры стартуют свёрнутыми (6 полей съедают 2 экрана).
-    try {
-        if (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) {
-            var disc = document.getElementById("filterDisclosure");
-            if (disc) disc.removeAttribute("open");
-        }
-    } catch (e) { /* без matchMedia — раскрыто */ }
-
     // Карточки сворачиваются: видны адрес и комментарий, тап разворачивает.
     // Делегирование — строки серверные, класс переживает фильтрацию.
     (function () {
