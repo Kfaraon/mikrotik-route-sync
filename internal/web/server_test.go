@@ -29,6 +29,7 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
+	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 )
 
@@ -786,6 +787,46 @@ func TestAPIDeleteService(t *testing.T) {
 	st, _ = doJSON(client, ts.URL, "DELETE", "/api/v1/services/nonexistent", token, nil, "")
 	if st != http.StatusBadRequest {
 		t.Fatalf("unknown service: want 400, got %d", st)
+	}
+}
+
+// TestAPIDeleteServiceDetachedFromClientContext — обрыв/отмена клиентского
+// контекста не рвёт удаление: обработчик использует baseCtx сервера, а не
+// r.Context(). Здесь r.Context() уже отменён, но сервис обязан удалиться.
+func TestAPIDeleteServiceDetachedFromClientContext(t *testing.T) {
+	srv, cfg := newTestServer(t)
+
+	// Явный метод отключает автоопределение CDN (иначе тест ходит в сеть).
+	if err := srv.syncer.AddServiceWithConfig(context.Background(), "kept-svc",
+		config.ServiceOverride{Method: "whois"}); err != nil {
+		t.Fatalf("seed service: %v", err)
+	}
+
+	// Отменённый контекст запроса — как при обрыве соединения клиента.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/services/kept-svc?purge=false", nil)
+	reqCtx := chi.NewRouteContext()
+	reqCtx.URLParams.Add("name", "kept-svc")
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, reqCtx))
+
+	rec := httptest.NewRecorder()
+	srv.apiDeleteService(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete with cancelled client ctx: got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	cfg.RLock()
+	found := false
+	for _, p := range cfg.Services {
+		if p == "kept-svc" {
+			found = true
+		}
+	}
+	cfg.RUnlock()
+	if found {
+		t.Fatal("service must be removed despite cancelled client context")
 	}
 }
 

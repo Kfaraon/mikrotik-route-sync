@@ -158,6 +158,7 @@
     deleteKeep: byId("svc-delete-keep"),
     deletePurge: byId("svc-delete-purge"),
     deleteCancel: byId("svc-delete-cancel"),
+    deleteHint: byId("svc-delete-hint"),
     diffModal: byId("svc-diff-modal"),
     diffSubtitle: byId("svc-diff-subtitle"),
     diffSearch: byId("svc-diff-search"),
@@ -206,7 +207,8 @@
     cdn: null,
     delete: {
       open: false,
-      name: null
+      name: null,
+      busy: false
     }
   };
 
@@ -1851,16 +1853,54 @@
     });
   }
 
-  function deleteService(name, purge) {
+  function deleteService(name, purge, btn) {
+    // Немедленный отклик: блокируем кнопки модалки и показываем подсказку,
+    // пока идёт purge (последовательное удаление записей на роутере может
+    // занять минуты), иначе окно выглядит «зависшим».
+    setDeleteBusy(true, btn || (purge ? els.deletePurge : els.deleteKeep));
+
     return api("/api/v1/services/" + encodeURIComponent(name) + "?purge=" + (purge ? "true" : "false"), {
       method: "DELETE"
     }).then(function () {
       showToast("Сервис удалён: " + name + (purge ? " вместе с записями" : ""));
       delete state.selection[lower(name)];
+      setDeleteBusy(false);
       closeDelete();
       closeDrawer();
       return loadAll(true);
+    }, function (err) {
+      // Модалку оставляем открытой: можно повторить или отменить.
+      setDeleteBusy(false);
+      throw err;
     });
+  }
+
+  // setDeleteBusy переключает модалку удаления в рабочее состояние: кнопки
+  // заблокированы, у нажатой подпись «Удаление…», показана подсказка о
+  // длительности. Исходные подписи кнопок запоминаются при входе и
+  // восстанавливаются при выходе.
+  function setDeleteBusy(on, activeBtn) {
+    state.delete.busy = !!on;
+
+    each([els.deleteKeep, els.deletePurge, els.deleteCancel], function (b) {
+      if (!b) return;
+      if (on && b.dataset.origLabel === undefined) {
+        b.dataset.origLabel = b.textContent;
+      }
+      b.disabled = !!on;
+      if (!on && b.dataset.origLabel !== undefined) {
+        b.textContent = b.dataset.origLabel;
+        delete b.dataset.origLabel;
+      }
+    });
+
+    if (on && activeBtn) {
+      activeBtn.textContent = "Удаление…";
+    }
+
+    if (els.deleteHint) {
+      els.deleteHint.hidden = !on;
+    }
   }
 
   // ---------- Diff ----------
@@ -1974,6 +2014,8 @@
   }
 
   function openDelete(name) {
+    if (state.delete.busy) return;
+
     state.delete.name = name;
     state.delete.open = true;
 
@@ -1989,6 +2031,10 @@
   }
 
   function closeDelete() {
+    // Пока операция в процессе, окно не закрываем: пользователь должен
+    // видеть индикатор, а не «пустое» окно.
+    if (state.delete.busy) return;
+
     state.delete.open = false;
     state.delete.name = null;
 
@@ -3045,14 +3091,14 @@
 
     if (els.deleteKeep) {
       els.deleteKeep.addEventListener("click", function () {
-        if (!state.delete.name) return;
-        handlePromise(deleteService(state.delete.name, false));
+        if (!state.delete.name || state.delete.busy) return;
+        handlePromise(deleteService(state.delete.name, false, els.deleteKeep));
       });
     }
 
     if (els.deletePurge) {
       els.deletePurge.addEventListener("click", function () {
-        if (!state.delete.name) return;
+        if (!state.delete.name || state.delete.busy) return;
 
         var ok = window.confirm(
           "Удалить сервис " + state.delete.name + " и все записи AUTO:" + state.delete.name + "?"
@@ -3060,7 +3106,7 @@
 
         if (!ok) return;
 
-        handlePromise(deleteService(state.delete.name, true));
+        handlePromise(deleteService(state.delete.name, true, els.deletePurge));
       });
     }
 

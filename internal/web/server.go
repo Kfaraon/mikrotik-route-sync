@@ -2072,7 +2072,12 @@ func (s *Server) apiUpdateService(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiDeleteService(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	purge := r.URL.Query().Get("purge") == "1" || r.URL.Query().Get("purge") == "true"
-	if err := s.syncer.RemoveService(r.Context(), name, purge); err != nil {
+	// Purge последовательно удаляет записи на роутере (минуты): обрыв/таймаут
+	// клиента не должен рвать операцию на середине. Отмена — по остановке
+	// сервера (baseCtx), как у синков; таймаут ограничивает зависший роутер.
+	dctx, cancel := context.WithTimeout(s.baseCtx(), 10*time.Minute)
+	defer cancel()
+	if err := s.syncer.RemoveService(dctx, name, purge); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -2575,7 +2580,10 @@ func (s *Server) actionAddService(w http.ResponseWriter, r *http.Request) {
 func (s *Server) actionDeleteService(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	purge := r.FormValue("purge") == "on" || r.FormValue("purge") == "1"
-	if err := s.syncer.RemoveService(r.Context(), name, purge); err != nil {
+	// Как в apiDeleteService: обрыв клиента не рвёт purge на середине.
+	dctx, cancel := context.WithTimeout(s.baseCtx(), 10*time.Minute)
+	defer cancel()
+	if err := s.syncer.RemoveService(dctx, name, purge); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
