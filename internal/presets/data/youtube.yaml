@@ -11,47 +11,31 @@ domains:
   - youtu.be
   - youtube-nocookie.com
   - youtube-ui.l.google.com
-  - youtube.ae
-  - youtube.al
-  - youtube.am
-  - youtube.at
-  - youtube.az
-  - youtube.ba
-  - youtube.be
-  - youtube.bg
-  - youtube.bh
-  - youtube.bo
-  - youtube.by
-  - youtube.ca
   - youtube.cat
-  - youtube.ch
-  - youtube.cl
   - youtube.co
-  - youtube.co.ae
-  - youtube.co.at
-  - youtube.co.cr
-  - youtube.co.hu
-  - youtube.co.id
-  - youtube.co.il
-  - youtube.co.in
-  - youtube.co.jp
-  - youtube.co.ke
-  - youtube.co.kr
-  - youtube.co.ma
-  - youtube.co.nz
-  - youtube.co.th
-  - youtube.co.tz
-  - youtube.co.ug
-  - youtube.co.uk
-  - youtube.co.ve
-  - youtube.co.za
-  - youtube.co.zw
-  - youtube.com.ar
-  - youtube.com.au
-  - youtube.com.az
-  - youtube.com.bd
-  - youtube.com.bh
-  - youtube.com.bo
+  - youtube.com.co
+  - youtube.com.ly
+  - youtube.googleapis.com
+  - youtube.ly
+  - youtube.me
+  - youtube.soy
+  - youtube.tv
+  - youtubeeducation.com
+  - youtubeembeddedplayer.googleapis.com
+  - youtubefanfest.com
+  - youtubegaming.com
+  - youtubego.co.id
+  - youtubego.co.in
+  - youtubego.com
+  - youtubego.com.br
+  - youtubego.id
+  - youtubego.in
+  - youtubei.googleapis.com
+  - youtubekids.com
+  - youtubemobilesupport.com
+  - yt.be
+  - yt3.googleusercontent.com
+  - ytimg.com
 method: static_url
 source:
   repo: v2fly/domain-list-community

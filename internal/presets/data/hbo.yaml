@@ -11,21 +11,11 @@ domains:
   - forthethrone.com
   - h264.io
   - hbo-europe.com
-  - hbo.ba
-  - hbo.bg
   - hbo.com.c.footprint.net
   - hbo.com.edgesuite.net
-  - hbo.cz
   - hbo.eu
-  - hbo.hr
-  - hbo.hu
   - hbo.map.fastly.net
   - hbo.me
-  - hbo.mk
-  - hbo.pl
-  - hbo.ro
-  - hbo.rs
-  - hbo.sk
   - hboaccess.com
   - hboarchives.com
   - hboasia.com
@@ -52,6 +42,16 @@ domains:
   - hbomax.com
   - hbomax.eu
   - hbomaxcdn.com
+  - hbomaxdash.s.llnwi.net
+  - hbomediarelations.com
+  - hbonordic.com
+  - hbonordic.tv
+  - hbonow.com
+  - hboportugal.com
+  - hboprod.com
+  - hbospain.com
+  - hbotvsales.com
+  - homebox.com
 method: static_url
 source:
   repo: v2fly/domain-list-community

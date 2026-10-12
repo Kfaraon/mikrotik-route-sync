@@ -109,6 +109,7 @@ type Stats struct {
 	Blank            int      // пустых строк
 	Invalid          int      // непохожих на домен значений
 	Duplicates       int      // повторов доменов внутри пресета
+	Mirrors          int      // отброшено региональных зеркал бренда (brand.<ccTLD>)
 	Truncated        int      // срезано капом MaxDomains
 	MissingLists     []string // запрошенные, но отсутствующие апстрим-списки
 	MissingIncludes  []string // include: на несуществующий файл
@@ -161,6 +162,16 @@ func ParseUpstream(files map[string]string, src PresetSource) ([]Preset, Stats) 
 			showcase = heuristicShowcase(c.Slug, domains)
 			st.ShowcaseFallback = append(st.ShowcaseFallback,
 				c.Slug+": "+c.Showcase+" не найден, взят "+displayOrNone(showcase))
+		}
+
+		// Региональные зеркала бренда (youtube.ae, youtube.co.uk) — редиректы
+		// на витринный домен: они резолвятся в те же сети, что и он, но
+		// захламляют список и вытесняют реальную инфраструктуру под капом.
+		// Отбрасываем их ДО обрезки, освобождая место осмысленным доменам.
+		if brand := brandLabel(showcase); brand != "" {
+			before := len(domains)
+			domains = dropBrandMirrors(domains, brand)
+			st.Mirrors += before - len(domains)
 		}
 
 		domains = orderDomains(domains, showcase)
@@ -469,6 +480,68 @@ func dedupe(in []string) ([]string, int) {
 	return out, dup
 }
 
+// brandLabel — первая метка витринного домена (youtube.com → youtube).
+// Пусто, если витринный домен не задан или не является доменом.
+func brandLabel(showcase string) string {
+	if showcase == "" || !strings.Contains(showcase, ".") {
+		return ""
+	}
+	return showcase[:strings.Index(showcase, ".")]
+}
+
+// genericCC — «оронимические» двухбуквенные зоны: это не страна-зеркало
+// бренда, а самостоятельные gTLD-подобные домены (github.io, discord.gg,
+// signal.me, cloudflare.net сюда не входят). Их brand.<zone> отбрасывать
+// нельзя — иначе теряется реальная инфраструктура.
+var genericCC = map[string]bool{
+	"ai": true, "cc": true, "co": true, "eu": true, "fm": true, "gg": true,
+	"gl": true, "io": true, "ly": true, "me": true, "nu": true, "sh": true,
+	"st": true, "to": true, "tv": true, "us": true, "ws": true,
+}
+
+// subfixes — второуровневые суффиксы реестров (youtube.co.uk): только
+// вместе с ccTLD дают региональное зеркало.
+var subfixes = map[string]bool{
+	"co": true, "com": true, "net": true, "org": true, "gov": true,
+	"edu": true, "ac": true, "ne": true, "or": true, "go": true,
+	"in": true, "id": true,
+}
+
+// isBrandMirror — является ли домен региональным зеркалом бренда:
+// brand.<ccTLD>, brand.co.<ccTLD> или brand.com.<ccTLD>.
+// Различает страну (de, uk, ae, jp) от generic-зоны (io, gg, me).
+func isBrandMirror(domain, brand string) bool {
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 || labels[0] != brand {
+		return false
+	}
+	suffix := labels[1:]
+	switch len(suffix) {
+	case 1:
+		return isCountryCC(suffix[0])
+	case 2:
+		return subfixes[suffix[0]] && isCountryCC(suffix[1])
+	}
+	return false
+}
+
+// isCountryCC — двухбуквенная зона, похожая на код страны (не generic).
+func isCountryCC(s string) bool {
+	return len(s) == 2 && s[0] >= 'a' && s[0] <= 'z' && s[1] >= 'a' && s[1] <= 'z' && !genericCC[s]
+}
+
+// dropBrandMirrors убирает региональные зеркала бренда, сохраняя порядок.
+func dropBrandMirrors(domains []string, brand string) []string {
+	out := domains[:0:0]
+	for _, d := range domains {
+		if isBrandMirror(d, brand) {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 // orderDomains ставит витринный домен первым, остальные —
 // лексикографически. Мутирует и возвращает тот же срез.
 func orderDomains(domains []string, showcase string) []string {
@@ -599,6 +672,11 @@ func ParseSingleUpstream(files map[string]string, slug string, src PresetSource)
 	st.Duplicates += dup
 
 	showcase := heuristicShowcase(slug, domains)
+	if brand := brandLabel(showcase); brand != "" {
+		before := len(domains)
+		domains = dropBrandMirrors(domains, brand)
+		st.Mirrors += before - len(domains)
+	}
 	domains = orderDomains(domains, showcase)
 	if len(domains) > MaxDomains {
 		st.Truncated += len(domains) - MaxDomains

@@ -10,8 +10,6 @@ domains:
   - licdn.cn
   - licdn.cn.cdn20.com
   - licdn.com
-  - linkedin.at
-  - linkedin.cn
   - linkedin.sc.omtrdc.net
   - lnkd.in
 method: static_url

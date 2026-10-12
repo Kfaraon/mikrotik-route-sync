@@ -363,9 +363,9 @@ func short(commit string) string {
 func logStats(label string, st presets.Stats) {
 	logf("%s: full=%d domain=%d keyword=%d(отброшено) regexp=%d(отброшено) "+
 		"безточечных=%d @ads/@telemetry=%d(отброшено) include=%d дуп-include=%d циклов=%d "+
-		"невалидных=%d повторов=%d срезано=%d",
+		"невалидных=%d повторов=%d зеркал=%d(отброшено) срезано=%d",
 		label, st.Full, st.Domain, st.Keyword, st.Regexp, st.DotlessDomain, st.Ads,
-		st.Includes, st.IncludeDup, st.IncludeCycles, st.Invalid, st.Duplicates, st.Truncated)
+		st.Includes, st.IncludeDup, st.IncludeCycles, st.Invalid, st.Duplicates, st.Mirrors, st.Truncated)
 }
 
 func logf(format string, args ...any) {

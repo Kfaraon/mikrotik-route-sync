@@ -3,11 +3,11 @@ upstream:
   repo: v2fly/domain-list-community
   commit: e84921279c9142434b43cb84ec6c17f987e025df
   date: "2026-10-08T09:30:42Z"
-generated_at: "2026-10-08T11:28:03Z"
+generated_at: "2026-10-12T09:26:48Z"
 generator: scripts/presets-import
 preset_count: 33
-domains: 1709989
-rublock_entries: 1709140
+domains: 1721033
+rublock_entries: 1720205
 presets:
   - slug: anthropic
     title: Anthropic (Claude)
@@ -116,7 +116,7 @@ presets:
   - slug: linkedin
     title: LinkedIn
     method: static_url
-    count: 12
+    count: 10
     source:
       repo: v2fly/domain-list-community
       commit: e84921279c9142434b43cb84ec6c17f987e025df
@@ -124,7 +124,7 @@ presets:
   - slug: netflix
     title: Netflix
     method: static_url
-    count: 24
+    count: 23
     source:
       repo: v2fly/domain-list-community
       commit: e84921279c9142434b43cb84ec6c17f987e025df
@@ -140,7 +140,7 @@ presets:
   - slug: onedrive
     title: OneDrive
     method: static_url
-    count: 11
+    count: 10
     source:
       repo: v2fly/domain-list-community
       commit: e84921279c9142434b43cb84ec6c17f987e025df
@@ -197,11 +197,11 @@ presets:
     title: Antifilter blocklist (РКН)
     method: static_url
     large: true
-    count: 1709140
+    count: 1720205
     source:
       repo: antifilter.download
       commit: unpinned
-      date: "2026-10-08T11:28:02Z"
+      date: "2026-10-12T09:26:47Z"
   - slug: signal
     title: Signal
     method: static_url
@@ -245,7 +245,7 @@ presets:
   - slug: twitter
     title: Twitter (X)
     method: static_url
-    count: 23
+    count: 22
     source:
       repo: v2fly/domain-list-community
       commit: e84921279c9142434b43cb84ec6c17f987e025df
@@ -269,7 +269,7 @@ presets:
   - slug: youtube
     title: YouTube
     method: static_url
-    count: 50
+    count: 34
     source:
       repo: v2fly/domain-list-community
       commit: e84921279c9142434b43cb84ec6c17f987e025df

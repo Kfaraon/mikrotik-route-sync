@@ -515,6 +515,119 @@ func TestParseUpstreamExplicitShowcaseFirst(t *testing.T) {
 	}
 }
 
+// isBrandMirror отличает региональные зеркала (youtube.ae) от настоящих
+// доменов в generic-зонах (discord.gg, github.io, signal.me).
+func TestIsBrandMirror(t *testing.T) {
+	cases := []struct {
+		domain string
+		brand  string
+		want   bool
+	}{
+		// Страновые зеркала.
+		{"youtube.ae", "youtube", true},
+		{"youtube.de", "youtube", true},
+		{"youtube.jp", "youtube", true},
+		{"youtube.co.uk", "youtube", true},
+		{"youtube.com.br", "youtube", true},
+		{"youtube.com.au", "youtube", true},
+		{"hbo.ro", "hbo", true},
+		{"netflix.ca", "netflix", true},
+		// Generic-зоны — настоящие домены, не зеркала.
+		{"discord.gg", "discord", false},
+		{"github.io", "github", false},
+		{"signal.me", "signal", false},
+		{"cloudflare.net", "cloudflare", false},
+		{"chromium.googlesource.com", "chromium", false},
+		{"google.tv", "google", false},
+		{"telegram.org", "telegram", false},
+		{"youtube.cat", "youtube", false},
+		{"youtube.soy", "youtube", false},
+		// Не бренд или не домен.
+		{"googlevideo.com", "youtube", false},
+		{"youtu.be", "youtube", false},
+		{"ytimg.com", "youtube", false},
+		{"youtube", "youtube", false},
+		{"youtube.com", "youtube", false},
+	}
+	for _, tc := range cases {
+		if got := isBrandMirror(tc.domain, tc.brand); got != tc.want {
+			t.Errorf("isBrandMirror(%q, %q)=%v, ожидалось %v", tc.domain, tc.brand, got, tc.want)
+		}
+	}
+}
+
+// dropBrandMirrors убирает страновые зеркала, сохраняя реальную инфраструктуру.
+func TestDropBrandMirrors(t *testing.T) {
+	in := []string{"youtube.com", "youtube.ae", "ytimg.com", "youtube.co.uk", "yt.be", "youtube.tv"}
+	got := dropBrandMirrors(in, "youtube")
+	want := []string{"youtube.com", "ytimg.com", "yt.be", "youtube.tv"}
+	if len(got) != len(want) {
+		t.Fatalf("dropBrandMirrors=%v, ожидалось %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dropBrandMirrors=%v, ожидалось %v", got, want)
+		}
+	}
+}
+
+// Зеркала отбрасываются ДО капа: освободившееся место занимает реальная
+// инфраструктура, а не обрезанный алфавитный хвост зеркал.
+func TestParseUpstreamDropsMirrorsBeforeCap(t *testing.T) {
+	files := upstreamFixture()
+	var b strings.Builder
+	// 60 страновых зеркал + пара реальных доменов (по алфавиту после зеркал).
+	b.WriteString("youtube.com\n")
+	for _, cc := range uniqueCountryCodes(60) {
+		b.WriteString("youtube." + cc + "\n")
+	}
+	b.WriteString("ytimg.com\n")
+	b.WriteString("yt.be\n")
+	files["youtube"] = b.String()
+
+	list, st := ParseUpstream(files, testSource())
+	y := findPreset(t, list, "youtube")
+
+	if st.Mirrors != 60 {
+		t.Errorf("stats.Mirrors=%d, ожидалось 60", st.Mirrors)
+	}
+	// После снятия 60 зеркал остаются 3 домена — кап не срабатывает.
+	if len(y.Domains) != 3 {
+		t.Errorf("youtube: %d доменов, ожидалось 3: %v", len(y.Domains), y.Domains)
+	}
+	// Зеркал в списке быть не должно, реальные домены — на месте.
+	for _, d := range y.Domains {
+		if isBrandMirror(d, "youtube") {
+			t.Errorf("зеркало %q не отброшено", d)
+		}
+	}
+	if !contains(y.Domains, "ytimg.com") || !contains(y.Domains, "yt.be") {
+		t.Errorf("реальная инфраструктура потеряна: %v", y.Domains)
+	}
+	if y.Domains[0] != "youtube.com" {
+		t.Errorf("витринный домен=%q", y.Domains[0])
+	}
+}
+
+// uniqueCountryCodes — n различных 2-буквенных кодов стран (не generic).
+func uniqueCountryCodes(n int) []string {
+	skipped := map[string]bool{}
+	for cc := range genericCC {
+		skipped[cc] = true
+	}
+	var out []string
+	for a := byte('a'); a <= 'z' && len(out) < n; a++ {
+		for b := byte('a'); b <= 'z' && len(out) < n; b++ {
+			cc := string([]byte{a, b})
+			if skipped[cc] {
+				continue
+			}
+			out = append(out, cc)
+		}
+	}
+	return out
+}
+
 func TestParseUpstreamDeterministic(t *testing.T) {
 	f := upstreamFixture()
 	a, _ := ParseUpstream(f, testSource())
