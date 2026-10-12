@@ -96,7 +96,10 @@ suggest:
   ru_enabled: false
   urlscan_mode: off
   sources: [preset, urlscan]
-# Локальное зеркало пресетов: расписание докачки (пусто — только вручную).
+# Локальное зеркало пресетов: расписание докачки RU-блоклиста (antifilter →
+# rublock) и v2fly-пресетов. Формат как у расписаний (cron/every/daily);
+# пусто — обновление только вручную из веб-настроек (или API
+# POST /api/v1/presets/refresh).
 presets:
   update_schedule: ""
 # Официальные списки диапазонов CDN, используемые методом cdn.

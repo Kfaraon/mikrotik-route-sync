@@ -85,6 +85,7 @@ MikroTik Route Sync — это приложение на Go для автома�
       logging/          — slog + rotation + redaction
       mikrotik/         — RouterOS REST API: /ip/firewall/address-list (client, addresslist, transaction/rollback)
       notifier/         — уведомления (Telegram)
+      presets/          — встроенные пресеты + runtime-зеркало (v2fly, rublock)
       resolver/         — DNS / ASN resolution (rdap, bgp.tools, ripestat)
       scheduler/        — расписания (cron + human-readable)
       storage/          — bbolt cache (кэш, история, bucket address_list_snapshots)
@@ -120,6 +121,25 @@ MikroTik Route Sync — это приложение на Go для автома�
 - **Dynamic** — DNS-резолвинг + официальные JSON (Google, YouTube, Telegram)
 - **WHOIS** — DNS → ASN → все префиксы (для мелких сайтов)
 - **Static** — произвольные URL (antifilter, re:filter)
+
+### Presets
+
+Каталог готовых списков доменов для дискаверинга сервисов и RU-блокировок.
+Лёгкие пресеты вшиты в бинарь (`go:embed`); тяжёлые читаются из runtime-зеркала
+рядом с `cache.db`:
+
+- **Встроенные (v2fly)** — сервисные пресеты и категории из `domain-list-community`
+- **Зеркало v2fly** — полный tarball `upstream/` + `upstream.json`; питает
+  инвертированный индекс «домен → пресеты» (`/api/v1/presets/match`) и создание
+  пресетов на лету
+- **RU-блоклист (antifilter)** — плоский список → пресет `rublock` (`large: true`,
+  ~1.7 млн доменов) + `mirror.json`; в каталог домены не отдаются
+
+Докачка запускается вручную (Web UI «Настройки» → «Пресеты и зеркала»; API
+`/api/v1/presets/refresh`) и/или по расписанию `presets.update_schedule`.
+Запись зеркала атомарна (`tmp` + `rename`), при ошибке старое не перезаписывается.
+Зеркало никого не трогает само: домены копируются в сервис только явным
+применением пресета.
 
 ### Validator
 
@@ -176,6 +196,7 @@ REST API клиент `/rest/ip/firewall/address-list`:
 - Hot-reload через SIGHUP
 - Часовой пояс из конфига (IANA)
 - Учёт DST-переходов
+- Отдельное расписание докачки зеркал пресетов (`presets.update_schedule`, собственный cron-планировщик, не мешает расписаниям сервисов)
 
 ### Telegram Bot
 
@@ -192,6 +213,7 @@ REST API клиент `/rest/ip/firewall/address-list`:
 Встроенный дашборд:
 
 - Страницы: Dashboard, Services, Address List, Schedules, Settings, Logs (+ фрагмент /partials/status, история — через API `/api/v1/history`)
+- Settings: параметры `config.yaml`, таблица источников CDN, блок «Пресеты и зеркала» (состояние и ручная докачка rublock/v2fly, расписание `presets.update_schedule`)
 - Фреймворк: net/http + chi
 - Шаблоны: html/template + go:embed
 - CSS: app.css, services.css, schedule.css, dashboard.css

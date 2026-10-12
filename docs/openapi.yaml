@@ -28,6 +28,8 @@ tags:
     description: Состояние процесса и health-check'и
   - name: Services
     description: Управление сервисами и синхронизацией
+  - name: Presets
+    description: Пресеты сервисов и зеркала (v2fly, rublock)
   - name: Schedules
     description: Трёхуровневые расписания
   - name: Observability
@@ -374,11 +376,110 @@ paths:
                                 domain: { type: string }
                                 checked: { type: integer }
                                 ok: { type: integer }
-                                failed: { type: array, items: { type: string } } }
+                                failed: { type: array, items: { type: string } }
                       applied: { type: boolean }
                       purged: { type: integer }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/presets:
+    get:
+      summary: Каталог пресетов и состояние зеркал (mirror, upstream)
+      description: >-
+        Лёгкие пресеты вшиты в бинарь; тяжёлые (rublock, upstream) читаются из
+        runtime-зеркала. Домены large-пресетов в каталог не включаются.
+      tags: [Presets]
+      responses:
+        '200':
+          description: Каталог с состоянием зеркал
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      presets: { type: array, items: { $ref: '#/components/schemas/PresetMeta' } }
+                      mirror:
+                        description: Состояние RU-зеркала (null — не скачано)
+                        oneOf: [{ $ref: '#/components/schemas/MirrorMeta' }, { type: 'null' }]
+                      upstream:
+                        description: Состояние v2fly-зеркала (null — не скачано)
+                        oneOf: [{ $ref: '#/components/schemas/UpstreamMeta' }, { type: 'null' }]
+                      suggest:
+                        type: object
+                        properties:
+                          v2fly: { type: boolean }
+                          ru: { type: boolean }
+                          mode: { type: string, enum: [off, key, anonymous] }
+                          sources: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/presets/match:
+    get:
+      summary: Какие пресеты содержат домен (инвертированный индекс v2fly)
+      description: Пусто — зеркало v2fly не скачано или совпадений нет.
+      tags: [Presets]
+      parameters:
+        - { name: domain, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Совпадения (вендоренные — первыми)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      matches:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            slug: { type: string }
+                            title: { type: string }
+                            vendored: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/presets/refresh:
+    post:
+      summary: Ручная докачка зеркал пресетов
+      description: >-
+        source=ru качает RU-блоклист (antifilter → rublock), source=upstream —
+        каталог v2fly, source=all — оба. Скачивается десятки МБ, операция может
+        занять минуты и продолжается на сервере даже при обрыве клиента.
+        Параллельный повторный запуск отклоняется (429).
+      tags: [Presets]
+      parameters:
+        - { name: source, in: query, schema: { type: string, enum: [ru, upstream, all], default: all } }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Зеркала обновлены
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      ru: { $ref: '#/components/schemas/MirrorStatus' }
+                      upstream: { $ref: '#/components/schemas/UpstreamMeta' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429':
+          description: Обновление этого источника уже выполняется
+        '502':
+          description: Источник недоступен или ответ битый
 
   /api/v1/schedules:
     get:
@@ -553,3 +654,39 @@ components:
         finished_at: { type: string, format: date-time }
         duration: { type: string }
         version: { type: string }
+
+    PresetMeta:
+      type: object
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        method: { type: string }
+        large: { type: boolean }
+        count: { type: integer }
+        domains:
+          type: array
+          items: { type: string }
+
+    MirrorMeta:
+      type: object
+      description: Состояние RU-зеркала (mirror.json)
+      properties:
+        updated_at: { type: string, format: date-time }
+        source: { type: string }
+        entries: { type: integer }
+
+    MirrorStatus:
+      type: object
+      description: Итог RefreshMirror
+      properties:
+        entries: { type: integer }
+        updated_at: { type: string, format: date-time }
+
+    UpstreamMeta:
+      type: object
+      description: Состояние v2fly-зеркала (upstream.json)
+      properties:
+        updated_at: { type: string, format: date-time }
+        source: { type: string }
+        files: { type: integer }
+        size: { type: integer, format: int64 }

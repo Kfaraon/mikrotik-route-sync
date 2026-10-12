@@ -31,6 +31,7 @@
 - [Telegram-бот](#telegram-бот)
 - [Web UI](#web-ui)
 - [REST API](#rest-api)
+- [Пресеты и зеркала](#пресеты-и-зеркала)
 - [Логирование](#логирование)
 - [Кэш](#кэш)
 - [Docker](#docker)
@@ -54,6 +55,7 @@
 - DNS/dynamic-сбор для сервисов с меняющейся инфраструктурой (диапазоны Google подмешиваются только сервисам Google; резолв с фолбэком на публичные DNS)
 - Контроль покрытия: текущие A-записи доменов сверяются с собранным набором (WARN + поле `coverage` в результате), широкие префиксы — в поле `broad`, SNI-проба (TLS-handshake доказывает, что адреса обслуживают домен) — в поле `verification`
 - Пользовательские списки через `static_url`
+- Локальные пресеты сервисов (v2fly) и RU-блоклист (antifilter `rublock`) с ручной докачкой зеркал из Web UI и опциональным расписанием
 - Кэш ASN и префиксов в `bbolt`
 - Фильтрация приватных, link-local, multicast и слишком широких сетей
 - Безопасная CIDR-агрегация (radix tree) только настоящих sibling-префиксов
@@ -442,6 +444,16 @@ CDN**: резолвятся A-записи, определяется ASN и ад
       ttl: 168h
       max_count: 50
 
+    suggest:
+      v2fly_enabled: false
+      ru_enabled: false
+      urlscan_mode: off
+      sources: [preset, urlscan]
+
+    presets:
+      # Расписание докачки зеркал пресетов (cron/every/daily; пусто — только вручную).
+      update_schedule: ""
+
     schedules:
       global: "every 6h"
 
@@ -595,8 +607,14 @@ ENV имеют приоритет над `config.yaml`:
 | `/services` | Управление сервисами |
 | `/address-list` | Списки адресов (глобальный address-list) |
 | `/schedules` | Расписания |
-| `/settings` | Настройки |
+| `/settings` | Настройки (параметры `config.yaml`, источники CDN, пресеты и зеркала) |
 | `/logs` | Просмотр логов |
+
+На странице «Настройки» есть блок **«Пресеты и зеркала»**: состояние и ручная докачка
+RU-блоклиста (antifilter → пресет `rublock`) и каталога v2fly-пресетов, а также поле
+расписания автоматического обновления (`presets.update_schedule`). Обновление качает
+десятки мегабайт и может занять несколько минут; оно продолжается на сервере даже при
+закрытии страницы.
 
 ### Безопасность
 
@@ -634,6 +652,10 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
 | `POST` | `/api/v1/services/{name}/sync` | Синхронизировать один сервис |
 | `POST` | `/api/v1/services/{name}/dry-run` | Расчёт diff без применения |
 | `POST` | `/api/v1/services/{name}/recommend` | Проверка сервиса за CDN; тело `{"apply": true}` — применить (purge + `method: cdn`) |
+| `GET` | `/api/v1/presets` | Каталог пресетов, состояние зеркал (`mirror`, `upstream`) и доступность подбора |
+| `GET` | `/api/v1/presets/match` | Какие пресеты содержат домен (`?domain=`) |
+| `POST` | `/api/v1/presets/refresh` | Докачка зеркал (`?source=` — `ru`, `upstream` или `all`) |
+| `POST` | `/api/v1/presets/create-from-upstream` | Создать пресет из файла v2fly-зеркала (тело `{"slug": ...}`) |
 | `GET` | `/api/v1/schedules` | Все расписания (global/groups/services/effective) |
 | `PUT` | `/api/v1/schedules/{service}` | Изменить расписание сервиса |
 | `GET` | `/api/v1/logs` | Логи (`level`, `service`, `since`, `limit`) |
@@ -647,6 +669,30 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
 `Authorization` к межсайтовым запросам). При включённом `auth` тело запроса ограничено 1 МБ.
 
 Полная спецификация: [docs/openapi.yaml](docs/openapi.yaml)
+
+---
+
+## Пресеты и зеркала
+
+Пресеты — это готовые списки доменов сервисов, применяемые к сервису из Web UI
+(поле «Пресет») или через `refresh-preset`. Часть пресетов **вшита** в бинарь
+(v2fly, лёгкие списки), тяжёлые — **докачиваются** в runtime-зеркало рядом с `cache.db`
+(`<cache_dir>/presets/`):
+
+| Источник | Что это | Файлы зеркала |
+|----------|---------|---------------|
+| v2fly (`domain-list-community`) | Каталог сервисных пресетов и инвертированный индекс «домен → пресеты» | `upstream.json`, `upstream/` |
+| antifilter.download | Плоский RU-блоклист → пресет `rublock` (`large: true`) | `rublock.yaml`, `mirror.json` |
+
+Докачка запускается **вручную** (Web UI: «Настройки» → «Пресеты и зеркала»; API:
+`POST /api/v1/presets/refresh?source=ru|upstream|all`) и/или **по расписанию**
+`presets.update_schedule` (cron/every/daily; пусто — только вручную). Настройки
+`RU-пресет` и `Каталог v2fly` (`suggest.ru_enabled`, `suggest.v2fly_enabled`) лишь
+управляют видимостью этих пресетов в подборе.
+
+Скачивание атомарно (`tmp` + `rename`): при ошибке/битом ответе старое зеркало
+не перезаписывается. Обновление — это только зеркало: домены попадают в сервис
+лишь явным применением пресета.
 
 ---
 
@@ -824,6 +870,7 @@ CLI-команда не может открыть кэш: демон держи�
       logging/          slog + rotation + redaction
       mikrotik/         RouterOS REST API
       notifier/         уведомления
+      presets/          пресеты + зеркала (v2fly, rublock)
       resolver/         DNS / ASN resolution
       scheduler/        расписания
       storage/          bbolt cache
