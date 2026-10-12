@@ -21,6 +21,12 @@ import (
 // Детект best-effort: не уложился — сервис добавляется с обычным методом.
 const addDetectTimeout = 20 * time.Second
 
+// addDetectDomains — сколько доменов проверяет пробник при добавлении.
+// У пресета бывает десятки доменов одного провайдера: подтвердить CDN
+// достаточно по витринному и нескольким ближайшим, а полный обход не
+// укладывался в addDetectTimeout и оставлял сервис на широком whois.
+const addDetectDomains = 8
+
 type ServiceInfo struct {
 	Name          string                 `json:"name"`
 	List          string                 `json:"list"`
@@ -112,6 +118,7 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 		dctx, cancel := context.WithTimeout(ctx, addDetectTimeout)
 		adv := s.AdviseCDN(dctx, name, override,
 			WithSkipWhois(),
+			WithProbeDomains(addDetectDomains),
 			WithReporter(func(detail string) { s.setAddProgress(name, detail) }),
 		)
 		// dctx.Err() читаем ДО cancel(): после cancel() он всегда

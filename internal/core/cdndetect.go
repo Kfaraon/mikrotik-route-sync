@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
@@ -59,6 +60,12 @@ type adviseConfig struct {
 	skipWhois bool
 	// report — приёмник подшагов проверки (best-effort, может быть nil).
 	report func(string)
+	// maxProbeDomains ограничивает число доменов, которые пробник обходит
+	// сетью (DNS A + ASN на каждый). 0 — без ограничения. Нужно в пути
+	// добавления: у пресета бывает десятки доменов одного провайдера, и
+	// полный обход не укладывался в addDetectTimeout, из-за чего сервис
+	// оставался на широком whois-методе.
+	maxProbeDomains int
 }
 
 // AdviseOption настраивает конкретный вызов AdviseCDN.
@@ -72,6 +79,20 @@ func WithSkipWhois() AdviseOption {
 // WithReporter подключает приёмник подшагов проверки (для UI-статуса).
 func WithReporter(fn func(string)) AdviseOption {
 	return func(c *adviseConfig) { c.report = fn }
+}
+
+// cdnProbeDomainTimeout — бюджет на один домен в пробнике (DNS A + ASN).
+// Рабочие домены укладываются в доли секунды; ограничение спасает от
+// неразрешаемого домена (ggpht.cn и подобные), который жёг системный
+// DNS-таймаут (20 с) и обрывал весь детект раньше срока.
+const cdnProbeDomainTimeout = 4 * time.Second
+
+// WithProbeDomains ограничивает число доменов, обходимых пробником в сети.
+// Витринный домен (первый) сохраняется. 0 — без ограничения. Полезно в пути
+// добавления сервиса: одного провайдера на десятках доменов достаточно
+// подтвердить по нескольким, а полный обход не укладывается в таймаут.
+func WithProbeDomains(n int) AdviseOption {
+	return func(c *adviseConfig) { c.maxProbeDomains = n }
 }
 
 // AdviseCDN проверяет, обслуживается ли сервис за CDN, и возвращает
@@ -93,7 +114,7 @@ func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOv
 		return adv
 	}
 
-	var p = s.adviseProbe(ctx, name, adv.Domains, &cfg)
+	var p = s.adviseProbe(ctx, name, capProbeDomains(adv.Domains, ov.Primary, cfg.maxProbeDomains), &cfg)
 	if p != nil {
 		adv.Detected = p.Detected
 		adv.CDN = p.CDN
@@ -241,14 +262,20 @@ func runCDNProbe(ctx context.Context, name string, domains []string, deps *cdnPr
 			adv.Reason = "проверка прервана (таймаут)"
 			return adv
 		}
-		ips, err := deps.resolveDomain(ctx, d)
+		// Пер-доменный бюджет: неразрешаемые домены пресета (ggpht.cn и
+		// подобные) жгут системный DNS-таймаут (20 с) и обрывают весь
+		// детект раньше срока — домен пропускаем, как и неразрешаемый.
+		dctx, dcancel := context.WithTimeout(ctx, cdnProbeDomainTimeout)
+		ips, err := deps.resolveDomain(dctx, d)
 		if err != nil || len(ips) == 0 {
+			dcancel()
 			// Apex без A-записей (ytimg.com) — не приговор всему сервису:
 			// пропускаем домен, фиксируем в отчёте.
 			adv.Skipped = append(adv.Skipped, d)
 			continue
 		}
-		a, err := deps.resolveASN(ctx, d)
+		a, err := deps.resolveASN(dctx, d)
+		dcancel()
 		if err != nil || a == 0 {
 			adv.Reason = fmt.Sprintf("ASN домена %s не определён", d)
 			return adv
@@ -471,6 +498,16 @@ func withPrimaryFirst(primary string, domains []string) []string {
 		}
 	}
 	return append([]string{primary}, out...)
+}
+
+// capProbeDomains ограничивает список доменов для сетевого обхода (≤ n).
+// Витринный домен (primary) всегда остаётся первым: по нему collect()
+// резолвит ASN. n <= 0 или отсутствие primary при малом списке — без правок.
+func capProbeDomains(domains []string, primary string, n int) []string {
+	if n <= 0 || len(domains) <= n {
+		return domains
+	}
+	return withPrimaryFirst(primary, domains)[:n]
 }
 
 // adviseDomains — домены для проверки: override.Domains, затем домены

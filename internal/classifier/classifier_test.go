@@ -80,6 +80,32 @@ func contains(list []string, want string) bool {
 	return false
 }
 
+// Сервис, названный своим доменом (youtube.com), должен опознаваться как
+// известный сервис youtube, а не уходить в широкий whois.
+func TestClassifyServiceByNameDomain(t *testing.T) {
+	cases := []struct {
+		service string
+		methods []string
+	}{
+		{"youtube.com", []string{"dynamic", "cdn"}},
+		{"instagram.com", []string{"dynamic", "asn"}},
+		{"facebook.com", []string{"dynamic", "asn"}},
+		{"telegram.org", []string{"dynamic", "asn", "static_url"}},
+		// Домен, которого нет в словаре, остаётся whois.
+		{"rutor.org", []string{"whois"}},
+	}
+	for _, c := range cases {
+		got := Classify(c.service, "")
+		if !reflect.DeepEqual(got.Methods, c.methods) {
+			t.Errorf("Classify(%q).Methods = %v, want %v", c.service, got.Methods, c.methods)
+		}
+	}
+	// Домены записи подставляются: collect() резолвит по ним ASN.
+	if got := Classify("youtube.com", ""); len(got.Domains) == 0 || got.Domains[0] != "youtube.com" {
+		t.Fatalf("Classify(\"youtube.com\").Domains = %v", got.Domains)
+	}
+}
+
 func TestClassifyASNLiteral(t *testing.T) {
 	got := Classify("as15169", "")
 	if got.ASN != "AS15169" || !reflect.DeepEqual(got.Methods, []string{"asn"}) {

@@ -684,3 +684,75 @@ func TestAdviseCDNPropagatesSkipped(t *testing.T) {
 		t.Fatalf("adv=%+v", adv)
 	}
 }
+
+// capProbeDomains режет список до n, сохраняя витринный домен первым.
+func TestCapProbeDomains(t *testing.T) {
+	domains := []string{"a.net", "b.net", "c.net"}
+	// без ограничения — без правок
+	if got := capProbeDomains(domains, "", 0); len(got) != 3 {
+		t.Fatalf("n=0: %v", got)
+	}
+	if got := capProbeDomains(domains, "", 5); len(got) != 3 {
+		t.Fatalf("n>len: %v", got)
+	}
+	// primary поднимается первым, хвост отрезается
+	got := capProbeDomains(domains, "c.net", 2)
+	if len(got) != 2 || got[0] != "c.net" {
+		t.Fatalf("primary first: %v", got)
+	}
+	// если primary нет в списке — он добавляется и остаётся первым
+	got = capProbeDomains(domains, "z.net", 2)
+	if len(got) != 2 || got[0] != "z.net" {
+		t.Fatalf("missing primary: %v", got)
+	}
+}
+
+// WithProbeDomains ограничивает сетевой обход в AdviseCDN.
+func TestAdviseCDNProbeDomainsLimited(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	var probed []string
+	s.cdnProbeFn = func(_ context.Context, _ string, domains []string) *CDNAdvice {
+		probed = append([]string(nil), domains...)
+		return fakeProbe(true)(context.Background(), "", domains)
+	}
+	s.collectFn = func(_ context.Context, _ string, _ config.ServiceOverride) ([]netip.Prefix, string, error) {
+		return nil, "", fmt.Errorf("offline")
+	}
+	s.resPtr.Store(deadEndResolver())
+	off := false
+	s.cfg.Safety.VerifySNI = &off
+
+	ov := config.ServiceOverride{
+		Primary: "b.net",
+		Domains: []string{"a.net", "b.net", "c.net", "d.net"},
+	}
+	s.AdviseCDN(context.Background(), "svc", ov, WithProbeDomains(2))
+	if len(probed) != 2 || probed[0] != "b.net" {
+		t.Fatalf("probed=%v, want 2 domains with b.net first", probed)
+	}
+}
+
+// Пер-доменный бюджет: «зависший» домен (игнорирующий ctx резолвер) не
+// съедает весь детект — домен пропускается, остальные проверяются.
+func TestRunCDNProbePerDomainTimeout(t *testing.T) {
+	deps := okDeps()
+	deps.resolveDomain = func(ctx context.Context, d string) ([]string, error) {
+		if d == "slow.net" {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return []string{"104.16.1.1"}, nil
+	}
+	start := time.Now()
+	adv := runCDNProbe(context.Background(), "svc",
+		[]string{"slow.net", "ok.net"}, deps, nil)
+	if !adv.Detected {
+		t.Fatalf("one slow domain must not kill detection: %q", adv.Reason)
+	}
+	if len(adv.Skipped) != 1 || adv.Skipped[0] != "slow.net" {
+		t.Fatalf("skipped=%v", adv.Skipped)
+	}
+	if elapsed := time.Since(start); elapsed > 2*cdnProbeDomainTimeout {
+		t.Fatalf("probe took %s, per-domain budget not applied", elapsed)
+	}
+}

@@ -73,6 +73,24 @@ var knownServices = map[string]knownService{
 	},
 }
 
+// matchKnown ищет предопределённую запись для имени сервиса: сначала точное
+// совпадение ключа (youtube), затем совпадение с доменом записи — сервис
+// часто называют доменом (youtube.com). Без этого youtube.com не опознавался
+// и уходил в широкий whois вместо dynamic/cdn (PROMPT II.2).
+func matchKnown(s string) (knownService, bool) {
+	if k, ok := knownServices[s]; ok {
+		return k, true
+	}
+	for _, k := range knownServices {
+		for _, d := range k.domains {
+			if d == s {
+				return k, true
+			}
+		}
+	}
+	return knownService{}, false
+}
+
 // Classify определяет методы сбора для сервиса.
 // overrideMethod — значение overrides.<service>.method (может быть списком
 // через запятую для совмещённых методов, PROMPT II.2).
@@ -91,7 +109,7 @@ func Classify(service, overrideMethod string) Result {
 			}
 		}
 		res := Result{Methods: methods}
-		if k, ok := knownServices[s]; ok {
+		if k, ok := matchKnown(s); ok {
 			res.Domains = k.domains
 			res.StaticURLs = k.static
 			res.ASN = k.asn
@@ -117,7 +135,7 @@ func Classify(service, overrideMethod string) Result {
 	}
 
 	// Известный сервис
-	if k, ok := knownServices[s]; ok {
+	if k, ok := matchKnown(s); ok {
 		return Result{
 			Methods:    k.methods,
 			Domains:    k.domains,
