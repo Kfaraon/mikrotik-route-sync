@@ -4,6 +4,7 @@ package history
 
 import (
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -47,6 +48,7 @@ type History struct {
 	limit   int
 	records []Record
 	store   Store
+	log     *slog.Logger
 }
 
 // NewHistory создаёт историю размером limit записей (без персистентности).
@@ -71,7 +73,9 @@ func (h *History) AttachStore(s Store) {
 	}
 }
 
-// Add добавляет запись и (при наличии) сохраняет всё в bbolt.
+// Add добавляет запись и (при наличии) сохраняет всё в bbolt. Сбой
+// персистентности логируется warn'ом: запись уже в памяти, но при
+// перезапуске она потеряется — молча глотать нельзя.
 func (h *History) Add(r Record) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -84,8 +88,21 @@ func (h *History) Add(r Record) {
 		h.records = h.records[len(h.records)-h.limit:]
 	}
 	if h.store != nil {
-		_ = h.store.Put(bucket, "records", h.records)
+		if err := h.store.Put(bucket, "records", h.records); err != nil {
+			log := h.log
+			if log == nil {
+				log = slog.Default()
+			}
+			log.Warn("история синхронизаций не сохранена на диск", "err", err)
+		}
 	}
+}
+
+// SetLogger задаёт логгер для сообщений о сбоях персистентности.
+func (h *History) SetLogger(log *slog.Logger) {
+	h.mu.Lock()
+	h.log = log
+	h.mu.Unlock()
 }
 
 // Records возвращает последние n записей (новые первыми).

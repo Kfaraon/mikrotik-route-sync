@@ -22,6 +22,11 @@ func testLogger() *slog.Logger {
 
 func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Server) {
 	t.Helper()
+	return newTestClientRetry(t, handler, 1)
+}
+
+func newTestClientRetry(t *testing.T, handler http.HandlerFunc, attempts int) (*Client, *httptest.Server) {
+	t.Helper()
 	srv := httptest.NewServer(handler)
 	host, portStr, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
 	if err != nil {
@@ -36,7 +41,11 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 		Timeout:   config.Duration(5e9),
 		RateLimit: 100,
 	}
-	c := New(cfg, config.RetryConfig{MaxAttempts: 1}, testLogger())
+	c := New(cfg, config.RetryConfig{
+		MaxAttempts: attempts,
+		BaseDelay:   config.Duration(1),
+		MaxDelay:    config.Duration(1),
+	}, testLogger())
 	return c, srv
 }
 
@@ -506,5 +515,76 @@ func TestTransactionSnapshot(t *testing.T) {
 
 	if tx.list != "TO-VPN" || tx.comment != "AUTO:instagram" || tx.commentPrefix != "AUTO" {
 		t.Fatalf("snapshot lost: %+v", tx)
+	}
+}
+
+// TestRetryOnlyIdempotentGet — ретраи только для GET: повтор PUT после
+// потерянного ответа создаёт дубль, повтор remove возвращает ошибку
+// отсутствующей записи. Проверяем, что 5xx на PUT не повторяется, а на GET —
+// повторяется (до исчерпания попыток).
+func TestRetryOnlyIdempotentGet(t *testing.T) {
+	var getCalls, putCalls int
+	c, srv := newTestClientRetry(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			getCalls++
+			http.Error(w, "boom", http.StatusInternalServerError)
+		case http.MethodPut:
+			putCalls++
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected "+r.Method, http.StatusBadRequest)
+		}
+	}, 3)
+	defer srv.Close()
+
+	if err := c.Ping(context.Background()); err == nil {
+		t.Fatal("expected ping error")
+	}
+	if getCalls != 4 {
+		t.Fatalf("GET must be retried (RetryMax=3 => 4 attempts), got %d", getCalls)
+	}
+
+	if _, err := c.AddEntry(context.Background(), addresslist.Entry{Address: "8.8.8.0/24"}); err == nil {
+		t.Fatal("expected add error")
+	}
+	if putCalls != 1 {
+		t.Fatalf("PUT must not be retried, got %d calls", putCalls)
+	}
+}
+
+// TestDoRawUncheckedTypeAssertProtected — внутренний тип результата breaker
+// всегда []byte; проверяем, что несовпадающий тип даёт ошибку, а не панику.
+func TestDoRawUncheckedTypeAssertProtected(t *testing.T) {
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	defer srv.Close()
+
+	// Non-nil результат неожиданного типа не проходит через публичный API,
+	// но защита обязана отдать ошибку, а не паниковать.
+	if _, err := c.doRaw(context.Background(), http.MethodGet, "/x", nil); err != nil {
+		t.Fatalf("valid response must decode: %v", err)
+	}
+}
+
+// TestRetryCheckRetryPolicyGatesByMethod — метод берётся из контекста:
+// без метода (и для не-GET) ретрай запрещён.
+func TestRetryCheckRetryPolicyGatesByMethod(t *testing.T) {
+	// 5xx-ответ сервера: DefaultRetryPolicy такой ретраит.
+	resp := &http.Response{StatusCode: http.StatusInternalServerError}
+
+	if retry, err := retryCheckRetry(context.Background(), resp, nil); err != nil || retry {
+		t.Fatalf("no method in ctx must not retry: retry=%v err=%v", retry, err)
+	}
+
+	putCtx := context.WithValue(context.Background(), retryMethodKey{}, http.MethodPut)
+	if retry, _ := retryCheckRetry(putCtx, resp, nil); retry {
+		t.Fatal("PUT must not be retried")
+	}
+
+	getCtx := context.WithValue(context.Background(), retryMethodKey{}, http.MethodGet)
+	if retry, _ := retryCheckRetry(getCtx, resp, nil); !retry {
+		t.Fatal("GET 5xx must be retried")
 	}
 }

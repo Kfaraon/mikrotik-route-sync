@@ -11,7 +11,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -151,7 +153,125 @@ func TestSNIAlertMarksOnlyAfterSuccess(t *testing.T) {
 	}
 }
 
-// flakyNotifier — Send падает при failFirst, затем считает вызовы.
+// TestSNIVerifyRespectsContextCancel — при отмене контекста новые пробы не
+// запускаются: иначе цикл продолжает захватывать семафор и слать запросы по
+// отменённому контексту (висящие горутины после остановки синка).
+func TestSNIVerifyRespectsContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var mu sync.Mutex
+	var dials int
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	v := &SNIVerifier{
+		Timeout: 5 * time.Second,
+		Dial: func(dctx context.Context, _, _ string) (net.Conn, error) {
+			mu.Lock()
+			dials++
+			mu.Unlock()
+			<-dctx.Done() // «зависший» dial, освобождается только отменой
+			return nil, dctx.Err()
+		},
+	}
+
+	ips := make([]string, 100)
+	for i := range ips {
+		ips[i] = "10.0.0." + strconv.Itoa(i+1)
+	}
+
+	go func() {
+		defer wg.Done()
+		v.Verify(ctx, "example.com", ips)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Verify did not return after context cancellation")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if dials >= len(ips) {
+		t.Fatalf("all probes launched despite cancellation: %d", dials)
+	}
+}
+
+// TestSNIVerifyCheckedConsistent — Checked всегда равен OK + число провалов:
+// прогресс и метрики опираются на это равенство.
+func TestSNIVerifyCheckedConsistent(t *testing.T) {
+	v := &SNIVerifier{
+		Timeout: 2 * time.Second,
+		Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
+			if strings.HasSuffix(addr, ":443") {
+				return nil, fmt.Errorf("refused")
+			}
+			return nil, fmt.Errorf("refused")
+		},
+	}
+	ips := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}
+	vd := v.Verify(context.Background(), "x.net", ips)
+	if vd.Checked != vd.OK+len(vd.Failed) {
+		t.Fatalf("inconsistent verdict: %+v", vd)
+	}
+	if vd.Checked != 3 {
+		t.Fatalf("checked=%d want 3", vd.Checked)
+	}
+}
+
+// TestSniCacheEvictsExpired — при переполнении просроченные вердикты
+// вычищаются, карта не растёт неограниченно.
+func TestSniCacheEvictsExpired(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+
+	s.sniMu.Lock()
+	for i := 0; i < sniCacheMaxEntries; i++ {
+		s.sniCache["expired-"+strconv.Itoa(i)] = sniCacheEntry{expires: time.Now().Add(-time.Minute)}
+	}
+	// Одна живая запись — не должна быть вытеснена.
+	s.sniCache["live"] = sniCacheEntry{expires: time.Now().Add(time.Hour)}
+	s.sniMu.Unlock()
+
+	s.sniCachePut("fresh", sniCacheEntry{expires: time.Now().Add(time.Hour)})
+
+	s.sniMu.Lock()
+	size := len(s.sniCache)
+	_, liveKept := s.sniCache["live"]
+	_, freshKept := s.sniCache["fresh"]
+	s.sniMu.Unlock()
+
+	if !liveKept || !freshKept {
+		t.Fatalf("live/fresh entries must survive eviction (live=%v fresh=%v)", liveKept, freshKept)
+	}
+	if size > sniCacheMaxEntries {
+		t.Fatalf("cache not evicted: size=%d", size)
+	}
+}
+
+// TestSniCacheGetDeletesExpired — просроченный вердикт удаляется при чтении.
+func TestSniCacheGetDeletesExpired(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	s.sniMu.Lock()
+	s.sniCache["x.net"] = sniCacheEntry{expires: time.Now().Add(-time.Second)}
+	s.sniMu.Unlock()
+
+	if _, ok := s.sniCacheGet("x.net"); ok {
+		t.Fatal("expired entry must miss")
+	}
+	s.sniMu.Lock()
+	_, still := s.sniCache["x.net"]
+	s.sniMu.Unlock()
+	if still {
+		t.Fatal("expired entry must be deleted on read")
+	}
+}
+
 type flakyNotifier struct {
 	failFirst bool
 	sent      bool

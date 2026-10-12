@@ -29,6 +29,7 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
+	"github.com/gorilla/websocket"
 )
 
 func newTestServer(t *testing.T) (*Server, *config.Config) {
@@ -2104,4 +2105,79 @@ regexp:.*\.ads\.
 	if !strings.Contains(body, "not found") {
 		t.Fatalf("expected not found error: %s", body)
 	}
+}
+
+// TestBulkSyncQueueCapacity — очередь массовых синков ограничена: при
+// переполнении enqueueBulkSync возвращает false (роут отвечает 429), пустой
+// список — no-op (true).
+func TestBulkSyncQueueCapacity(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	if !srv.enqueueBulkSync(nil, false, false) {
+		t.Fatal("empty service list must be a no-op")
+	}
+
+	// Воркер «занят» — очередь не разбирается, наполняем вручную.
+	srv.bulkMu.Lock()
+	srv.bulkRunning = true
+	for i := 0; i < maxBulkQueue; i++ {
+		srv.bulkQueue = append(srv.bulkQueue, bulkSyncReq{services: []string{"testsvc"}})
+	}
+	srv.bulkMu.Unlock()
+
+	if srv.enqueueBulkSync([]string{"testsvc"}, false, false) {
+		t.Fatal("full queue must reject")
+	}
+}
+
+// TestHubStopClosesClients — Stop закрывает соединения и не оставляет
+// клиентов: иначе горутины WS живут до таймаута после остановки сервера.
+func TestHubStopClosesClients(t *testing.T) {
+	h := NewHub()
+	ts := httptest.NewServer(http.HandlerFunc(h.handleWS))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		h.mu.RLock()
+		n := len(h.clients)
+		h.mu.RUnlock()
+		if n == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("client not registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	h.Stop()
+
+	h.mu.RLock()
+	remaining := len(h.clients)
+	h.mu.RUnlock()
+	if remaining != 0 {
+		t.Fatalf("clients remain after Stop: %d", remaining)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	closed := false
+	for i := 0; i < 10; i++ {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		t.Fatal("connection must be closed after Stop")
+	}
+
+	h.Stop() // повторный вызов идемпотентен
 }

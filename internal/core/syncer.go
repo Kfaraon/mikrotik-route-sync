@@ -134,6 +134,7 @@ func NewSyncer(cfg *config.Config, log *slog.Logger, cache *storage.Cache, notif
 	auditLog := audit.NewLogger(log)
 	hist := history.NewHistory(1000)
 	hist.AttachStore(cache)
+	hist.SetLogger(log)
 
 	s := &Syncer{
 		cfg:         cfg,

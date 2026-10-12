@@ -193,6 +193,19 @@
 
     // Рендер кэша порцией newest-first + кнопка «показать ещё».
     function renderLogCache() {
+      // Счётчики считаем по всему набору (logCache), а не в процессе рендера:
+      // иначе «Показать ещё» перерисовывает уже учтённые записи и раздувает
+      // итоги при каждой догрузке порции.
+      levelCounts = { INFO: 0, WARN: 0, ERROR: 0, DEBUG: 0 };
+      totalCount = 0;
+      for (var c = 0; c < logCache.length; c++) {
+        var lvl = String(logCache[c].level || "INFO").toUpperCase();
+        totalCount++;
+        if (Object.prototype.hasOwnProperty.call(levelCounts, lvl)) {
+          levelCounts[lvl]++;
+        }
+      }
+
       var html = "";
       var start = logCache.length - 1;
       var stop = Math.max(-1, logCache.length - 1 - logShown);
@@ -207,6 +220,7 @@
       }
 
       logOutput.innerHTML = html;
+      updateStats();
     }
 
     function renderLogEntry(entry) {      var level = String(entry.level || "INFO").toUpperCase();
@@ -215,11 +229,6 @@
 
       if (level === "ERROR") entryClass += " log-error";
       else if (level === "WARN") entryClass += " log-warn";
-
-      totalCount++;
-      if (Object.prototype.hasOwnProperty.call(levelCounts, level)) {
-        levelCounts[level]++;
-      }
 
       var rawJson;
       try {
@@ -438,14 +447,11 @@
             return;
           }
 
-          resetStats();
-
           // Кап рендера: API отдаёт до 10000 записей, DOM столько не тянет.
           // Показываем newest-first порциями по 500, счётчики — по всему набору.
           logCache = entries;
           logShown = Math.min(entries.length, 500);
           renderLogCache();
-          updateStats();
 
           if (!logPaused) {
             logOutput.scrollTop = logOutput.scrollHeight;

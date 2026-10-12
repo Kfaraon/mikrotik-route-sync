@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWithFallbacksDefaults(t *testing.T) {
@@ -142,5 +144,52 @@ func TestVerifyPrefixBelongsToASN(t *testing.T) {
 	emptyRes := NewResolver("", &fakeFetcher{}, nil, 0)
 	if ok, err := emptyRes.VerifyPrefixBelongsToASN(ctx, p, 13335); !ok || err != nil {
 		t.Fatalf("no entities: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestDNSCacheEvictsExpired — при переполнении просроченные A-записи
+// вычищаются, карта не растёт неограниченно при обходе множества доменов.
+func TestDNSCacheEvictsExpired(t *testing.T) {
+	r := NewResolver("", nil, nil, 0)
+
+	r.dnsMu.Lock()
+	r.dnsCache = map[string]dnsEntry{}
+	for i := 0; i < dnsCacheMaxEntries; i++ {
+		r.dnsCache["expired-"+strconv.Itoa(i)] = dnsEntry{ips: []string{"1.1.1.1"}, exp: time.Now().Add(-time.Minute)}
+	}
+	r.dnsCache["live"] = dnsEntry{ips: []string{"2.2.2.2"}, exp: time.Now().Add(time.Hour)}
+	r.dnsMu.Unlock()
+
+	r.dnsPut("fresh", []string{"3.3.3.3"})
+
+	r.dnsMu.Lock()
+	size := len(r.dnsCache)
+	_, liveKept := r.dnsCache["live"]
+	_, freshKept := r.dnsCache["fresh"]
+	r.dnsMu.Unlock()
+
+	if !liveKept || !freshKept {
+		t.Fatalf("live/fresh must survive eviction (live=%v fresh=%v)", liveKept, freshKept)
+	}
+	if size > dnsCacheMaxEntries {
+		t.Fatalf("cache not evicted: size=%d", size)
+	}
+}
+
+// TestDNSGetDeletesExpired — просроченная запись удаляется при чтении.
+func TestDNSGetDeletesExpired(t *testing.T) {
+	r := NewResolver("", nil, nil, 0)
+	r.dnsMu.Lock()
+	r.dnsCache = map[string]dnsEntry{"x.net": {ips: []string{"1.1.1.1"}, exp: time.Now().Add(-time.Second)}}
+	r.dnsMu.Unlock()
+
+	if _, ok := r.dnsGet("x.net"); ok {
+		t.Fatal("expired entry must miss")
+	}
+	r.dnsMu.Lock()
+	_, still := r.dnsCache["x.net"]
+	r.dnsMu.Unlock()
+	if still {
+		t.Fatal("expired entry must be deleted on read")
 	}
 }

@@ -416,9 +416,17 @@ func AtomicWrite(path string, c *Config) error {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write temp: %w", err)
 	}
-	// Fsync перед rename
-	_ = tmpFile.Sync()
-	_ = tmpFile.Close()
+	// Fsync перед rename: сбой означает, что данные могли не дойти до диска
+	// (потенциальная потеря конфига после сбоя питания) — не глотаем.
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("sync temp: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close temp: %w", err)
+	}
 
 	// На Windows chmod(0600) делает файл read-only и блокирует последующий
 	// rename поверх него — снимаем атрибут перед заменой. На POSIX rename

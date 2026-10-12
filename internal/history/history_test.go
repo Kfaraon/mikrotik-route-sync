@@ -2,6 +2,7 @@ package history
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,6 +52,26 @@ func TestServiceFilterAndPersistence(t *testing.T) {
 		t.Fatalf("persistence broken: %+v", recs)
 	}
 }
+
+// TestAddSurvivesStoreError — сбой персистентности (bbolt) не теряет запись
+// из памяти и не паникует.
+func TestAddSurvivesStoreError(t *testing.T) {
+	h := NewHistory(10)
+	h.AttachStore(failingStore{})
+
+	h.Add(Record{Service: "yt", Added: 1})
+	if recs := h.Records("yt", 10); len(recs) != 1 {
+		t.Fatalf("record must stay in memory: %+v", recs)
+	}
+}
+
+// failingStore — Store, всегда падающий на Put.
+type failingStore struct{}
+
+func (failingStore) Put(string, string, any) error { return errStore }
+func (failingStore) Get(string, string, any) error { return errStore }
+
+var errStore = fmt.Errorf("store unavailable")
 
 func TestRecordQualityJSONCompat(t *testing.T) {
 	// Полная сводка сериализуется и переживает round-trip через bbolt.

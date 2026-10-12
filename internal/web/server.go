@@ -81,6 +81,8 @@ type Hub struct {
 	mu         sync.RWMutex
 	clients    map[*wsClient]bool
 	reaperDone chan struct{}
+	closed     bool
+	stopOnce   sync.Once
 }
 
 func NewHub() *Hub {
@@ -89,8 +91,21 @@ func NewHub() *Hub {
 	return h
 }
 
+// Stop останавливает репер и закрывает всех клиентов: иначе после остановки
+// сервера горутины writeLoop/readLoop живут до таймаута соединения, а
+// handleWS висит на <-done, удерживая соединения и память.
 func (h *Hub) Stop() {
-	close(h.reaperDone)
+	h.stopOnce.Do(func() {
+		close(h.reaperDone)
+		h.mu.Lock()
+		h.closed = true
+		for c := range h.clients {
+			delete(h.clients, c)
+			close(c.send)
+			_ = c.conn.Close()
+		}
+		h.mu.Unlock()
+	})
 }
 
 // reaperLoop периодически чистит мёртвых клиентов: тех, у кого send канал
@@ -104,6 +119,10 @@ func (h *Hub) reaperLoop() {
 			return
 		case <-ticker.C:
 			h.mu.Lock()
+			if h.closed {
+				h.mu.Unlock()
+				return
+			}
 			for c := range h.clients {
 				// Канал забит под завязку — клиент не успевает читать,
 				// удаляем. Проверяем длину, ничего не пишем: лишние
@@ -198,14 +217,21 @@ func (h *Hub) handleWS(w http.ResponseWriter, r *http.Request) {
 	client := &wsClient{conn: conn, send: make(chan []byte, 64)}
 	done := make(chan struct{})
 
+	welcome, _ := json.Marshal(map[string]any{"event": "welcome", "time": time.Now()})
+
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
 	h.clients[client] = true
+	// welcome отправляем под блокировкой: Stop может закрыть send сразу
+	// после регистрации — запись в закрытый канал паникует.
+	client.send <- welcome
 	h.mu.Unlock()
 
 	go client.writeLoop(done)
-
-	welcome, _ := json.Marshal(map[string]any{"event": "welcome", "time": time.Now()})
-	client.send <- welcome
 
 	go func() {
 		defer close(done)
@@ -568,6 +594,17 @@ type Server struct {
 	// Дедупликация тяжёлых refresh-запросов (зеркала качают десятки МБ).
 	refreshMu sync.Mutex
 	refreshOn map[string]bool
+
+	// lifeCtx — время жизни сервера: родитель фоновых операций, отвязанных
+	// от HTTP-соединения клиента, но прекращаемых при остановке сервера.
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
+
+	// Очередь массовых синков: одновременно выполняется один SyncMany,
+	// повторные клики не плодят горутины, а встают в очередь.
+	bulkMu      sync.Mutex
+	bulkQueue   []bulkSyncReq
+	bulkRunning bool
 }
 
 func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Server, error) {
@@ -605,6 +642,8 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		limiter:  newIPLimiter(50),
 		sessions: newSessionStore(cfg.Web.SessionTimeout.Duration()),
 	}
+	// Контекст жизни сервера: без привязки к запросу, но с отменой при Stop.
+	s.lifeCtx, s.lifeCancel = context.WithCancel(context.Background())
 
 	// Каталог runtime-зеркала пресетов: единая формула MirrorDir.
 	if dir := presets.MirrorDir(cfg.CachePath); dir != "" {
@@ -1001,7 +1040,7 @@ func (s *Server) mikrotikHealth(ctx context.Context) (ok, known bool) {
 	case known:
 		s.mtRefreshing = true
 		s.mtMu.Unlock()
-		go s.mtRefresh(context.WithoutCancel(ctx))
+		go s.mtRefresh(s.baseCtx())
 		return ok, known
 	}
 	s.mtRefreshing = true
@@ -1988,7 +2027,7 @@ func (s *Server) apiRecommendService(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"advice": adv}
 	if req.Apply {
 		// Предел как у одиночного синка (purge перебирает записи).
-		actx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+		actx, cancel := context.WithTimeout(s.baseCtx(), 10*time.Minute)
 		purged, err := s.syncer.ApplyCDNRecommendation(actx, name, adv)
 		cancel()
 		if err != nil {
@@ -2065,14 +2104,13 @@ func (s *Server) apiSyncMany(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	runner := s.syncer
-	// Фоновая задача с пределом (как у планировщика/бота, но шире —
-	// сервисов много): зависший MikroTik не копит горутины вечно.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Minute)
-	go func() {
-		defer cancel()
-		_ = runner.SyncMany(ctx, services, req.DryRun, req.Force)
-	}()
+	// Массовые синки идут через очередь: одновременно выполняется один
+	// SyncMany, остальные клики не плодят горутины с 30-минутными контекстами,
+	// а ждут своей очереди. Переполнение очереди — 429.
+	if !s.enqueueBulkSync(services, req.DryRun, req.Force) {
+		writeErr(w, http.StatusTooManyRequests, "bulk sync queue is full, try again later")
+		return
+	}
 	writeOK(w, map[string]any{"started": true, "services": services, "dry_run": req.DryRun})
 }
 
@@ -2088,7 +2126,7 @@ func (s *Server) apiSyncOne(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	tctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+	tctx, cancel := context.WithTimeout(s.baseCtx(), 10*time.Minute)
 	defer cancel()
 	// Без привязки к соединению клиента: транзакция применения изменений
 	// длится минутами (сбор + SNI), и обрыв связи (закрытие вкладки, таймаут
@@ -2111,7 +2149,7 @@ func (s *Server) apiDryRun(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	// Предел сверху как у одиночного синка; развязка от соединения клиента —
 	// как в apiSyncOne: обрыв связи не прерывает транзакцию на середине.
-	dctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+	dctx, cancel := context.WithTimeout(s.baseCtx(), 10*time.Minute)
 	defer cancel()
 	res, err := s.syncer.SyncService(dctx, name, true, false)
 	if err != nil {
@@ -2402,11 +2440,10 @@ func (s *Server) actionSyncAll(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("<p class=\"muted\">Нет сервисов</p>"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Minute)
-	go func() {
-		defer cancel()
-		_ = s.syncer.SyncMany(ctx, services, false, false)
-	}()
+	if !s.enqueueBulkSync(services, false, false) {
+		writeErr(w, http.StatusTooManyRequests, "bulk sync queue is full, try again later")
+		return
+	}
 	writeOK(w, map[string]any{"started": true, "services": services})
 }
 
@@ -2422,17 +2459,69 @@ func (s *Server) actionSyncSelected(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "nothing selected")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Minute)
-	go func() {
-		defer cancel()
-		_ = s.syncer.SyncMany(ctx, services, false, false)
-	}()
+	if !s.enqueueBulkSync(services, false, false) {
+		writeErr(w, http.StatusTooManyRequests, "bulk sync queue is full, try again later")
+		return
+	}
 	writeOK(w, map[string]any{"started": true, "services": services})
 }
 
 // maxSyncServices — предел числа сервисов в одном запросе на синк: веер
 // горутин (по одной на сервис до семафора) не должен расти без границ.
 const maxSyncServices = 1000
+
+// maxBulkQueue — предел ожидающих массовых синков. Один выполняется,
+// остальные ждут; сверх предела клиент получает 429 (не плодим веера).
+const maxBulkQueue = 8
+
+// bulkSyncReq — задание массового синка в очереди.
+type bulkSyncReq struct {
+	services []string
+	dry      bool
+	force    bool
+}
+
+// enqueueBulkSync ставит массовый синк в очередь и при простое запускает
+// воркер. Возвращает false, если очередь переполнена.
+func (s *Server) enqueueBulkSync(services []string, dry, force bool) bool {
+	if len(services) == 0 {
+		return true
+	}
+	s.bulkMu.Lock()
+	if len(s.bulkQueue) >= maxBulkQueue {
+		s.bulkMu.Unlock()
+		return false
+	}
+	s.bulkQueue = append(s.bulkQueue, bulkSyncReq{services: services, dry: dry, force: force})
+	if s.bulkRunning {
+		s.bulkMu.Unlock()
+		return true
+	}
+	s.bulkRunning = true
+	s.bulkMu.Unlock()
+	go s.runBulkQueue()
+	return true
+}
+
+// runBulkQueue последовательно выполняет задания очереди. Контекст — от
+// lifeCtx (отменяется при Stop), с общим пределом на одно задание.
+func (s *Server) runBulkQueue() {
+	for {
+		s.bulkMu.Lock()
+		if len(s.bulkQueue) == 0 {
+			s.bulkRunning = false
+			s.bulkMu.Unlock()
+			return
+		}
+		req := s.bulkQueue[0]
+		s.bulkQueue = s.bulkQueue[1:]
+		s.bulkMu.Unlock()
+
+		ctx, cancel := context.WithTimeout(s.baseCtx(), 30*time.Minute)
+		_ = s.syncer.SyncMany(ctx, req.services, req.dry, req.force)
+		cancel()
+	}
+}
 
 // configuredServices нормализует запрошенные имена сервисов и оставляет
 // только те, что есть в конфиге. Возвращает ошибку на некорректное имя,
@@ -2776,6 +2865,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.httpSrv.Handler.ServeHTTP(w, r)
 }
 
+// Start запускает веб-сервер и блокируется до отмены ctx или ошибки.
 func (s *Server) Start(ctx context.Context) error {
 	if !s.cfg.Web.Enabled {
 		s.log.Info("веб-сервер отключён конфигурацией")
@@ -2793,6 +2883,7 @@ func (s *Server) Start(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		s.log.Info("остановка веб-сервера")
+		s.lifeCancel()
 		s.hub.Stop()
 		s.limiter.StopEvictTicker()
 		s.sessions.Stop()
@@ -2800,9 +2891,21 @@ func (s *Server) Start(ctx context.Context) error {
 		defer cancel()
 		return s.httpSrv.Shutdown(shutdownCtx)
 	case err := <-errCh:
+		s.lifeCancel()
 		s.hub.Stop()
 		s.limiter.StopEvictTicker()
 		s.sessions.Stop()
 		return err
 	}
+}
+
+// baseCtx — родитель фоновых операций, переживающих HTTP-запрос (обрыв
+// соединения клиента не должен прерывать транзакцию), но отменяемых при
+// остановке сервера. Заменяет context.WithoutCancel(r.Context()): тот
+// отвязывал задачу и от shutdown, оставляя висящие горутины после Stop.
+func (s *Server) baseCtx() context.Context {
+	if s.lifeCtx == nil {
+		return context.Background()
+	}
+	return s.lifeCtx
 }

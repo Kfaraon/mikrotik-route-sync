@@ -45,6 +45,10 @@ type dnsEntry struct {
 // dnsCacheTTL — время жизни A-записи в памяти.
 const dnsCacheTTL = 10 * time.Minute
 
+// dnsCacheMaxEntries — предел числа доменов в DNS-кэше. Без eviction карта
+// растёт неограниченно (ключи — все встречавшиеся домены CDN/ASN/проверок).
+const dnsCacheMaxEntries = 4096
+
 // DNSFallbacks — публичные DNS на случай недоступности основного резолвера.
 var DNSFallbacks = []string{"8.8.8.8:53", "1.1.1.1:53"}
 
@@ -121,7 +125,11 @@ func (r *Resolver) dnsGet(domain string) ([]string, bool) {
 	r.dnsMu.Lock()
 	defer r.dnsMu.Unlock()
 	e, ok := r.dnsCache[domain]
-	if !ok || time.Now().After(e.exp) {
+	if !ok {
+		return nil, false
+	}
+	if time.Now().After(e.exp) {
+		delete(r.dnsCache, domain)
 		return nil, false
 	}
 	return e.ips, true
@@ -133,7 +141,16 @@ func (r *Resolver) dnsPut(domain string, ips []string) {
 	if r.dnsCache == nil {
 		r.dnsCache = map[string]dnsEntry{}
 	}
-	r.dnsCache[domain] = dnsEntry{ips: append([]string(nil), ips...), exp: time.Now().Add(dnsCacheTTL)}
+	now := time.Now()
+	if len(r.dnsCache) >= dnsCacheMaxEntries {
+		// Чистим просроченные, прежде чем пускать карту дальше в рост.
+		for k, e := range r.dnsCache {
+			if now.After(e.exp) {
+				delete(r.dnsCache, k)
+			}
+		}
+	}
+	r.dnsCache[domain] = dnsEntry{ips: append([]string(nil), ips...), exp: now.Add(dnsCacheTTL)}
 }
 
 // ResolveASN определяет IPv4-ASN для домена через DNS + IP→ASN.

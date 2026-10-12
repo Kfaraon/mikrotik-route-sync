@@ -67,6 +67,10 @@ func New(c config.MikroTikConfig, rc config.RetryConfig, log *slog.Logger) *Clie
 		}
 	}
 	retryClient.Logger = nil
+	// Ретраим только идемпотентные чтения (GET). Мутации (PUT/PATCH/POST/
+	// DELETE) не повторяем: повтор после потерянного ответа создаёт дубль
+	// записи в address-list или удаляет уже удалённое.
+	retryClient.CheckRetry = retryCheckRetry
 
 	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
 		Name:        "mikrotik",
@@ -117,10 +121,26 @@ func (c *Client) timeoutContext(ctx context.Context) (context.Context, context.C
 	return context.WithTimeout(ctx, d)
 }
 
+// retryMethodKey — ключ контекста, в который doRaw кладёт HTTP-метод запроса:
+// CheckRetry не получает сам запрос, а метод нужен для решения о ретрае.
+type retryMethodKey struct{}
+
+// retryCheckRetry — политика ретраев retryablehttp: повторяем только
+// идемпотентные чтения (GET). Мутации не повторяются, иначе после
+// потерянного ответа PUT создаст дубль, а повторный remove вернёт ошибку
+// отсутствующей записи. Метод берётся из контекста запроса (см. doRaw).
+func retryCheckRetry(ctx context.Context, resp *http.Response, err error) (bool, error) {
+	if m, _ := ctx.Value(retryMethodKey{}).(string); !strings.EqualFold(m, http.MethodGet) {
+		return false, nil
+	}
+	return retryablehttp.DefaultRetryPolicy(ctx, resp, err)
+}
+
 // doRaw выполняет запрос и возвращает сырое тело успешного ответа.
 func (c *Client) doRaw(ctx context.Context, method, path string, body any) ([]byte, error) {
 	ctx, cancel := c.timeoutContext(ctx)
 	defer cancel()
+	ctx = context.WithValue(ctx, retryMethodKey{}, method)
 
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limit wait: %w", err)
@@ -175,7 +195,11 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body any) ([]by
 	if err != nil {
 		return nil, err
 	}
-	return out.([]byte), nil
+	b, ok := out.([]byte)
+	if !ok {
+		return nil, fmt.Errorf("routeros %s %s: unexpected result type %T", method, path, out)
+	}
+	return b, nil
 }
 
 // do выполняет запрос и декодирует успешный ответ в out.

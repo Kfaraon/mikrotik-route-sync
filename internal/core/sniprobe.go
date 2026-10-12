@@ -59,11 +59,20 @@ func (v *SNIVerifier) Verify(ctx context.Context, domain string, ips []string) *
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	launched := 0
+loop:
 	for _, ip := range ips {
 		ip := ip
-		vd.Checked++
+		// Захват семафора с уважением к отмене контекста: иначе при
+		// отмене синка горутина висит на sem <- struct{}{} до завершения
+		// уже запущенных проб и не освобождает ресурсы.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break loop
+		}
+		launched++
 		wg.Add(1)
-		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
@@ -79,6 +88,7 @@ func (v *SNIVerifier) Verify(ctx context.Context, domain string, ips []string) *
 		}()
 	}
 	wg.Wait()
+	vd.Checked = launched
 	return vd
 }
 
@@ -123,6 +133,9 @@ type sniCacheEntry struct {
 const (
 	sniCachePositiveTTL = time.Hour
 	sniCacheNegativeTTL = 10 * time.Minute
+	// sniCacheMaxEntries — предел числа доменов в SNI-кэше: без eviction
+	// карта растёт неограниченно (ключ — каждый проверявшийся домен).
+	sniCacheMaxEntries = 4096
 	// sniAlertThrottle — алерт о провале SNI не чаще раза в сутки на сервис.
 	sniAlertThrottle = 24 * time.Hour
 )
@@ -147,11 +160,8 @@ func (s *Syncer) verifyServiceSNIProgress(ctx context.Context, domains []string,
 		if onStep != nil {
 			onStep(i, total, d)
 		}
-		s.sniMu.Lock()
-		e, ok := s.sniCache[d]
-		s.sniMu.Unlock()
-		if ok && time.Now().Before(e.expires) {
-			out = append(out, e.verdicts...)
+		if vds, ok := s.sniCacheGet(d); ok {
+			out = append(out, vds...)
 			continue
 		}
 		var vds []*SNIVerdict
@@ -162,12 +172,43 @@ func (s *Syncer) verifyServiceSNIProgress(ctx context.Context, domains []string,
 		if !allSNIPassed(vds) {
 			ttl = sniCacheNegativeTTL
 		}
-		s.sniMu.Lock()
-		s.sniCache[d] = sniCacheEntry{verdicts: vds, expires: time.Now().Add(ttl)}
-		s.sniMu.Unlock()
+		s.sniCachePut(d, sniCacheEntry{verdicts: vds, expires: time.Now().Add(ttl)})
 		out = append(out, vds...)
 	}
 	return out
+}
+
+// sniCacheGet возвращает живой вердикт домена, удаляя просроченный.
+func (s *Syncer) sniCacheGet(domain string) ([]*SNIVerdict, bool) {
+	s.sniMu.Lock()
+	defer s.sniMu.Unlock()
+	e, ok := s.sniCache[domain]
+	if !ok {
+		return nil, false
+	}
+	if !time.Now().Before(e.expires) {
+		delete(s.sniCache, domain)
+		return nil, false
+	}
+	return e.verdicts, true
+}
+
+// sniCachePut кладёт вердикт, попутно вычищая просроченные при переполнении.
+func (s *Syncer) sniCachePut(domain string, e sniCacheEntry) {
+	s.sniMu.Lock()
+	defer s.sniMu.Unlock()
+	if s.sniCache == nil {
+		s.sniCache = map[string]sniCacheEntry{}
+	}
+	if len(s.sniCache) >= sniCacheMaxEntries {
+		now := time.Now()
+		for k, v := range s.sniCache {
+			if !now.Before(v.expires) {
+				delete(s.sniCache, k)
+			}
+		}
+	}
+	s.sniCache[domain] = e
 }
 
 func allSNIPassed(vds []*SNIVerdict) bool {
