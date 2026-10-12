@@ -47,7 +47,7 @@ func (s *Syncer) DiffService(ctx context.Context, name string) (*addresslist.Dif
 		return nil, fmt.Errorf("validate: %w", err)
 	}
 	if rej.Total() > 0 {
-		s.log.Warn("validator rejected some prefixes",
+		s.log.Warn("валидатор отклонил часть префиксов",
 			"ipv6", rej.IPv6, "blocked", rej.Blocked, "too_broad", rej.TooBroad,
 			"host_routes", rej.HostRoute, "excluded", rej.Excluded, "not_included", rej.NotIncluded)
 	}
@@ -87,7 +87,7 @@ func applyForeignExclusions(desired []string, foreign []addresslist.Entry, log *
 	if hits == 0 {
 		return desired
 	}
-	log.Info("excluded overlaps with existing MikroTik entries",
+	log.Info("исключены пересечения с существующими записями MikroTik",
 		"overlapped", hits, "before", len(desired), "after", len(out))
 
 	parsed := make([]netip.Prefix, 0, len(out))
@@ -192,13 +192,13 @@ func (s *Syncer) CleanupAutoEntries(ctx context.Context, force bool) (int, error
 	deleted := 0
 	for _, o := range orphans {
 		if err := s.mt().DeleteEntry(ctx, o.Addresslist.ID); err != nil {
-			s.log.Error("failed to delete orphan entry",
+			s.log.Error("не удалось удалить orphan-запись",
 				"id", o.Addresslist.ID, "address", o.Addresslist.Address, "err", err)
 			continue
 		}
 		deleted++
 	}
-	s.log.Info("orphan AUTO entries cleanup completed", "deleted", deleted, "total", len(orphans))
+	s.log.Info("очистка orphan-записей AUTO завершена", "deleted", deleted, "total", len(orphans))
 	return deleted, nil
 }
 
@@ -212,7 +212,7 @@ func (s *Syncer) RemoveServiceEntries(ctx context.Context, name string) (int, er
 	for _, e := range entries {
 		if err := s.mt().DeleteEntry(ctx, e.ID); err != nil {
 			failed = append(failed, e.Address)
-			s.log.Error("failed to delete entry", "service", name, "id", e.ID, "address", e.Address, "err", err)
+			s.log.Error("не удалось удалить запись", "service", name, "id", e.ID, "address", e.Address, "err", err)
 			continue
 		}
 		deleted++

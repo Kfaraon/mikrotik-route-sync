@@ -91,7 +91,7 @@ func (s *Scheduler) startLocked(quiet bool) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
 		loc = time.UTC
-		s.log.Warn("invalid timezone, using UTC", "timezone", timezone)
+		s.log.Warn("некорректная таймзона, используем UTC", "timezone", timezone)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
@@ -135,7 +135,7 @@ func (s *Scheduler) startLocked(quiet bool) {
 				select {
 				case <-t.C:
 					if err := s.syncer.PurgeCache(); err != nil {
-						s.log.Warn("cache purge failed", "err", err)
+						s.log.Warn("не удалось очистить кэш", "err", err)
 					}
 				case <-ctx.Done():
 					return
@@ -154,7 +154,7 @@ func (s *Scheduler) startLocked(quiet bool) {
 				select {
 				case <-t.C:
 					if err := s.ReloadQuiet(); err != nil {
-						s.log.Warn("scheduled reload failed", "err", err)
+						s.log.Warn("не удалось перезагрузить по расписанию", "err", err)
 					}
 				case <-ctx.Done():
 					return
@@ -165,7 +165,7 @@ func (s *Scheduler) startLocked(quiet bool) {
 
 	// ИЗМЕНЕНО: логируем только при тихом запуске (первый запуск или ручной Reload)
 	if !quiet {
-		s.log.Info("scheduler started", "max_concurrent", limit, "timezone", loc.String())
+		s.log.Info("планировщик запущен", "max_concurrent", limit, "timezone", loc.String())
 	}
 }
 
@@ -196,7 +196,7 @@ func (s *Scheduler) addLocked(ctx context.Context, service, spec string) {
 		svc, original := service, spec
 		_, err := s.cron.AddFunc(c, func() { s.dispatch(ctx, svc, original) })
 		if err != nil {
-			s.log.Error("schedule add failed", "service", service, "schedule", spec, "err", err)
+			s.log.Error("не удалось добавить расписание", "service", service, "schedule", spec, "err", err)
 		}
 		return
 	}
@@ -212,7 +212,7 @@ func (s *Scheduler) addLocked(ctx context.Context, service, spec string) {
 		})
 		return
 	}
-	s.log.Warn("unsupported schedule", "service", service, "schedule", spec)
+	s.log.Warn("неподдерживаемое расписание", "service", service, "schedule", spec)
 }
 
 func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
@@ -248,24 +248,24 @@ func (s *Scheduler) dispatch(ctx context.Context, service, spec string) {
 			s.run(ctx, service, spec)
 		}(sem)
 	case <-ctx.Done():
-		s.log.Warn("scheduled sync skipped: context cancelled", "service", service, "schedule", spec)
+		s.log.Warn("синхронизация по расписанию пропущена: контекст отменён", "service", service, "schedule", spec)
 	case <-time.After(5 * time.Minute):
-		s.log.Warn("scheduled sync skipped: concurrency limit reached", "service", service, "schedule", spec)
+		s.log.Warn("синхронизация по расписанию пропущена: достигнут лимит параллельных", "service", service, "schedule", spec)
 	}
 }
 
 func (s *Scheduler) run(parent context.Context, service, spec string) {
 	defer func() {
 		if r := recover(); r != nil {
-			s.log.Error("scheduled sync panicked", "service", service, "schedule", spec, "panic", r)
+			s.log.Error("паника при синхронизации по расписанию", "service", service, "schedule", spec, "panic", r)
 		}
 	}()
 	ctx, cancel := context.WithTimeout(parent, 10*time.Minute)
 	defer cancel()
-	s.log.Info("scheduled sync triggered", "service", service, "schedule", spec)
+	s.log.Info("синхронизация по расписанию запущена", "service", service, "schedule", spec)
 	res := s.syncer.SyncOneResult(ctx, service, false)
 	if !res.Success {
-		s.log.Warn("scheduled sync failed", "service", service, "error", res.Error)
+		s.log.Warn("синхронизация по расписанию не удалась", "service", service, "error", res.Error)
 	}
 }
 
@@ -328,9 +328,9 @@ func (s *Scheduler) reloadLocked(quiet bool) error {
 	s.stopLocked(ctx)
 	s.startLocked(quiet)
 	if quiet {
-		s.log.Debug("scheduler quietly reloaded")
+		s.log.Debug("планировщик тихо перезагружен")
 	} else {
-		s.log.Info("scheduler reloaded")
+		s.log.Info("планировщик перезагружен")
 	}
 	return nil
 }

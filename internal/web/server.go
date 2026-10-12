@@ -610,7 +610,7 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 	if dir := presets.MirrorDir(cfg.CachePath); dir != "" {
 		presets.DiskDir = dir
 		if err := presets.RebuildUpstreamIndex(presets.DiskDir); err != nil {
-			log.Debug("upstream presets index not built (mirror not downloaded?)", "err", err)
+			log.Debug("индекс upstream-пресетов не построен (зеркало не скачано?)", "err", err)
 		}
 	}
 
@@ -772,7 +772,7 @@ func (s *Server) cidrMiddleware(next http.Handler) http.Handler {
 		}
 		ip := s.ips.clientIP(r)
 		if ip == nil || !s.ips.allowedIP(ip) {
-			s.log.Warn("web access denied by allowed_cidrs", "remote", r.RemoteAddr)
+			s.log.Warn("доступ к вебу запрещён по allowed_cidrs", "remote", r.RemoteAddr)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -830,7 +830,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(authPass)) == 1
 		if !ok || !userOK || !passOK {
 			if ok {
-				s.log.Warn("web auth failed", "user", user, "remote", r.RemoteAddr)
+				s.log.Warn("аутентификация в вебе не пройдена", "user", user, "remote", r.RemoteAddr)
 			}
 			w.Header().Set("WWW-Authenticate", `Basic realm="mikrotik-route-sync", charset="UTF-8"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -898,20 +898,20 @@ func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 			// режем всегда — его нельзя подделать из JS, и он срабатывает
 			// даже когда Origin/Referer вырезаны прокси.
 			if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
-				s.log.Warn("cross-site basic-auth request rejected (sec-fetch-site)", "remote", r.RemoteAddr)
+				s.log.Warn("кросс-сайтовый basic-auth запрос отклонён (sec-fetch-site)", "remote", r.RemoteAddr)
 				http.Error(w, `{"ok":false,"error":"cross-origin request rejected"}`, http.StatusForbidden)
 				return
 			}
 			origin := r.Header.Get("Origin")
 			if origin == "" {
 				if ref := r.Header.Get("Referer"); ref != "" && !s.sameOrigin(r, ref) {
-					s.log.Warn("cross-origin basic-auth request rejected (referer)", "remote", r.RemoteAddr)
+					s.log.Warn("кросс-доменный basic-auth запрос отклонён (referer)", "remote", r.RemoteAddr)
 					http.Error(w, `{"ok":false,"error":"cross-origin request rejected"}`, http.StatusForbidden)
 					return
 				}
-				s.log.Debug("basic-auth without origin/referer (programmatic?)", "remote", r.RemoteAddr)
+				s.log.Debug("basic-auth без origin/referer (программный клиент?)", "remote", r.RemoteAddr)
 			} else if !s.sameOrigin(r, origin) {
-				s.log.Warn("cross-origin basic-auth request rejected", "remote", r.RemoteAddr, "origin", origin)
+				s.log.Warn("кросс-доменный basic-auth запрос отклонён", "remote", r.RemoteAddr, "origin", origin)
 				http.Error(w, `{"ok":false,"error":"cross-origin request rejected"}`, http.StatusForbidden)
 				return
 			}
@@ -936,7 +936,7 @@ func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 			token = r.FormValue("csrf_token")
 		}
 		if subtle.ConstantTimeCompare([]byte(token), []byte(sess.csrf)) != 1 {
-			s.log.Warn("csrf validation failed", "remote", r.RemoteAddr)
+			s.log.Warn("проверка csrf не пройдена", "remote", r.RemoteAddr)
 			http.Error(w, `{"ok":false,"error":"csrf token invalid"}`, http.StatusForbidden)
 			return
 		}
@@ -1064,13 +1064,13 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	// http.Error вернёт честный 500 (а не 200 с обрывком).
 	var buf bytes.Buffer
 	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
-		s.log.Error("template render error", "template", name, "err", err)
+		s.log.Error("ошибка рендеринга шаблона", "template", name, "err", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if _, err := buf.WriteTo(w); err != nil {
-		s.log.Warn("template write error", "template", name, "err", err)
+		s.log.Warn("ошибка записи шаблона", "template", name, "err", err)
 	}
 }
 
@@ -2173,7 +2173,7 @@ func (s *Server) applySchedule(r *http.Request, service, spec string) error {
 	}
 	s.auditChange(r, "web", "schedule_change", service)
 	if err := s.syncer.ReloadScheduler(); err != nil {
-		s.log.Warn("failed to reload scheduler after schedule change", "err", err)
+		s.log.Warn("не удалось перезагрузить планировщик после изменения расписания", "err", err)
 	}
 	return nil
 }
@@ -2306,7 +2306,7 @@ func (s *Server) pageAddressList(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{}
 	entries, err := s.syncer.ListGlobalEntries(ctx)
 	if err != nil {
-		s.log.Debug("failed to list global address entries (MikroTik unavailable)", "err", err)
+		s.log.Debug("не удалось получить глобальные записи адресов (MikroTik недоступен)", "err", err)
 		data["Error"] = "MikroTik недоступен. Проверьте подключение к роутеру, правильность адреса, порта и настроек SSL/TLS."
 	} else {
 		data["Rows"] = s.toAddressRows(entries)
@@ -2324,7 +2324,7 @@ func (s *Server) apiAddressList(w http.ResponseWriter, r *http.Request) {
 	listName := s.cfg.Firewall.AddressList
 	s.cfg.RUnlock()
 	if err != nil {
-		s.log.Debug("MikroTik is unavailable when listing global entries via API, returning empty list", "err", err)
+		s.log.Debug("MikroTik недоступен при получении глобальных записей через API, возвращаем пустой список", "err", err)
 		writeOK(w, map[string]any{
 			"list":          listName,
 			"entries":       []addressRow{},
@@ -2354,7 +2354,7 @@ func (s *Server) apiServiceAddressList(w http.ResponseWriter, r *http.Request) {
 	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
 	s.cfg.RUnlock()
 	if err != nil {
-		s.log.Debug("MikroTik is unavailable when listing service entries via API, returning empty list",
+		s.log.Debug("MikroTik недоступен при получении записей сервиса через API, возвращаем пустой список",
 			"service", name, "err", err)
 		writeOK(w, map[string]any{
 			"service":       name,
@@ -2591,7 +2591,7 @@ func (s *Server) actionUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.applyRuntimeChanges()
 
 	s.auditChange(r, "web", "settings_update", fmt.Sprintf("%d keys", len(updates)))
-	s.log.Info("settings updated", "user", user, "changed_keys", len(updates))
+	s.log.Info("настройки обновлены", "user", user, "changed_keys", len(updates))
 	telegramChanged := false
 	for _, u := range updates {
 		if strings.HasPrefix(u.key, "telegram.") {
@@ -2677,7 +2677,7 @@ func (s *Server) actionUpdateCDNSources(w http.ResponseWriter, r *http.Request) 
 
 	s.applyRuntimeChanges()
 	s.auditChange(r, "web", "cdn_sources_update", fmt.Sprintf("%d entries", len(list)))
-	s.log.Info("cdn sources updated", "user", user, "count", len(list))
+	s.log.Info("источники CDN обновлены", "user", user, "count", len(list))
 	w.Header().Set("HX-Refresh", "true")
 	writeOK(w, map[string]any{"updated": len(list)})
 }
@@ -2704,7 +2704,7 @@ func (s *Server) applyRuntimeChanges() {
 	logging.SetLevel(logLevel)
 
 	if err := s.syncer.ApplyConfig(); err != nil {
-		s.log.Error("failed to apply config to clients", "err", err)
+		s.log.Error("не удалось применить конфигурацию к клиентам", "err", err)
 	}
 
 	// Нотификатор пересоздаётся, если менялись telegram.* настройки.
@@ -2712,11 +2712,11 @@ func (s *Server) applyRuntimeChanges() {
 
 	// Перезапуск Telegram-бота при изменении настроек telegram.*
 	if err := s.syncer.RestartTelegramBot(); err != nil {
-		s.log.Warn("failed to restart telegram bot", "err", err)
+		s.log.Warn("не удалось перезапустить telegram-бота", "err", err)
 	}
 
 	if err := s.syncer.ReloadScheduler(); err != nil {
-		s.log.Warn("failed to reload scheduler", "err", err)
+		s.log.Warn("не удалось перезагрузить планировщик", "err", err)
 	}
 }
 
@@ -2736,7 +2736,7 @@ func (s *Server) actionLogsClear(w http.ResponseWriter, r *http.Request) {
 	// Через механизм ротации: прямое truncate оставляло счётчик размера
 	// lumberjack прежним (преждевременный rotate) и меняло права файла.
 	if err := logging.RotateLogFile(file); err != nil {
-		s.log.Warn("log rotate on clear failed, falling back to truncate", "err", err)
+		s.log.Warn("не удалось перевернуть лог при очистке, переходим к усечению", "err", err)
 		if terr := os.WriteFile(file, nil, 0o600); terr != nil {
 			http.Error(w, terr.Error(), http.StatusInternalServerError)
 			return
@@ -2755,7 +2755,7 @@ func (s *Server) auditChange(r *http.Request, source, action, subject string) {
 	if r != nil {
 		user = s.currentUser(r)
 	}
-	s.log.Info("web change", "audit_action", action, "user", user, "source", source, "subject", subject)
+	s.log.Info("изменение через веб", "audit_action", action, "user", user, "source", source, "subject", subject)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -2764,10 +2764,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Start(ctx context.Context) error {
 	if !s.cfg.Web.Enabled {
-		s.log.Info("web server disabled by config")
+		s.log.Info("веб-сервер отключён конфигурацией")
 		return nil
 	}
-	s.log.Info("starting web server", "addr", s.cfg.Web.Listen)
+	s.log.Info("запуск веб-сервера", "addr", s.cfg.Web.Listen)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -2778,7 +2778,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		s.log.Info("shutting down web server")
+		s.log.Info("остановка веб-сервера")
 		s.hub.Stop()
 		s.limiter.StopEvictTicker()
 		s.sessions.Stop()

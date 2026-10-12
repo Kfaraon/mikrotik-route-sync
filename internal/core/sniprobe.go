@@ -224,7 +224,7 @@ func (s *Syncer) maybeAlertSNI(ctx context.Context, name string, vds []*SNIVerdi
 	// подавлял бы повторный алерт на сутки (проблема оставалась незамеченной).
 	if n := s.getNotify(); n != nil {
 		if err := n.Send(context.WithoutCancel(ctx), sniAlertMessage(name, sniFailedDomains(vds))); err != nil {
-			s.log.Warn("telegram sni alert not delivered", "service", name, "err", err)
+			s.log.Warn("алерт telegram о SNI не доставлен", "service", name, "err", err)
 			return
 		}
 		s.sniMu.Lock()

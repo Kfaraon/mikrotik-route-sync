@@ -97,7 +97,7 @@ func FromConfig(cfg config.TelegramConfig, timezone string, log *slog.Logger) No
 	n, err := NewTelegram(cfg, timezone, log)
 	if err != nil {
 		if log != nil {
-			log.Error("telegram notifier init failed, notifications disabled", "err", err)
+			log.Error("не удалось инициализировать telegram-нотификатор, уведомления отключены", "err", err)
 		}
 		return &NoopNotifier{}
 	}

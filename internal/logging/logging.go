@@ -210,12 +210,12 @@ func maskKeyValue(s string, key string) string {
 // LogSyncResult логирует результат синхронизации одного сервиса.
 func LogSyncResult(logger *slog.Logger, result SyncResult, elapsed time.Duration) {
 	level := slog.LevelInfo
-	msg := "sync completed"
+	msg := "синхронизация завершена"
 	if result.Error != "" {
 		level = slog.LevelError
-		msg = "sync failed"
+		msg = "синхронизация не удалась"
 	} else if result.DryRun {
-		msg = "dry run completed"
+		msg = "DRY-RUN завершён"
 	}
 	logger.Log(context.Background(), level, msg,
 		"service", result.Service,
@@ -245,7 +245,7 @@ func LogSyncSummary(logger *slog.Logger, results []SyncResult) {
 		totalAdded += r.Added
 		totalRemoved += r.Removed
 	}
-	logger.Info("sync summary",
+	logger.Info("сводка синхронизации",
 		"total", len(results),
 		"success", successCount,
 		"failed", failedCount,
@@ -254,7 +254,7 @@ func LogSyncSummary(logger *slog.Logger, results []SyncResult) {
 	)
 	for _, r := range results {
 		if r.Error != "" {
-			logger.Warn("sync failed", "service", r.Service, "error", r.Error)
+			logger.Warn("синхронизация не удалась", "service", r.Service, "error", r.Error)
 		}
 	}
 }

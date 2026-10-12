@@ -85,7 +85,7 @@ func (b *Bot) send(id int64, text string) {
 	for _, part := range splitMessage(text, 4000) {
 		msg := tgbotapi.NewMessage(id, part)
 		if _, err := b.api.Send(msg); err != nil {
-			b.log.Warn("telegram send failed", "chat_id", id, "err", err)
+			b.log.Warn("не удалось отправить в telegram", "chat_id", id, "err", err)
 			return
 		}
 	}
@@ -130,7 +130,7 @@ func (b *Bot) menu(id int64) {
 		"MikroTik Route Sync\n\nКоманды: /status /sync /schedule /help")
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
-		b.log.Warn("telegram send failed", "chat_id", id, "err", err)
+		b.log.Warn("не удалось отправить в telegram", "chat_id", id, "err", err)
 	}
 }
 
@@ -209,7 +209,7 @@ func (b *Bot) GoRun(ctx context.Context) {
 	go func() {
 		defer b.wg.Done()
 		if err := b.runLoop(ctx); err != nil {
-			b.log.Error("telegram bot stopped with error", "err", err)
+			b.log.Error("telegram-бот остановлен с ошибкой", "err", err)
 		}
 	}()
 }
@@ -238,7 +238,7 @@ func (b *Bot) runLoop(ctx context.Context) error {
 			}
 
 			if !b.authorized(id) {
-				b.log.Warn("unauthorized telegram access", "chat_id", id)
+				b.log.Warn("неавторизованный доступ к telegram", "chat_id", id)
 				continue
 			}
 			if !b.limiter(id).Allow() {
@@ -247,7 +247,7 @@ func (b *Bot) runLoop(ctx context.Context) error {
 
 			if up.CallbackQuery != nil {
 				if _, err := b.api.Request(tgbotapi.NewCallback(up.CallbackQuery.ID, "")); err != nil {
-					b.log.Warn("telegram callback answer failed", "chat_id", id, "err", err)
+					b.log.Warn("не удалось ответить на callback telegram", "chat_id", id, "err", err)
 				}
 				b.handleCallback(ctx, id, up.CallbackQuery.Data)
 				continue

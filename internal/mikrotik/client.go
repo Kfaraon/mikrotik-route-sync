@@ -37,7 +37,7 @@ func New(c config.MikroTikConfig, rc config.RetryConfig, log *slog.Logger) *Clie
 	}
 
 	if !c.VerifySSL && log != nil {
-		log.Warn("mikrotik verify_ssl disabled — acceptable only in trusted home networks",
+		log.Warn("mikrotik verify_ssl отключён — допустимо только в доверенных домашних сетях",
 			"host", c.Host)
 	}
 

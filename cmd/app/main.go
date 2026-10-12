@@ -753,7 +753,7 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 
 	// Создаём новый бот только если включён
 	if !tg.Enabled || tg.BotToken == "" {
-		log.Info("telegram bot disabled, skipping start")
+		log.Info("telegram-бот отключён, пропускаем запуск")
 		return nil
 	}
 
@@ -770,7 +770,7 @@ func restartTelegramBot(cfg *config.Config, s *core.Syncer, log *slog.Logger) er
 	// Запускаем в отдельной горутине (Add внутри GoRun — до go).
 	newBot.GoRun(botCtx)
 
-	log.Info("telegram bot restarted with new configuration")
+	log.Info("telegram-бот перезапущен с новой конфигурацией")
 	return nil
 }
 
@@ -785,7 +785,7 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 	cfg.RUnlock()
 	expr, err := presets.CronExpr(spec)
 	if err != nil {
-		log.Warn("presets mirror schedule invalid, disabled", "schedule", spec, "err", err)
+		log.Warn("расписание зеркала пресетов некорректно, отключено", "schedule", spec, "err", err)
 		return
 	}
 	if expr == "" {
@@ -793,14 +793,14 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 	}
 	dir := presets.MirrorDir(cachePath)
 	if dir == "" {
-		log.Warn("presets mirror disabled: cache_path not configured")
+		log.Warn("зеркало пресетов отключено: cache_path не задан")
 		return
 	}
 	presets.DiskDir = dir
 	// Зона — из конфига (как у планировщика), иначе daily тикает по UTC.
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		log.Warn("invalid timezone, using UTC for presets mirror", "timezone", timezone)
+		log.Warn("некорректная таймзона, используем UTC для зеркала пресетов", "timezone", timezone)
 		loc = time.UTC
 	}
 	c := cron.New(cron.WithLocation(loc))
@@ -809,22 +809,22 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 		// не должно валить демон (как в scheduler.run).
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error("presets mirror job panicked", "panic", fmt.Sprintf("%v", r))
+				log.Error("паника в задаче зеркала пресетов", "panic", fmt.Sprintf("%v", r))
 			}
 		}()
 		if st, err := presets.RefreshMirror(context.WithoutCancel(ctx), dir); err != nil {
-			log.Warn("presets mirror refresh failed", "err", err)
+			log.Warn("не удалось обновить зеркало пресетов", "err", err)
 		} else {
-			log.Info("presets mirror refreshed", "entries", st.Entries)
+			log.Info("зеркало пресетов обновлено", "entries", st.Entries)
 		}
 		if _, err := presets.RefreshUpstream(context.WithoutCancel(ctx), dir); err != nil {
-			log.Warn("presets upstream refresh failed", "err", err)
+			log.Warn("не удалось обновить upstream-пресеты", "err", err)
 		} else if err := presets.RebuildUpstreamIndex(dir); err != nil {
-			log.Warn("presets upstream index rebuild failed", "err", err)
+			log.Warn("не удалось перестроить индекс upstream-пресетов", "err", err)
 		}
 	})
 	if err != nil {
-		log.Warn("presets mirror schedule rejected, disabled", "schedule", spec, "err", err)
+		log.Warn("расписание зеркала пресетов отклонено, отключено", "schedule", spec, "err", err)
 		return
 	}
 	c.Start()
@@ -832,7 +832,7 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 		<-ctx.Done()
 		c.Stop()
 	}()
-	log.Info("presets mirror scheduled", "schedule", spec)
+	log.Info("зеркало пресетов запланировано", "schedule", spec)
 }
 
 func daemonCmd() *cobra.Command {
@@ -878,7 +878,7 @@ func daemonCmd() *cobra.Command {
 				// Клиенты тоже пересобрать (иначе mikrotik.*/external.* старые):
 				// ApplyConfig берёт RLock сам, блокировок не держим.
 				if err := s.ApplyConfig(); err != nil {
-					log.Warn("sighup apply config failed", "err", err)
+					log.Warn("не удалось применить конфигурацию по SIGHUP", "err", err)
 				}
 				return sched.Reload()
 			})
@@ -899,9 +899,9 @@ func daemonCmd() *cobra.Command {
 				signal.Notify(hup, sighupSignal)
 				go func() {
 					for range hup {
-						log.Info("SIGHUP received, reloading schedules")
+						log.Info("получен SIGHUP, перезагружаем расписания")
 						if err := s.ReloadScheduler(); err != nil {
-							log.Error("reload failed", "err", err)
+							log.Error("перезагрузка не удалась", "err", err)
 						}
 					}
 				}()
@@ -923,14 +923,14 @@ func daemonCmd() *cobra.Command {
 
 			// Первый запуск бота при старте демона
 			if err := restartTelegramBot(cfg, s, log); err != nil {
-				log.Error("failed to start telegram bot", "err", err)
+				log.Error("не удалось запустить telegram-бота", "err", err)
 			}
 
-			log.Info("daemon started", "version", version.Version, "services", servicesSnapshot)
+			log.Info("демон запущен", "version", version.Version, "services", servicesSnapshot)
 
 			select {
 			case <-ctx.Done():
-				log.Info("shutdown signal received, stopping gracefully")
+				log.Info("получен сигнал завершения, останавливаемся корректно")
 			case err := <-errCh:
 				if err != nil {
 					return err
@@ -946,7 +946,7 @@ func daemonCmd() *cobra.Command {
 			}
 
 			sched.Stop(context.Background())
-			log.Info("daemon stopped")
+			log.Info("демон остановлен")
 			return nil
 		},
 	}

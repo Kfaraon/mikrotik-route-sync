@@ -31,7 +31,7 @@ func (s *Syncer) createSnapshot(ctx context.Context, name string, entries []addr
 	for _, e := range entries {
 		norm, err := addresslist.NormalizeAddress(e.Address)
 		if err != nil {
-			s.log.Error("invalid address in snapshot, skipping",
+			s.log.Error("в снапшоте некорректный адрес, пропускаем",
 				"address", e.Address, "service", name, "err", err)
 			skipped++
 			continue
@@ -39,12 +39,12 @@ func (s *Syncer) createSnapshot(ctx context.Context, name string, entries []addr
 		addresses = append(addresses, norm)
 	}
 	if skipped > 0 {
-		s.log.Warn("some entries skipped in snapshot", "service", name, "skipped", skipped, "total", len(entries))
+		s.log.Warn("часть записей снапшота пропущена", "service", name, "skipped", skipped, "total", len(entries))
 	}
 
 	id, err := s.CreateSnapshot(ctx, name, addresses)
 	if err != nil {
-		s.log.Error("failed to create snapshot", "service", name, "err", err)
+		s.log.Error("не удалось создать снапшот", "service", name, "err", err)
 		return ""
 	}
 	return id
@@ -61,7 +61,7 @@ func (s *Syncer) CreateSnapshot(ctx context.Context, service string, addresses [
 	if err != nil {
 		return "", fmt.Errorf("save snapshot: %w", err)
 	}
-	s.log.Info("created snapshot", "service", service, "id", id, "addresses", len(addresses))
+	s.log.Info("снапшот создан", "service", service, "id", id, "addresses", len(addresses))
 	return id, nil
 }
 
@@ -118,7 +118,7 @@ func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.
 	for _, info := range ids {
 		if info.CreatedAt.Before(cutoff) {
 			if err := s.cache.DeleteSnapshot(service, info.ID); err != nil {
-				s.log.Warn("failed to delete expired snapshot", "service", service, "id", info.ID, "err", err)
+				s.log.Warn("не удалось удалить устаревший снапшот", "service", service, "id", info.ID, "err", err)
 				continue
 			}
 			deleted++
@@ -136,14 +136,14 @@ func (s *Syncer) CleanupSnapshots(ctx context.Context, service string, ttl time.
 		toDelete := len(remaining) - maxCount
 		for i := 0; i < toDelete && i < len(remaining); i++ {
 			if err := s.cache.DeleteSnapshot(service, remaining[i].ID); err != nil {
-				s.log.Warn("failed to delete excess snapshot", "service", service, "id", remaining[i].ID, "err", err)
+				s.log.Warn("не удалось удалить лишний снапшот", "service", service, "id", remaining[i].ID, "err", err)
 				continue
 			}
 			deleted++
 		}
 	}
 
-	s.log.Info("snapshot cleanup completed", "service", service, "deleted", deleted, "ttl", ttl, "max_count", maxCount)
+	s.log.Info("очистка снапшотов завершена", "service", service, "deleted", deleted, "ttl", ttl, "max_count", maxCount)
 	return deleted, nil
 }
 

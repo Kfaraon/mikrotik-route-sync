@@ -76,7 +76,7 @@ func (l *Logger) Log(entry Entry) {
 		attrs = append(attrs, slog.String("audit_metadata", string(metadataJSON)))
 	}
 
-	l.logger.Info("audit_event", attrs...)
+	l.logger.Info("событие аудита", attrs...)
 }
 
 // LogConfigChange логирует изменение конфигурации.

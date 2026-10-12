@@ -120,7 +120,7 @@ func RecordAccess(key, remoteIP string) {
 	audit.lastAccess.Store(time.Now())
 	audit.lastKey.Store(key)
 
-	slog.Info("secret accessed",
+	slog.Info("обращение к секрету",
 		"key", key,
 		"fingerprint", Fingerprint(key),
 		"remote", remoteIP,

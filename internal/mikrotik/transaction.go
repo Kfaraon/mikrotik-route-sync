@@ -130,7 +130,7 @@ func (t *Transaction) Apply(
 	for _, e := range addEntries {
 		created, addErr := t.client.AddEntry(ctx, e)
 		if addErr != nil {
-			t.log.Error("transaction add failed",
+			t.log.Error("транзакция: не удалось добавить запись",
 				"service", t.service,
 				"list", e.List,
 				"comment", e.Comment,
@@ -154,7 +154,7 @@ func (t *Transaction) Apply(
 	// 2. Включаем выключенные управляемые записи (re-enable).
 	for _, e := range updateEntries {
 		if updErr := t.client.UpdateEntry(ctx, e); updErr != nil {
-			t.log.Error("transaction update failed",
+			t.log.Error("транзакция: не удалось обновить запись",
 				"service", t.service,
 				"list", e.List,
 				"comment", e.Comment,
@@ -181,7 +181,7 @@ func (t *Transaction) Apply(
 	for _, e := range removeEntries {
 		delErr := t.client.DeleteEntry(ctx, e.ID)
 		if delErr != nil {
-			t.log.Error("transaction delete failed",
+			t.log.Error("транзакция: не удалось удалить запись",
 				"service", t.service,
 				"list", e.List,
 				"comment", e.Comment,

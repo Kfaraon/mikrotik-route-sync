@@ -189,7 +189,7 @@ func (s *Syncer) ApplyConfig() error {
 	s.mtPtr.Store(mt)
 	s.buildDepsLocked()
 
-	s.log.Info("configuration applied at runtime",
+	s.log.Info("конфигурация применена на лету",
 		"mikrotik_host", s.cfg.MikroTik.Host,
 		"address_list", s.cfg.Firewall.AddressList,
 		"external_timeout", s.cfg.External.HTTPTimeout.Duration().String(),
@@ -448,7 +448,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	defer s.release(name)
 
 	log := s.log.With("service", name, "list", list, "comment", comment, "dry_run", dry, "force", force)
-	log.Info("starting sync")
+	log.Info("запуск синхронизации")
 	s.emit("sync_start", map[string]any{"service": name, "list": list, "dry_run": dry})
 
 	// Прогресс для UI: карта очищается через defer при любом выходе.
@@ -462,19 +462,19 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	all, err := s.mt().ListEntries(ctx, list)
 	if err != nil {
 		if dry {
-			log.Warn("MikroTik is unavailable in DRY-RUN mode. Assuming empty list for testing.", "err", err)
+			log.Warn("MikroTik недоступен в режиме DRY-RUN, считаем список пустым", "err", err)
 			all = nil
 			res.MikroTikDown = true
 		} else {
 			res.Error = fmt.Sprintf("list entries: %v", err)
-			log.Error("failed to list address entries", "err", err)
+			log.Error("не удалось получить записи адресов", "err", err)
 			s.notifyError(ctx, name, err)
 			return res, fmt.Errorf("list entries: %w", err)
 		}
 	}
 	existing := addresslist.FilterManaged(all, list, comment)
 	foreign := addresslist.ForeignEntries(all, list, comment)
-	log.Info("fetched address entries", "managed", len(existing), "foreign", len(foreign))
+	log.Info("записи адресов получены", "managed", len(existing), "foreign", len(foreign))
 
 	s.setProgress(name, "сбор адресов из источников", 15, dry)
 
@@ -484,11 +484,11 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	raw, method, err := s.collectOrStub(ctx, name, ov, maxASNPrefixes, s.collectProgressFunc(name, dry))
 	if err != nil {
 		res.Error = fmt.Sprintf("collect: %v", err)
-		log.Error("failed to collect prefixes", "err", err)
+		log.Error("не удалось собрать префиксы", "err", err)
 		s.notifyError(ctx, name, err)
 		return res, fmt.Errorf("collect: %w", err)
 	}
-	log.Info("collected raw prefixes", "count", len(raw), "method", method)
+	log.Info("собраны исходные префиксы", "count", len(raw), "method", method)
 
 	s.setProgress(name, "валидация адресов", 40, dry)
 
@@ -497,20 +497,20 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	prefixes, rej, err := v.ValidateWithStats(prefixesToStrings(raw), ov)
 	if err != nil {
 		res.Error = fmt.Sprintf("validate: %v", err)
-		log.Error("validation failed", "err", err)
+		log.Error("валидация не пройдена", "err", err)
 		s.notifyError(ctx, name, err)
 		return res, fmt.Errorf("validate: %w", err)
 	}
 	if rej.Total() > 0 {
 		res.Rejected = &rej
-		log.Warn("validator rejected some prefixes",
+		log.Warn("валидатор отклонил часть префиксов",
 			"ipv6", rej.IPv6, "blocked", rej.Blocked, "too_broad", rej.TooBroad,
 			"host_routes", rej.HostRoute, "excluded", rej.Excluded, "not_included", rej.NotIncluded)
 	}
 
 	if len(prefixes) == 0 {
 		res.Error = "no valid prefixes after validation, aborting sync (fail-closed)"
-		log.Error("fail-closed: no valid prefixes collected")
+		log.Error("fail-closed: не собрано ни одного валидного префикса")
 		s.notifyError(ctx, name, fmt.Errorf("%s", res.Error))
 		return res, fmt.Errorf("no valid prefixes after validation")
 	}
@@ -520,10 +520,10 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// 4. Агрегация.
 	agg, err := aggregator.Aggregate(prefixes)
 	if err != nil {
-		log.Error("aggregation invariant violated, using unaggregated list", "err", err)
+		log.Error("нарушен инвариант агрегации, используем неагрегированный список", "err", err)
 		agg = prefixes
 	}
-	log.Info("aggregated prefixes", "count", len(agg))
+	log.Info("префиксы агрегированы", "count", len(agg))
 
 	// 4a. Контроль покрытия: текущие A-записи доменов должны входить в набор,
 	// иначе сервис через VPN работать не будет. Проверка best-effort —
@@ -532,7 +532,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	cov := s.checkServiceCoverage(ctx, name, svcDomains, agg)
 	res.Coverage = cov
 	if !cov.Complete() {
-		log.Warn("some resolved addresses are outside collected set, service may not work via VPN",
+		log.Warn("часть разрешённых адресов вне собранного набора, сервис может не работать через VPN",
 			"checked", cov.Checked, "covered", cov.Covered, "uncovered", cov.Uncovered)
 	}
 
@@ -541,7 +541,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	if !hasMethod(splitMethods(method), "cdn") {
 		if broad := validator.BroadPrefixes(agg, warnBroadV4); len(broad) > 0 {
 			res.Broad = broad
-			log.Warn("collected set contains broad prefixes, excess traffic may go via VPN",
+			log.Warn("в наборе есть широкие префиксы, лишний трафик может идти через VPN",
 				"broad", broad)
 		}
 	}
@@ -559,7 +559,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 			for _, vd := range primary {
 				ips = append(ips, vd.Failed...)
 			}
-			log.Warn("sni probe failed, service may not work via VPN",
+			log.Warn("SNI-проба не прошла, сервис может не работать через VPN",
 				"failed_ips", ips)
 			if !dry {
 				s.maybeAlertSNI(ctx, name, primary)
@@ -584,12 +584,12 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// ошибка, а «уже покрыто»: фиксируем успех с нулём изменений.
 	covered := len(desired) == 0 && preExclusion > 0
 	if covered {
-		log.Info("desired set fully covered by existing list entries, no changes needed",
+		log.Info("желаемый набор полностью покрыт существующими записями, изменений не нужно",
 			"foreign", len(foreign), "managed", len(existing))
 	}
 	if len(desired) == 0 && !covered {
 		res.Error = "all desired prefixes overlap existing MikroTik entries, aborting sync (fail-closed)"
-		log.Error("fail-closed: nothing left after excluding overlaps with foreign entries",
+		log.Error("fail-closed: после исключения пересечений с чужими записями ничего не осталось",
 			"foreign", len(foreign))
 		s.notifyError(ctx, name, fmt.Errorf("%s", res.Error))
 		return res, fmt.Errorf("%s", res.Error)
@@ -605,7 +605,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		d, derr := addresslist.ComputeDiff(name, list, comment, desired, existing)
 		if derr != nil {
 			res.Error = fmt.Sprintf("compute diff: %v", derr)
-			log.Error("diff computation failed", "err", derr)
+			log.Error("не удалось вычислить diff", "err", derr)
 			s.notifyError(ctx, name, derr)
 			return res, fmt.Errorf("compute diff: %w", derr)
 		}
@@ -626,15 +626,15 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		res.Updated = len(toUpdate)
 	} else {
 		if len(toUpdate) > 0 {
-			log.Warn("disabled managed entries left untouched (firewall.manage_disabled=false)",
+			log.Warn("выключенные управляемые записи не тронуты (firewall.manage_disabled=false)",
 				"count", len(toUpdate))
 		}
 		toUpdate = nil
 	}
 	if covered {
-		log.Info("no changes: desired set covered by existing list entries")
+		log.Info("изменений нет: желаемый набор покрыт существующими записями")
 	} else {
-		log.Info("computed diff",
+		log.Info("вычислен diff",
 			"add", res.Added, "remove", res.Removed, "unchanged", res.Unchanged, "update", res.Updated)
 	}
 
@@ -647,7 +647,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 			RequireConfirmationOver: requireConfirmationOver,
 		}); err != nil {
 			res.Error = err.Error()
-			log.Error("safety-check blocked sync", "err", err)
+			log.Error("проверка безопасности заблокировала синхронизацию", "err", err)
 			s.notifyError(ctx, name, err)
 			return res, err
 		}
@@ -667,7 +667,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 
 	// 8. Dry run — только diff, без изменения состояния (bbolt в том числе).
 	if dry {
-		log.Info("dry run completed", "add", res.Added, "remove", res.Removed, "update", res.Updated)
+		log.Info("DRY-RUN завершён", "add", res.Added, "remove", res.Removed, "update", res.Updated)
 		res.Success = true
 		res.FinishedAt = time.Now()
 		res.Duration = res.FinishedAt.Sub(start).String()
@@ -681,9 +681,9 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		// 9. Снапшот перед применением (PROMPT II.5, IV.5).
 		snapshotID = s.createSnapshot(ctx, name, existing)
 		if snapshotID == "" {
-			log.Warn("snapshot creation failed, proceeding without rollback capability")
+			log.Warn("не удалось создать снапшот, продолжаем без возможности отката")
 		} else {
-			log.Info("snapshot created", "snapshot_id", snapshotID)
+			log.Info("снапшот создан", "snapshot_id", snapshotID)
 		}
 
 		s.setProgress(name, "применение изменений", 85, dry)
@@ -696,7 +696,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 
 		if err := tx.Apply(ctx, toAdd, toUpdate, toRemove); err != nil {
 			res.Error = err.Error()
-			log.Error("transaction failed", "err", err)
+			log.Error("транзакция не выполнена", "err", err)
 			if tx.State() == mikrotik.StateDegraded {
 				s.MarkDegraded(name)
 				_ = s.getNotify().Error(ctx, name, fmt.Errorf(
@@ -709,7 +709,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 			return res, fmt.Errorf("transaction: %w", err)
 		}
 	} else {
-		log.Info("nothing to apply: desired set covered by existing list entries")
+		log.Info("применять нечего: желаемый набор покрыт существующими записями")
 	}
 
 	s.setProgress(name, "завершение", 95, dry)
@@ -749,7 +749,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	msg += fmt.Sprintf(" (%s)", notifier.FormatDur(elapsed))
 	if err := s.getNotify().Send(ctx, msg); err != nil {
-		log.Warn("telegram sync summary not delivered", "service", name, "err", err)
+		log.Warn("сводка синхронизации в telegram не доставлена", "service", name, "err", err)
 	}
 	s.audit.Log(EntryToAudit(res))
 	s.emit("sync_done", map[string]any{
@@ -788,7 +788,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	s.lastSync = time.Now()
 	s.serviceMu.Unlock()
 
-	log.Info("sync completed successfully", "duration", elapsed)
+	log.Info("синхронизация успешно завершена", "duration", elapsed)
 	return res, nil
 }
 
@@ -829,7 +829,7 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					s.log.Error("panic in sync goroutine", "service", n, "panic", fmt.Sprintf("%v", r))
+					s.log.Error("паника в горутине синхронизации", "service", n, "panic", fmt.Sprintf("%v", r))
 					mu.Lock()
 					results = append(results, Result{Service: n, Success: false, Error: fmt.Sprintf("panic: %v", r), DryRun: dry})
 					if firstErr == nil {
@@ -940,7 +940,7 @@ func (s *Syncer) ReloadScheduler() error {
 	s.reloadMu.Lock()
 	fn := s.reload
 	s.reloadMu.Unlock()
-	s.log.Info("scheduler reload requested")
+	s.log.Info("запрошена перезагрузка планировщика")
 	if fn != nil {
 		return fn()
 	}
@@ -965,11 +965,11 @@ func (s *Syncer) RestartTelegramBot() error {
 	s.telegramRestartMu.Unlock()
 
 	if fn == nil {
-		s.log.Warn("telegram restart skipped: no bot running in this mode (web), restart the daemon to apply telegram settings")
+		s.log.Warn("перезапуск telegram пропущен: в этом режиме (web) бот не запущен, перезапустите демон для применения настроек telegram")
 		return nil
 	}
 
-	s.log.Info("restarting telegram bot with new configuration")
+	s.log.Info("перезапуск telegram-бота с новой конфигурацией")
 	return fn()
 }
 
@@ -997,7 +997,7 @@ func (s *Syncer) GetLogs(ctx context.Context, limit int, match func(map[string]a
 	// лимита): старые записи при активных фильтрах не теряются.
 	entries, truncated, err := logging.TailLogFileFiltered(logFile, limit, match)
 	if err != nil {
-		s.log.Warn("failed to read log file", "err", err, "limit", limit)
+		s.log.Warn("не удалось прочитать файл логов", "err", err, "limit", limit)
 		return []map[string]any{}, false, nil
 	}
 	return entries, truncated, nil
