@@ -132,6 +132,13 @@ paths:
                             Schedule: { type: string }
                             Routes: { type: integer, description: Число управляемых address-list записей }
                             Overrides: { type: boolean }
+                            GUID:
+                              type: string
+                              description: >-
+                                UUID v4 текущего воплощения сервиса. Пусто у
+                                сервисов, добавленных до появления
+                                идентификаторов. Служит для отсечения истории
+                                и логов прежнего сервиса с тем же именем.
     post:
       summary: Добавить сервис
       tags: [Services]
@@ -427,6 +434,9 @@ paths:
   /api/v1/history:
     get:
       summary: История синхронизаций
+      description: >-
+        Записи несут `service_id` (UUID воплощения). При запросе с
+        `service=` возвращаются только записи текущего воплощения сервиса.
       tags: [Observability]
       parameters:
         - { name: service, in: query, schema: { type: string } }
