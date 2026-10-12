@@ -87,7 +87,7 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 		if resolved, err := s.resolver().ResolveASN(ctxASN, domains[0]); err == nil {
 			asn = resolved
 		} else {
-			s.log.Warn("не удалось определить ASN", "service", name, "err", err)
+			s.log.Warn("не удалось определить ASN", "service", name, "service_id", s.ServiceID(name), "err", err)
 		}
 		restore()
 	}
@@ -124,7 +124,7 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 		res, err := s.registry().Collect(mctx, method, params, opts)
 		restore()
 		if err != nil {
-			s.log.Warn("сборщик не сработал, пробуем следующий метод", "method", method, "service", name, "err", err)
+			s.log.Warn("сборщик не сработал, пробуем следующий метод", "method", method, "service", name, "service_id", s.ServiceID(name), "err", err)
 			lastErr = err
 			continue
 		}

@@ -254,7 +254,7 @@
       }
 
       var extras = [];
-      var knownKeys = { time: true, level: true, msg: true, service: true };
+      var knownKeys = { time: true, level: true, msg: true, service: true, service_id: true };
       var hasError = false;
       var errorText = "";
 

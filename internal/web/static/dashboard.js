@@ -452,6 +452,21 @@
     return text(rec.service_id || rec.ServiceID || rec.serviceId || rec.guid || rec.GUID);
   }
 
+  // logServiceID — id воплощения сервиса у лог-записи (пусто у записей,
+  // созданных до появления идентификаторов).
+  function logServiceID(entry) {
+    if (!entry) return "";
+    return text(entry.service_id || entry.ServiceID || entry.ServiceId);
+  }
+
+  // logMatchesService — лог-запись относится к текущему воплощению сервиса:
+  // при наличии id берём только записи с этим id (в т.ч. отсекаем записи без
+  // id — они принадлежат прежнему воплощению). Без id — без фильтра.
+  function logMatchesService(entry, guid) {
+    if (!guid) return true;
+    return logServiceID(entry) === guid;
+  }
+
   // historyMatchesService — запись относится к текущему воплощению сервиса.
   // При наличии id берём только записи с этим id (в т.ч. отсекаем записи без
   // id — они принадлежат прежнему воплощению). Без id — без фильтра.
@@ -601,6 +616,8 @@
       var svc = lower(logService(entry));
 
       if (!svc || !isActive(svc)) continue;
+      // Логи прежнего воплощения сервиса (id не совпадает) не учитываем.
+      if (!logMatchesService(entry, guidByName[svc])) continue;
 
       var level = logLevel(entry);
 

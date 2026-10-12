@@ -424,13 +424,13 @@ func (s *Syncer) ApplyCDNRecommendation(ctx context.Context, name string, adv *C
 	})
 	s.emit("service_updated", map[string]any{"service": name, "method": "cdn"})
 	s.log.Info("источник сервиса переключён на cdn",
-		"service", name, "prev_method", prevMethod, "cdn", adv.CDN,
+		"service", name, "service_id", s.ServiceID(name), "prev_method", prevMethod, "cdn", adv.CDN,
 		"asn", adv.ASN, "purged", purged)
 
 	msg := cdnSwitchedMessage(name, adv, prevMethod, purged)
 	if n := s.getNotify(); n != nil {
 		if err := n.Send(context.WithoutCancel(ctx), msg); err != nil {
-			s.log.Warn("уведомление telegram о переключении на cdn не доставлено", "service", name, "err", err)
+			s.log.Warn("уведомление telegram о переключении на cdn не доставлено", "service", name, "service_id", s.ServiceID(name), "err", err)
 		}
 	}
 	return purged, nil

@@ -851,6 +851,13 @@
     return text(entry && (entry.service || entry.Service)) || "";
   }
 
+  // logServiceID — id воплощения сервиса у лог-записи (пусто у записей,
+  // созданных до появления идентификаторов).
+  function logServiceID(entry) {
+    if (!entry) return "";
+    return text(entry.service_id || entry.ServiceID || entry.ServiceId);
+  }
+
   function logError(entry) {
     return text(entry && (entry.err || entry.error || entry.Error));
   }
@@ -875,6 +882,15 @@
     var guid = currentServiceGUID(name || historyService(rec));
     if (!guid) return true;
     return historyServiceID(rec) === guid;
+  }
+
+  // logMatchesService — лог-запись относится к текущему воплощению сервиса.
+  // Если у сервиса есть id, берём только записи с этим id (записи прежнего
+  // воплощения, в т.ч. без id, отсекаются). Если id нет — не фильтруем.
+  function logMatchesService(entry, name) {
+    var guid = currentServiceGUID(name || logService(entry));
+    if (!guid) return true;
+    return logServiceID(entry) === guid;
   }
 
   function logLevelBadge(level) {
@@ -931,6 +947,10 @@
     each(state.logs, function (entry) {
       var name = lower(logService(entry));
       if (!name) return;
+
+      // Логи прежнего воплощения сервиса (id не совпадает с текущим) не
+      // учитываем: иначе после «удалил → добавил» бейдж ошибки не гаснет.
+      if (!logMatchesService(entry, name)) return;
 
       var level = logLevel(entry);
       if (level === "ERROR") {
@@ -2669,7 +2689,9 @@
       });
 
       state.details.logs = results[1].status === "fulfilled" && Array.isArray(results[1].value)
-        ? results[1].value
+        ? results[1].value.filter(function (e) {
+            return logMatchesService(e, name);
+          })
         : [];
 
       state.details.loading = false;

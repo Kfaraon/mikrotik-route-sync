@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -57,14 +58,14 @@ func (s *Syncer) InfoService(ctx context.Context, name string) (*ServiceInfo, er
 
 	entries, err := s.mt().ListServiceEntries(ctx, list, commentPrefix, name)
 	if err != nil {
-		s.log.Warn("не удалось получить записи для информации о сервисе", "service", name, "err", err)
+		s.log.Warn("не удалось получить записи для информации о сервисе", "service", name, "service_id", s.ServiceID(name), "err", err)
 	} else {
 		info.EntryCount = len(entries)
 	}
 
 	snapshots, err := s.cache.ListSnapshots(name)
 	if err != nil {
-		s.log.Warn("не удалось получить снапшоты для информации о сервисе", "service", name, "err", err)
+		s.log.Warn("не удалось получить снапшоты для информации о сервисе", "service", name, "service_id", s.ServiceID(name), "err", err)
 	} else {
 		info.SnapshotCount = len(snapshots)
 	}
@@ -90,6 +91,12 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 		return fmt.Errorf("unknown method %q (allowed: cdn, asn, dynamic, whois, static_url; comma-separated lists like \"dynamic,whois\" accepted)", override.Method)
 	}
 
+	// UUID текущего воплощения: присваивается этому добавлению (не сервису
+	// вообще) и переживёт удаление только как чужая история/логи. Нужен уже
+	// на этапе автоопределения, поэтому генерируем сразу (в конфиг попадёт
+	// при успешном Save).
+	newID := newServiceID()
+
 	// Автоопределение источника: если метод не задан явно — проверяем, не
 	// обслуживается ли домен за CDN (Cloudflare и др.), и сразу ставим
 	// метод cdn. Ручной выбор (метод/static_url) не переопределяется;
@@ -113,7 +120,7 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 		cancel()
 		if timedOut {
 			s.log.Warn("автоопределение CDN прервано по таймауту, добавляем с методом по умолчанию",
-				"service", name, "timeout", addDetectTimeout)
+				"service", name, "service_id", newID, "timeout", addDetectTimeout)
 		}
 		if adv.Detected {
 			override.Method = "cdn"
@@ -123,10 +130,10 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 			}
 			detected = adv
 			s.log.Info("источник CDN определён автоматически",
-				"service", name, "cdn", adv.CDN, "asn", adv.ASN, "url", adv.URL,
+				"service", name, "service_id", newID, "cdn", adv.CDN, "asn", adv.ASN, "url", adv.URL,
 				"cdn_prefixes", adv.PrefixCount, "whois_prefixes", adv.WhoisCount)
 		} else {
-			s.log.Debug("автоопределение CDN пропущено", "service", name, "reason", adv.Reason)
+			s.log.Debug("автоопределение CDN пропущено", "service", name, "service_id", newID, "reason", adv.Reason)
 		}
 	}
 
@@ -152,7 +159,7 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 		s.cfg.ServiceIDs = make(map[string]string)
 	}
 	prevID, hadID := s.cfg.ServiceIDs[name]
-	s.cfg.ServiceIDs[name] = newServiceID()
+	s.cfg.ServiceIDs[name] = newID
 
 	if err := s.cfg.Save(); err != nil {
 		// Откат: файл не изменился — память тоже не должна.
@@ -185,7 +192,7 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	if detected != nil {
 		if n := s.getNotify(); n != nil {
 			if err := n.Send(context.WithoutCancel(ctx), cdnDetectedMessage(name, detected)); err != nil {
-				s.log.Warn("уведомление telegram об определении CDN не доставлено", "service", name, "err", err)
+				s.log.Warn("уведомление telegram об определении CDN не доставлено", "service", name, "service_id", newID, "err", err)
 			}
 		}
 	}
@@ -204,6 +211,9 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 			break
 		}
 	}
+	// id запоминаем до мутации конфига: логи чистки ссылаются на воплощение,
+	// которое удаляем (после delete ServiceID(name) уже пуст).
+	removedID := s.cfg.ServiceIDs[name]
 	s.cfg.RUnlock()
 	if !found {
 		return fmt.Errorf("service %s not found", name)
@@ -218,7 +228,7 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 		if err != nil {
 			return fmt.Errorf("purge address-list entries failed, сервис НЕ удалён из конфигурации: %w", err)
 		}
-		s.log.Info("записи адресов сервиса удалены с роутера", "service", name, "count", n)
+		s.log.Info("записи адресов сервиса удалены с роутера", "service", name, "service_id", removedID, "count", n)
 	}
 
 	// Фаза 2: мутация конфига под Lock (коротко, без сети).
@@ -278,11 +288,11 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	// Снапшоты удаляются только после успешного сохранения конфигурации.
 	ids, err := s.cache.ListSnapshots(name)
 	if err != nil {
-		s.log.Warn("не удалось получить снапшоты удаляемого сервиса", "service", name, "err", err)
+		s.log.Warn("не удалось получить снапшоты удаляемого сервиса", "service", name, "service_id", removedID, "err", err)
 	} else {
 		for _, info := range ids {
 			if err := s.cache.DeleteSnapshot(name, info.ID); err != nil {
-				s.log.Warn("не удалось удалить снапшот удаляемого сервиса", "service", name, "snapshot", info.ID, "err", err)
+				s.log.Warn("не удалось удалить снапшот удаляемого сервиса", "service", name, "service_id", removedID, "snapshot", info.ID, "err", err)
 			}
 		}
 	}
@@ -433,7 +443,7 @@ func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug
 		"preset":  slug,
 	})
 	s.emit("service_updated", map[string]any{"service": name, "preset": slug})
-	s.log.Info("пресет обновлён", "service", name, "preset", slug,
+	s.log.Info("пресет обновлён", "service", name, "service_id", s.ServiceID(name), "preset", slug,
 		"added", len(added), "removed", len(removed))
 	return added, removed, nil
 }
@@ -450,6 +460,13 @@ func (s *Syncer) ServiceID(name string) string {
 	s.cfg.RLock()
 	defer s.cfg.RUnlock()
 	return s.cfg.ServiceIDs[name]
+}
+
+// logFor возвращает логгер с полями сервиса, включая service_id (UUID
+// воплощения): по нему UI отличает логи текущего сервиса от логов прежнего
+// воплощения с тем же именем (после «удалил → добавил заново»).
+func (s *Syncer) logFor(name string) *slog.Logger {
+	return s.log.With("service", name, "service_id", s.ServiceID(name))
 }
 
 // ServiceSchedules — снимок эффективных расписаний одним чтением
@@ -548,7 +565,7 @@ func (s *Syncer) UpdateServiceOverride(ctx context.Context, name string, method 
 		"method":  prev.Method + " -> " + ov.Method,
 	})
 	s.emit("service_updated", map[string]any{"service": name, "method": ov.Method})
-	s.log.Info("override сервиса обновлён", "service", name, "method", ov.Method, "domains", ov.Domains)
+	s.log.Info("override сервиса обновлён", "service", name, "service_id", s.ServiceID(name), "method", ov.Method, "domains", ov.Domains)
 	return ov, nil
 }
 
@@ -573,7 +590,7 @@ func (s *Syncer) Backup(ctx context.Context, name string) (*BackupFile, error) {
 func (s *Syncer) Restore(ctx context.Context, name string, entries []addresslist.Entry) error {
 	existing, err := s.ListServiceEntries(ctx, name)
 	if err != nil {
-		s.log.Warn("не удалось получить текущие записи для проверки дублей", "service", name, "err", err)
+		s.log.Warn("не удалось получить текущие записи для проверки дублей", "service", name, "service_id", s.ServiceID(name), "err", err)
 	}
 	existingSet := make(map[string]bool, len(existing))
 	for _, e := range existing {
@@ -590,7 +607,7 @@ func (s *Syncer) Restore(ctx context.Context, name string, entries []addresslist
 		norm, err := addresslist.NormalizeAddress(e.Address)
 		if err != nil {
 			failures++
-			s.log.Error("некорректный адрес при восстановлении", "service", name, "address", e.Address, "err", err)
+			s.log.Error("некорректный адрес при восстановлении", "service", name, "service_id", s.ServiceID(name), "address", e.Address, "err", err)
 			continue
 		}
 		if existingSet[norm] {
@@ -600,14 +617,14 @@ func (s *Syncer) Restore(ctx context.Context, name string, entries []addresslist
 		in := addresslist.Entry{Address: norm, List: list, Comment: comment, Disabled: "false"}
 		if _, err := s.mt().AddEntry(ctx, in); err != nil {
 			failures++
-			s.log.Error("не удалось восстановить запись", "service", name, "address", norm, "err", err)
+			s.log.Error("не удалось восстановить запись", "service", name, "service_id", s.ServiceID(name), "address", norm, "err", err)
 			continue
 		}
 		restored++
 		existingSet[norm] = true
 	}
 
-	s.log.Info("восстановление завершено", "service", name,
+	s.log.Info("восстановление завершено", "service", name, "service_id", s.ServiceID(name),
 		"restored", restored, "skipped_duplicates", skipped, "errors", failures, "total", len(entries))
 
 	if failures > 0 {

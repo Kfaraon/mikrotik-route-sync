@@ -212,7 +212,7 @@ func (s *Syncer) RemoveServiceEntries(ctx context.Context, name string) (int, er
 	for _, e := range entries {
 		if err := s.mt().DeleteEntry(ctx, e.ID); err != nil {
 			failed = append(failed, e.Address)
-			s.log.Error("не удалось удалить запись", "service", name, "id", e.ID, "address", e.Address, "err", err)
+			s.log.Error("не удалось удалить запись", "service", name, "service_id", s.ServiceID(name), "id", e.ID, "address", e.Address, "err", err)
 			continue
 		}
 		deleted++

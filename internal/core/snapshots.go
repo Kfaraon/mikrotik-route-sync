@@ -32,19 +32,19 @@ func (s *Syncer) createSnapshot(ctx context.Context, name string, entries []addr
 		norm, err := addresslist.NormalizeAddress(e.Address)
 		if err != nil {
 			s.log.Error("в снапшоте некорректный адрес, пропускаем",
-				"address", e.Address, "service", name, "err", err)
+				"address", e.Address, "service", name, "service_id", s.ServiceID(name), "err", err)
 			skipped++
 			continue
 		}
 		addresses = append(addresses, norm)
 	}
 	if skipped > 0 {
-		s.log.Warn("часть записей снапшота пропущена", "service", name, "skipped", skipped, "total", len(entries))
+		s.log.Warn("часть записей снапшота пропущена", "service", name, "service_id", s.ServiceID(name), "skipped", skipped, "total", len(entries))
 	}
 
 	id, err := s.CreateSnapshot(ctx, name, addresses)
 	if err != nil {
-		s.log.Error("не удалось создать снапшот", "service", name, "err", err)
+		s.log.Error("не удалось создать снапшот", "service", name, "service_id", s.ServiceID(name), "err", err)
 		return ""
 	}
 	return id

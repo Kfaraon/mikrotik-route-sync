@@ -435,7 +435,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 
 	if !s.acquire(name) {
 		msg := fmt.Sprintf("Синхронизация %s пропущена: предыдущий запуск ещё выполняется", name)
-		s.log.Warn(msg, "service", name)
+		s.logFor(name).Warn(msg)
 		s.emit("skipped", map[string]any{"service": name, "reason": "already running"})
 		if !dry {
 			_ = s.getNotify().SyncStart(ctx, []string{name}, "вручную", "пропущено: уже выполняется")
@@ -447,7 +447,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	defer s.release(name)
 
-	log := s.log.With("service", name, "list", list, "comment", comment, "dry_run", dry, "force", force)
+	log := s.logFor(name).With("list", list, "comment", comment, "dry_run", dry, "force", force)
 	log.Info("запуск синхронизации")
 	s.emit("sync_start", map[string]any{"service": name, "list": list, "dry_run": dry})
 
@@ -723,6 +723,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 
 	logRes := logging.SyncResult{
 		Service:    res.Service,
+		ServiceID:  s.ServiceID(name),
 		Success:    res.Success,
 		Added:      res.Added,
 		Removed:    res.Removed,
@@ -749,7 +750,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 	msg += fmt.Sprintf(" (%s)", notifier.FormatDur(elapsed))
 	if err := s.getNotify().Send(ctx, msg); err != nil {
-		log.Warn("сводка синхронизации в telegram не доставлена", "service", name, "err", err)
+		log.Warn("сводка синхронизации в telegram не доставлена", "err", err)
 	}
 	s.audit.Log(EntryToAudit(res))
 	s.emit("sync_done", map[string]any{
@@ -830,7 +831,7 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					s.log.Error("паника в горутине синхронизации", "service", n, "panic", fmt.Sprintf("%v", r))
+					s.log.Error("паника в горутине синхронизации", "service", n, "service_id", s.ServiceID(n), "panic", fmt.Sprintf("%v", r))
 					mu.Lock()
 					results = append(results, Result{Service: n, Success: false, Error: fmt.Sprintf("panic: %v", r), DryRun: dry})
 					if firstErr == nil {
@@ -865,7 +866,8 @@ func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, forc
 	logResults := make([]logging.SyncResult, len(results))
 	for i, r := range results {
 		logResults[i] = logging.SyncResult{
-			Service: r.Service, Success: r.Success, Added: r.Added, Removed: r.Removed,
+			Service: r.Service, ServiceID: s.ServiceID(r.Service),
+			Success: r.Success, Added: r.Added, Removed: r.Removed,
 			Unchanged: r.Unchanged, Updated: r.Updated, Error: r.Error, DryRun: r.DryRun,
 			StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Duration: r.Duration,
 		}

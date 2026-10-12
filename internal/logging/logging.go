@@ -21,6 +21,7 @@ import (
 // SyncResult — результат синхронизации для логирования.
 type SyncResult struct {
 	Service    string    `json:"service"`
+	ServiceID  string    `json:"service_id,omitempty"`
 	Success    bool      `json:"success"`
 	Added      int       `json:"added"`
 	Removed    int       `json:"removed"`
@@ -219,6 +220,7 @@ func LogSyncResult(logger *slog.Logger, result SyncResult, elapsed time.Duration
 	}
 	logger.Log(context.Background(), level, msg,
 		"service", result.Service,
+		"service_id", result.ServiceID,
 		"success", result.Success,
 		"added", result.Added,
 		"removed", result.Removed,
@@ -254,7 +256,7 @@ func LogSyncSummary(logger *slog.Logger, results []SyncResult) {
 	)
 	for _, r := range results {
 		if r.Error != "" {
-			logger.Warn("синхронизация не удалась", "service", r.Service, "error", r.Error)
+			logger.Warn("синхронизация не удалась", "service", r.Service, "service_id", r.ServiceID, "error", r.Error)
 		}
 	}
 }
