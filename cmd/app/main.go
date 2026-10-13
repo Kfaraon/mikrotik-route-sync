@@ -819,8 +819,6 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 		}
 		if _, err := presets.RefreshUpstream(context.WithoutCancel(ctx), dir); err != nil {
 			log.Warn("не удалось обновить upstream-пресеты", "err", err)
-		} else if err := presets.RebuildUpstreamIndex(dir); err != nil {
-			log.Warn("не удалось перестроить индекс upstream-пресетов", "err", err)
 		}
 	})
 	if err != nil {

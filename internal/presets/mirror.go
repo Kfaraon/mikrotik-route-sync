@@ -36,6 +36,45 @@ const mirrorFetchTimeout = 120 * time.Second
 // minRublockLines — меньше строк = битый ответ, старое не трогаем.
 const minRublockLines = 1000
 
+// mirrorSourceURL / upstreamSourceURL — швы для тестов: дают подменить
+// источник на httptest-сервер, не трогая публичные константы.
+var mirrorSourceURL = AntifilterURL
+var upstreamSourceURL = UpstreamTarball
+
+// refreshWriteMu сериализует запись зеркал между всеми вызывающими:
+// ручная докачка (web) и фоновая по расписанию (cron) работают в разных
+// структурах и раньше не делили блокировку — параллельные прогоны
+// interleaving'или каталог upstream (удаление stale во время чтения).
+// RWMutex: писатель держит Lock только на фазу записи (не на сетевой
+// fetch), читатели (обход upstream, индекс) — RLock.
+var refreshWriteMu sync.RWMutex
+
+// atomicWriteFile пишет данные в временный файл рядом и переименовывает:
+// читатель не увидит частичную запись.
+func atomicWriteFile(dir, name string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(dir, "."+name+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	_ = tmp.Close()
+	if err := os.Rename(tmpName, filepath.Join(dir, name)); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
 // MirrorMeta — состояние зеркала (mirror.json рядом с rublock.yaml).
 type MirrorMeta struct {
 	UpdatedAt string `yaml:"updated_at" json:"updated_at"`
@@ -66,7 +105,9 @@ func MirrorDir(cachePath string) string {
 // не трогается (ошибка возвращается, файл не перезаписывается).
 func RefreshMirror(ctx context.Context, dir string) (MirrorStatus, error) {
 	var st MirrorStatus
-	body, err := fetchMirror(ctx, AntifilterURL)
+	// Сеть и разбор — вне блокировки: она нужна только на запись каталога,
+	// иначе параллельная докачка ждала бы чужой fetch до 120с.
+	body, err := fetchMirror(ctx, mirrorSourceURL)
 	if err != nil {
 		return st, err
 	}
@@ -74,6 +115,12 @@ func RefreshMirror(ctx context.Context, dir string) (MirrorStatus, error) {
 	if len(p.Domains) < minRublockLines {
 		return st, fmt.Errorf("mirror suspiciously small: %d domains, keeping old", len(p.Domains))
 	}
+
+	// Сериализация с другими писателями зеркала: ручная докачка и cron не
+	// должны обновлять один каталог одновременно.
+	refreshWriteMu.Lock()
+	defer refreshWriteMu.Unlock()
+
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return st, fmt.Errorf("mkdir mirror: %w", err)
 	}
@@ -203,7 +250,8 @@ const maxUpstreamBytes = 32 << 20
 // и обновляет upstream.json. Валидация: минимум 100 файлов data/*.
 func RefreshUpstream(ctx context.Context, dir string) (UpstreamMeta, error) {
 	var st UpstreamMeta
-	body, err := fetchMirror(ctx, UpstreamTarball)
+	// Сеть и распаковка — вне блокировки (см. RefreshMirror).
+	body, err := fetchMirror(ctx, upstreamSourceURL)
 	if err != nil {
 		return st, err
 	}
@@ -217,6 +265,12 @@ func RefreshUpstream(ctx context.Context, dir string) (UpstreamMeta, error) {
 	if len(files) < 100 {
 		return st, fmt.Errorf("upstream suspiciously small: %d files, keeping old", len(files))
 	}
+
+	// Тот же lock, что у RefreshMirror: каталог upstream не должен
+	// переписываться, пока его читает параллельный обход/индексация.
+	refreshWriteMu.Lock()
+	defer refreshWriteMu.Unlock()
+
 	upDir := filepath.Join(dir, "upstream")
 	if err := os.MkdirAll(upDir, 0o755); err != nil {
 		return st, fmt.Errorf("mkdir upstream: %w", err)
@@ -252,11 +306,13 @@ func RefreshUpstream(ctx context.Context, dir string) (UpstreamMeta, error) {
 		Size:      total,
 	}
 	if mraw, err := yaml.Marshal(meta); err == nil {
-		_ = os.WriteFile(filepath.Join(dir, "upstream.json"), mraw, 0o644)
+		// Атомарно: читатель не должен поймать полузапись upstream.json.
+		_ = atomicWriteFile(dir, "upstream.json", mraw, 0o644)
 	}
 	// Индекс сразу здесь (а не только в хендлере): прямой вызов
-	// RefreshUpstream не должен оставлять его несвежим.
-	if err := RebuildUpstreamIndex(dir); err != nil {
+	// RefreshUpstream не должен оставлять его несвежим. Внутренняя версия —
+	// Lock уже удерживается, повторный RLock здесь дал бы дедлок.
+	if err := rebuildUpstreamIndex(dir); err != nil {
 		return st, err
 	}
 	return meta, nil
@@ -340,8 +396,16 @@ var (
 // используют include: на соседние списки, без полной карты парсер молча
 // их пропускает и пресет теряет почти всё содержимое (у
 // category-companies из 125 записей без карты остаются 9).
-// Каталога нет — nil.
+// Каталога нет — nil. Чтение под RLock: писатель зеркала не вычистит
+// файлы в момент обхода.
 func LoadUpstreamFiles(dir string) map[string]string {
+	refreshWriteMu.RLock()
+	defer refreshWriteMu.RUnlock()
+	return loadUpstreamFiles(dir)
+}
+
+// loadUpstreamFiles — чтение без блокировки (для вызова из-под Lock/RLock).
+func loadUpstreamFiles(dir string) map[string]string {
 	upDir := filepath.Join(dir, "upstream")
 	entries, err := os.ReadDir(upDir)
 	if err != nil {
@@ -364,7 +428,15 @@ func LoadUpstreamFiles(dir string) map[string]string {
 // RebuildUpstreamIndex строит инвертированный индекс по файлам dir/upstream/.
 // Вызывать при старте (если зеркало скачано) и после каждого обновления.
 func RebuildUpstreamIndex(dir string) error {
-	files := LoadUpstreamFiles(dir)
+	refreshWriteMu.RLock()
+	defer refreshWriteMu.RUnlock()
+	return rebuildUpstreamIndex(dir)
+}
+
+// rebuildUpstreamIndex — без блокировки (для вызова из RefreshUpstream
+// под уже взятым Lock).
+func rebuildUpstreamIndex(dir string) error {
+	files := loadUpstreamFiles(dir)
 	if len(files) == 0 {
 		return fmt.Errorf("upstream mirror empty: %s", filepath.Join(dir, "upstream"))
 	}
