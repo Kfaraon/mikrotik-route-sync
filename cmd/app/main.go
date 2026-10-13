@@ -346,7 +346,7 @@ AUTO-записи и переключает метод на cdn. Выполня�
 					return nil
 				}
 				if !adv.Recommend {
-					return fmt.Errorf("рекомендация не требуется — применять нечего")
+					return fmt.Errorf("no recommendation needed — nothing to apply")
 				}
 				purged, err := s.ApplyCDNRecommendation(ctx, name, adv)
 				if err != nil {
@@ -541,7 +541,7 @@ func restoreCmd() *cobra.Command {
 					data, err := os.ReadFile(fromFile)
 					if err != nil {
 						if os.IsPermission(err) {
-							return fmt.Errorf("read backup file: %w (если файл создан на хосте с 0600 — дайте контейнеру чтение: chmod 0644 %s)", err, fromFile)
+							return fmt.Errorf("read backup file: %w (if the file was created on the host with 0600, grant the container read access: chmod 0644 %s)", err, fromFile)
 						}
 						return fmt.Errorf("read backup file: %w", err)
 					}

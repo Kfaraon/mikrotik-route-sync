@@ -541,7 +541,7 @@ func (c *Config) Validate() error {
 	}
 	// Firewall Address List — единственный целевой объект управления.
 	if c.Firewall.AddressList == "" {
-		return fmt.Errorf("firewall.address_list required (например TO-VPN)")
+		return fmt.Errorf("firewall.address_list required (e.g. TO-VPN)")
 	}
 	if !ValidateAddressListName(c.Firewall.AddressList) {
 		return fmt.Errorf("firewall.address_list %q: allowed ^[A-Za-z0-9_.-]{1,63}$", c.Firewall.AddressList)
@@ -570,7 +570,7 @@ func (c *Config) Validate() error {
 	// Типичная ошибка: http:// на TLS-порт (или наоборот) — коннект виснет по
 	// таймауту и circuit breaker открывается; ловим на этапе валидации.
 	if !c.MikroTik.UseSSL && c.MikroTik.Port == 443 {
-		return fmt.Errorf("mikrotik: use_ssl=false с port=443 — http на HTTPS-порту не заработает (поставьте use_ssl: true или port: 80)")
+		return fmt.Errorf("mikrotik: use_ssl=false with port=443 — http on an HTTPS port will not work (set use_ssl: true or port: 80)")
 	}
 	if c.Logging.File != "" && runtime.GOOS != "windows" && os.Getenv("MRS_REQUIRE_FILE_PERMS") != "0" {
 		dir := filepath.Dir(c.Logging.File)

@@ -183,7 +183,7 @@ func (s *Syncer) AuditAddressList(ctx context.Context) ([]OrphanEntry, error) {
 
 func (s *Syncer) CleanupAutoEntries(ctx context.Context, force bool) (int, error) {
 	if !force {
-		return 0, fmt.Errorf("cleanup_auto_entries requires --force (orphan-записи не удаляются молча)")
+		return 0, fmt.Errorf("cleanup_auto_entries requires --force (orphan entries are not deleted silently)")
 	}
 	orphans, err := s.AuditAddressList(ctx)
 	if err != nil {
@@ -218,7 +218,7 @@ func (s *Syncer) RemoveServiceEntries(ctx context.Context, name string) (int, er
 		deleted++
 	}
 	if len(failed) > 0 {
-		return deleted, fmt.Errorf("удалено %d из %d записей, не удалены: %s",
+		return deleted, fmt.Errorf("deleted %d of %d entries, failed: %s",
 			deleted, len(entries), strings.Join(failed, ", "))
 	}
 	return deleted, nil

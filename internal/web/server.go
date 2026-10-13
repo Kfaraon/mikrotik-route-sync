@@ -2283,7 +2283,7 @@ func (s *Server) applySchedule(r *http.Request, service, spec string) error {
 		return fmt.Errorf("invalid service name")
 	}
 	if spec != "" && !scheduler.ValidSpec(spec) {
-		return fmt.Errorf("некорректное расписание %q (ожидается cron, 'every 6h', 'daily at 03:00', manual/disabled/inherit)", spec)
+		return fmt.Errorf("invalid schedule %q (expected cron, 'every 6h', 'daily at 03:00', manual/disabled/inherit)", spec)
 	}
 	if err := s.cfg.ReplaceServiceSchedule(service, spec); err != nil {
 		return err

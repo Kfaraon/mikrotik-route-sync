@@ -233,7 +233,7 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	if purgeRoutes {
 		n, err := s.RemoveServiceEntries(ctx, name)
 		if err != nil {
-			return fmt.Errorf("purge address-list entries failed, сервис НЕ удалён из конфигурации: %w", err)
+			return fmt.Errorf("purge address-list entries failed, service NOT removed from config: %w", err)
 		}
 		s.log.Info("записи адресов сервиса удалены с роутера", "service", name, "service_id", removedID, "count", n)
 	}
@@ -287,7 +287,7 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 			s.cfg.Schedules.Services[name] = prevSched
 		}
 		s.cfg.Unlock()
-		return fmt.Errorf("config not saved, сервис НЕ удалён: %w", err)
+		return fmt.Errorf("config not saved, service NOT removed: %w", err)
 	}
 	s.cfg.Unlock()
 
@@ -350,15 +350,15 @@ func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug
 		slug = ov.Preset
 	}
 	if slug == "" {
-		return nil, nil, fmt.Errorf("service %s has no preset bound (передайте preset явно)", name)
+		return nil, nil, fmt.Errorf("service %s has no preset bound (pass preset explicitly)", name)
 	}
 	p, ok := presets.Domains(slug)
 	if !ok {
-		return nil, nil, fmt.Errorf("preset %q unavailable (зеркало не скачано?)", slug)
+		return nil, nil, fmt.Errorf("preset %q unavailable (mirror not downloaded?)", slug)
 	}
 	full, _ := presets.Get(slug)
 	if full.Large && !force {
-		return nil, nil, fmt.Errorf("preset %q large (%d domains): подтвердите force=true", slug, len(p))
+		return nil, nil, fmt.Errorf("preset %q large (%d domains): confirm with force=true", slug, len(p))
 	}
 	if len(p) > MaxServiceDomains {
 		return nil, nil, fmt.Errorf("preset %q too large (%d domains, max %d)", slug, len(p), MaxServiceDomains)
