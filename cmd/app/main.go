@@ -41,7 +41,6 @@ var (
 	dryRun        bool
 	forceOp       bool
 	svcName       string
-	grpName       string
 	purge         bool
 	snapTTLHours  int
 	logLimit      int
@@ -113,10 +112,9 @@ func newRoot() *cobra.Command {
 func syncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Синхронизировать маршруты (все сервисы, группу или один сервис)",
+		Short: "Синхронизировать маршруты (все сервисы или один сервис)",
 		Example: `  app sync
   app sync --service instagram
-  app sync --group social
   app sync --dry-run
   app sync --service youtube --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -147,7 +145,6 @@ func syncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "расчёт изменений без применения")
 	cmd.Flags().BoolVar(&forceOp, "force", false, "обход защиты от массового удаления")
 	cmd.Flags().StringVarP(&svcName, "service", "s", "", "один сервис")
-	cmd.Flags().StringVarP(&grpName, "group", "g", "", "группа сервисов")
 	return cmd
 }
 
@@ -155,12 +152,6 @@ func resolveTargets(cfg *config.Config) ([]string, error) {
 	switch {
 	case svcName != "":
 		return []string{svcName}, nil
-	case grpName != "":
-		gs := cfg.ServicesInGroup(grpName)
-		if len(gs) == 0 {
-			return nil, fmt.Errorf("group %q not found or empty", grpName)
-		}
-		return gs, nil
 	default:
 		if len(cfg.Services) == 0 {
 			return nil, fmt.Errorf("no services configured; use 'add-service' first")

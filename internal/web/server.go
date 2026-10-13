@@ -706,7 +706,6 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Post("/presets/create-from-upstream", s.apiPresetsCreateFromUpstream)
 		r.Get("/schedules", s.apiSchedules)
 		r.Put("/schedules/global", s.apiUpdateGlobalSchedule)
-		r.Put("/schedules/group/{group}", s.apiUpdateGroupSchedule)
 		r.Put("/schedules/{service}", s.apiUpdateSchedule)
 		r.Get("/logs", s.apiLogs)
 		r.Get("/history", s.apiHistory)
@@ -1263,12 +1262,10 @@ func hasOverrideLocked(cfg *config.Config, name string) bool {
 }
 
 type scheduleRow struct {
-	Name       string
-	Effective  string
-	ServiceOv  string
-	Group      string
-	GroupSched string
-	Source     string // service|group|global
+	Name      string
+	Effective string
+	ServiceOv string
+	Source    string // service|global
 }
 
 func (s *Server) pageSchedules(w http.ResponseWriter, r *http.Request) {
@@ -1277,7 +1274,7 @@ func (s *Server) pageSchedules(w http.ResponseWriter, r *http.Request) {
 	names := append([]string(nil), s.cfg.Services...)
 	global := s.cfg.Schedules.Global
 	type schedStatic struct {
-		name, effective, serviceOv, group, groupSched, source string
+		name, effective, serviceOv, source string
 	}
 	statics := make([]schedStatic, 0, len(names))
 	for _, name := range names {
@@ -1285,18 +1282,9 @@ func (s *Server) pageSchedules(w http.ResponseWriter, r *http.Request) {
 		if sv, ok := s.cfg.Schedules.Services[name]; ok {
 			st.serviceOv = sv.Schedule
 		}
-		// Источник детерминирован: GroupForService берёт первую по алфавиту
-		// группу, а не случайную из map.
-		if gname, gsched := s.cfg.GroupForService(name); gname != "" {
-			st.group = gname
-			st.groupSched = gsched
-		}
-		switch {
-		case st.serviceOv != "":
+		if st.serviceOv != "" {
 			st.source = "service"
-		case st.group != "" && st.groupSched != "":
-			st.source = "group"
-		default:
+		} else {
 			st.source = "global"
 		}
 		statics = append(statics, st)
@@ -1305,37 +1293,12 @@ func (s *Server) pageSchedules(w http.ResponseWriter, r *http.Request) {
 	rows := make([]scheduleRow, 0, len(statics))
 	for _, st := range statics {
 		rows = append(rows, scheduleRow{Name: st.name, Effective: st.effective,
-			ServiceOv: st.serviceOv, Group: st.group, GroupSched: st.groupSched,
-			Source: st.source})
+			ServiceOv: st.serviceOv, Source: st.source})
 	}
-	groups := s.groupSchedules()
 	s.render(w, r, "schedules.html", map[string]any{
 		"Global": global,
 		"Rows":   rows,
-		"Groups": groups,
 	})
-}
-
-// scheduleGroup — группа в списке на странице расписаний.
-type scheduleGroup struct {
-	Name     string
-	Schedule string
-	Services []string
-}
-
-// groupSchedules собирает группы по алфавиту (детерминированный порядок).
-func (s *Server) groupSchedules() []scheduleGroup {
-	s.cfg.RLock()
-	defer s.cfg.RUnlock()
-	groups := make([]scheduleGroup, 0, len(s.cfg.Schedules.Groups))
-	for _, name := range s.cfg.SortedGroupNames() {
-		g := s.cfg.Schedules.Groups[name]
-		groups = append(groups, scheduleGroup{
-			Name: name, Schedule: g.Schedule,
-			Services: append([]string(nil), g.Services...),
-		})
-	}
-	return groups
 }
 
 // ============================================================================
@@ -1442,7 +1405,7 @@ var settingsSpec = []settingSpec{
 	{"Планировщик", "scheduler.cache_purge", "Очистка кэша", "text",
 		"Формат 'every 1h' — период удаления протухших записей bbolt."},
 	{"Планировщик", "schedules.global", "Глобальное расписание", "text",
-		"По умолчанию для сервисов без override: every 6h, daily at 03:00, cron '0 3 * * *', manual, disabled. По сервису/группе — на странице «Расписания»."},
+		"По умолчанию для сервисов без override: every 6h, daily at 03:00, cron '0 3 * * *', manual, disabled. По сервису — на странице «Расписания»."},
 	{"Безопасность", "safety.max_delete_ratio", "Макс. доля удаления", "float",
 		"Safe-diff: если будет удалено больше доли от существующих маршрутов сервиса (0.5 = 50%) — синхронизация прервётся, потребуется --force."},
 	{"Безопасность", "safety.require_confirmation_over", "Абсолютный лимит удалений", "number",
@@ -2278,7 +2241,6 @@ func (s *Server) apiSchedules(w http.ResponseWriter, r *http.Request) {
 	s.cfg.RLock()
 	raw, err := json.Marshal(apiEnvelope{OK: true, Data: map[string]any{
 		"global":   s.cfg.Schedules.Global,
-		"groups":   s.cfg.Schedules.Groups,
 		"services": s.cfg.Schedules.Services,
 		"effective": func() map[string]string {
 			eff := map[string]string{}
@@ -2335,34 +2297,6 @@ func (s *Server) apiUpdateGlobalSchedule(w http.ResponseWriter, r *http.Request)
 	s.auditChange(r, "web", "schedule_change", "global")
 	s.reloadScheduler()
 	writeOK(w, map[string]string{"global": spec})
-}
-
-// apiUpdateGroupSchedule — PUT /api/v1/schedules/group/{group}.
-func (s *Server) apiUpdateGroupSchedule(w http.ResponseWriter, r *http.Request) {
-	group := chi.URLParam(r, "group")
-	var req struct {
-		Schedule string `json:"schedule"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	spec := strings.TrimSpace(req.Schedule)
-	if spec != "" && !scheduler.ValidSpec(spec) {
-		writeErr(w, http.StatusBadRequest, fmt.Sprintf("invalid schedule %q (expected cron, 'every 6h', 'daily at 03:00', manual/disabled)", spec))
-		return
-	}
-	if err := s.cfg.ReplaceGroupSchedule(group, spec); err != nil {
-		if errors.Is(err, config.ErrGroupNotFound) {
-			writeErr(w, http.StatusNotFound, err.Error())
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.auditChange(r, "web", "schedule_change", "group:"+group)
-	s.reloadScheduler()
-	writeOK(w, map[string]string{"group": group, "schedule": spec})
 }
 
 // reloadScheduler перезагружает планировщик, логируя неудачу (не 500:

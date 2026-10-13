@@ -66,7 +66,7 @@
 - Best-effort rollback при ошибке применения изменений
 - Retry и Circuit Breaker для RouterOS REST API
 - CLI на Cobra
-- Трёхуровневые расписания: сервис → группа → глобальное
+- Двухуровневые расписания: сервис → глобальное
 - Защита от параллельного запуска одного сервиса
 - Ограничение общей параллельности через `max_concurrent`
 - Telegram-бот с авторизацией и командами
@@ -196,7 +196,6 @@
 |---------|------------|
 | `app sync` | Синхронизировать все сервисы |
 | `app sync --service instagram` | Синхронизировать один сервис |
-| `app sync --group social` | Синхронизировать группу |
 | `app sync --dry-run` | Рассчитать изменения без применения |
 | `app sync --service youtube --force` | Обойти safety-check (max_delete_ratio) |
 | `app diff <service>` | Показать diff address-list в JSON |
@@ -309,7 +308,7 @@ CDN**: резолвятся A-записи, определяется ASN и ад
 
 ## Расписания
 
-Приоритет: **service → group → global**
+Приоритет: **service → global**
 
 Поддерживаются:
 - **cron** (5 полей): `0 */6 * * *`
@@ -321,17 +320,6 @@ CDN**: резолвятся A-записи, определяется ASN и ад
 
     schedules:
       global: "every 6h"
-
-      groups:
-        social:
-          schedule: "daily at 03:00"
-          services: [instagram, telegram]
-        video:
-          schedule: "every 12h"
-          services: [youtube]
-        torrents:
-          schedule: "weekly on sunday at 05:00"
-          services: [rutor]
 
       services:
         instagram: {schedule: "every 4h"}
@@ -347,11 +335,9 @@ CDN**: резолвятся A-записи, определяется ASN и ад
 
 Один и тот же сервис защищён от наложения запусков (mutex).
 
-Сервис должен входить не более чем в одну группу: иначе эффективное
-расписание было бы недетерминированным, и конфиг отклоняется при загрузке.
-На странице «Расписания» правятся расписания сервисов и групп (состав групп —
-только чтение); глобальное расписание задаётся в конфиге (`schedules.global`)
-или через `PUT /api/v1/schedules/global`. Изменения сохраняются в конфиг и
+На странице «Расписания» правится расписание сервиса; глобальное расписание
+задаётся в конфиге (`schedules.global`) или через
+`PUT /api/v1/schedules/global`. Изменения сохраняются в конфиг и
 подхватываются планировщиком без перезапуска.
 
 ---
@@ -667,9 +653,8 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
 | `GET` | `/api/v1/presets/match` | Какие пресеты содержат домен (`?domain=`) |
 | `POST` | `/api/v1/presets/refresh` | Докачка зеркал (`?source=` — `ru`, `upstream` или `all`) |
 | `POST` | `/api/v1/presets/create-from-upstream` | Создать пресет из файла v2fly-зеркала (тело `{"slug": ...}`) |
-| `GET` | `/api/v1/schedules` | Все расписания (global/groups/services/effective) |
+| `GET` | `/api/v1/schedules` | Все расписания (global/services/effective) |
 | `PUT` | `/api/v1/schedules/global` | Изменить глобальное расписание |
-| `PUT` | `/api/v1/schedules/group/{group}` | Изменить расписание группы (состав не меняется) |
 | `PUT` | `/api/v1/schedules/{service}` | Изменить расписание сервиса |
 | `GET` | `/api/v1/logs` | Логи (`level`, `service`, `since`, `limit`) |
 | `GET` | `/api/v1/history` | История синхронизаций (`service`, `limit`) |

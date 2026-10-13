@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -287,7 +286,6 @@ func TestSaveFallsBackWhenTempCreationDenied(t *testing.T) {
 func TestEffectiveSchedulePriority(t *testing.T) {
 	cfg := &Config{Schedules: SchedulesConfig{
 		Global: "every 6h",
-		Groups: map[string]GroupConfig{"social": {Schedule: "daily at 03:00", Services: []string{"instagram"}}},
 		Services: map[string]ServiceSchedule{
 			"instagram": {Schedule: "every 1h"},
 		},
@@ -295,10 +293,9 @@ func TestEffectiveSchedulePriority(t *testing.T) {
 	if got := cfg.EffectiveSchedule("instagram"); got != "every 1h" {
 		t.Fatalf("service override must win: %s", got)
 	}
-	cfg.Services = []string{"telegram"}
 	delete(cfg.Schedules.Services, "instagram")
-	if got := cfg.EffectiveSchedule("instagram"); got != "daily at 03:00" {
-		t.Fatalf("group must apply: %s", got)
+	if got := cfg.EffectiveSchedule("instagram"); got != "every 6h" {
+		t.Fatalf("global fallback: %s", got)
 	}
 	if got := cfg.EffectiveSchedule("other"); got != "every 6h" {
 		t.Fatalf("global fallback: %s", got)
@@ -318,83 +315,28 @@ func TestIsValidMethod(t *testing.T) {
 	}
 }
 
-func TestServicesInGroupAndScheduleFor(t *testing.T) {
+func TestScheduleForFallback(t *testing.T) {
 	c := &Config{}
 	c.Schedules.Global = "every 6h"
-	c.Schedules.Groups = map[string]GroupConfig{
-		"social": {Schedule: "daily at 03:00", Services: []string{"instagram", "telegram"}},
+	c.Schedules.Services = map[string]ServiceSchedule{
+		"instagram": {Schedule: "daily at 03:00"},
 	}
 
-	got := c.ServicesInGroup("social")
-	if len(got) != 2 || got[0] != "instagram" || got[1] != "telegram" {
-		t.Fatalf("ServicesInGroup=%v", got)
-	}
-	if got := c.ServicesInGroup("nosuch"); got != nil {
-		t.Fatalf("ServicesInGroup(nosuch)=%v, want nil", got)
-	}
 	if got := c.ScheduleFor("instagram"); got != "daily at 03:00" {
-		t.Fatalf("ScheduleFor via group=%q", got)
+		t.Fatalf("ScheduleFor service override=%q", got)
 	}
 	if got := c.ScheduleFor("other"); got != "every 6h" {
 		t.Fatalf("ScheduleFor fallback=%q", got)
 	}
 }
 
-// Сервис в двух группах давал бы недетерминированный EffectiveSchedule
-// (обход map) — Validate обязан такую конфигурацию отклонить.
-func TestValidateRejectsServiceInMultipleGroups(t *testing.T) {
-	c := validBase(t)
-	c.Services = []string{"instagram"}
-	c.Schedules.Groups = map[string]GroupConfig{
-		"social": {Schedule: "every 1h", Services: []string{"instagram"}},
-		"media":  {Schedule: "every 2h", Services: []string{"instagram"}},
-	}
-	if err := c.Validate(); err == nil {
-		t.Fatal("expected rejection of a service present in two groups")
-	}
-
-	// Тот же сервис в одной группе (даже в нескольких списках между вызовами
-	// Validate) — валиден.
-	ok := validBase(t)
-	ok.Services = []string{"instagram"}
-	ok.Schedules.Groups = map[string]GroupConfig{
-		"social": {Schedule: "every 1h", Services: []string{"instagram"}},
-		"media":  {Schedule: "every 2h", Services: []string{"youtube"}},
-	}
-	if err := ok.Validate(); err != nil {
-		t.Fatalf("distinct groups must validate: %v", err)
-	}
-}
-
-// При двух группах (конфиг с ошибкой, но прошедший мимо Validate)
-// EffectiveSchedule обязан брать первую по алфавиту — без «мигания».
-func TestEffectiveScheduleDeterministicAcrossGroups(t *testing.T) {
-	c := &Config{Schedules: SchedulesConfig{
-		Global: "every 6h",
-		Groups: map[string]GroupConfig{
-			"social": {Schedule: "every 1h", Services: []string{"instagram"}},
-			"media":  {Schedule: "every 2h", Services: []string{"instagram"}},
-		},
-	}}
-	for i := 0; i < 20; i++ {
-		if got := c.EffectiveSchedule("instagram"); got != "every 2h" {
-			t.Fatalf("iteration %d: got %q, want first-alphabetical group schedule", i, got)
-		}
-	}
-	if name, sched := c.GroupForService("instagram"); name != "media" || sched != "every 2h" {
-		t.Fatalf("GroupForService=%q/%q", name, sched)
-	}
-}
-
-func TestReplaceGlobalAndGroupSchedule(t *testing.T) {
+func TestReplaceGlobalSchedule(t *testing.T) {
 	path := writeTempConfig(t, `
 timezone: UTC
 mikrotik: {host: h, username: u, password: p}
 firewall: {address_list: "TO-VPN"}
 schedules:
   global: "every 6h"
-  groups:
-    social: {schedule: "every 1h", services: [instagram]}
 services: [instagram]
 `)
 	cfg, err := Load(path)
@@ -405,14 +347,6 @@ services: [instagram]
 	if err := cfg.ReplaceGlobalSchedule("every 12h"); err != nil {
 		t.Fatalf("ReplaceGlobalSchedule: %v", err)
 	}
-	if err := cfg.ReplaceGroupSchedule("social", "daily at 03:00"); err != nil {
-		t.Fatalf("ReplaceGroupSchedule: %v", err)
-	}
-	if err := cfg.ReplaceGroupSchedule("nosuch", "every 1h"); err == nil {
-		t.Fatal("unknown group must fail")
-	} else if !errors.Is(err, ErrGroupNotFound) {
-		t.Fatalf("want ErrGroupNotFound, got %v", err)
-	}
 
 	reloaded, err := Load(path)
 	if err != nil {
@@ -421,11 +355,8 @@ services: [instagram]
 	if reloaded.Schedules.Global != "every 12h" {
 		t.Fatalf("global not persisted: %q", reloaded.Schedules.Global)
 	}
-	if got := reloaded.Schedules.Groups["social"].Schedule; got != "daily at 03:00" {
-		t.Fatalf("group schedule not persisted: %q", got)
-	}
-	if got := reloaded.EffectiveSchedule("instagram"); got != "daily at 03:00" {
-		t.Fatalf("effective after group update: %q", got)
+	if got := reloaded.EffectiveSchedule("instagram"); got != "every 12h" {
+		t.Fatalf("effective after global update: %q", got)
 	}
 }
 

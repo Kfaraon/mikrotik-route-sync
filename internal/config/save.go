@@ -2,7 +2,6 @@ package config
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,9 +14,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
-
-// ErrGroupNotFound — группы нет в schedules.groups (запрос к её расписанию).
-var ErrGroupNotFound = errors.New("schedule group not found")
 
 // Save сохраняет текущее состояние Config в файл атомарно.
 func (c *Config) Save() error {
@@ -79,7 +75,7 @@ func setNestedValue(v reflect.Value, parts []string, value any) error {
 	for i, part := range parts[:len(parts)-1] {
 		current = deref(current)
 
-		// Обработка map (например, Overrides, Groups, Services в Schedules)
+		// Обработка map (например, Overrides, Services в Schedules)
 		if current.Kind() == reflect.Map {
 			if current.IsNil() {
 				current.Set(reflect.MakeMap(current.Type()))
@@ -178,20 +174,6 @@ func (c *Config) ReplaceGlobalSchedule(spec string) error {
 	c.Lock()
 	defer c.Unlock()
 	c.Schedules.Global = spec
-	return c.Save()
-}
-
-// ReplaceGroupSchedule задаёт расписание существующей группы и сохраняет
-// файл. Неизвестная группа — ошибка (ErrGroupNotFound).
-func (c *Config) ReplaceGroupSchedule(group, spec string) error {
-	c.Lock()
-	defer c.Unlock()
-	g, ok := c.Schedules.Groups[group]
-	if !ok {
-		return fmt.Errorf("%w: %s", ErrGroupNotFound, group)
-	}
-	g.Schedule = spec
-	c.Schedules.Groups[group] = g
 	return c.Save()
 }
 

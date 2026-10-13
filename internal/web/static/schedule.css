@@ -41,101 +41,6 @@
   color: var(--badge-auto-text);
 }
 
-/* Группы — сворачиваемый блок (состав только чтение) */
-.sched-groups {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 1.5rem;
-  overflow: hidden;
-}
-
-.sched-groups > summary {
-  padding: 1rem;
-  cursor: pointer;
-  font-weight: 600;
-  background: var(--bg-alt);
-  user-select: none;
-  color: var(--text);
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-}
-
-.sched-groups > summary:hover {
-  background: var(--border);
-}
-
-.sched-groups-body {
-  padding: 0.5rem 1rem 1rem;
-}
-
-.global-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 0;
-  border-top: 1px solid var(--border);
-}
-
-.global-row:first-child {
-  border-top: none;
-}
-
-.global-label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  flex: 1;
-  min-width: 220px;
-}
-
-.scope-title {
-  font-weight: 600;
-}
-
-.group-value {
-  font-size: 0.95rem;
-  color: var(--code-text);
-  background: var(--code-bg);
-  border-radius: var(--radius);
-  padding: 0.1rem 0.4rem;
-  align-self: flex-start;
-}
-
-.scope-editor {
-  flex-basis: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.scope-editor[hidden] {
-  display: none;
-}
-
-.scope-editor .scope-input {
-  flex: 1;
-  min-width: 200px;
-}
-
-.scope-buttons {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.scope-status {
-  flex-basis: 100%;
-  font-size: 0.875rem;
-  min-height: 1.1rem;
-}
-
-.scope-status.ok { color: var(--success); }
-.scope-status.err { color: var(--danger); }
-.scope-status.muted { color: var(--muted); }
-
 /* Панель поиска/сортировки */
 .sched-toolbar {
   display: flex;
@@ -424,11 +329,6 @@
   color: var(--badge-override-text);
 }
 
-.badge-group {
-  background: var(--badge-group-bg);
-  color: var(--badge-group-text);
-}
-
 .type-badge {
   min-width: 60px;
   text-align: center;
@@ -446,11 +346,6 @@
 .source-service {
   background: var(--badge-override-bg);
   color: var(--badge-override-text);
-}
-
-.source-group {
-  background: var(--badge-group-bg);
-  color: var(--badge-group-text);
 }
 
 .source-global {

@@ -192,7 +192,7 @@ REST API клиент `/rest/ip/firewall/address-list`:
 
 Управление расписаниями:
 
-- Три уровня приоритета: сервис → группа → глобальное
+- Два уровня приоритета: сервис → глобальное
 - Форматы: cron (5 полей), human-readable (every 6h, daily at 03:00)
 - Специальные: manual, disabled, inherit
 - Hot-reload через SIGHUP

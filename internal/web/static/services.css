@@ -209,7 +209,7 @@
 .svc-badge-muted { background: var(--badge-muted-bg); color: var(--badge-muted-text); }
 .svc-badge-auto { background: var(--badge-auto-bg); color: var(--badge-auto-text); }
 .svc-badge-override { background: var(--badge-override-bg); color: var(--badge-override-text); }
-.svc-badge-group { background: var(--badge-group-bg); color: var(--badge-group-text); }
+.svc-badge-preset { background: var(--badge-group-bg); color: var(--badge-group-text); }
 .svc-badge-disabled { background: var(--badge-err-bg); color: var(--badge-err-text); }
 
 /* Утилиты страницы */

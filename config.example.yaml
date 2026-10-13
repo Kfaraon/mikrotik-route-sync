@@ -83,10 +83,6 @@ snapshots:
   max_count: 50
 schedules:
   global: every 6h
-  groups:
-    social:
-      schedule: daily at 03:00
-      services: [instagram, telegram]
   services:
     cloudflare: {schedule: every 1h}
 # Подбор доменов (советник): v2fly/ru каталоги, urlscan.

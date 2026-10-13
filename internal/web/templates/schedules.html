@@ -46,44 +46,6 @@
       </button>
     </section>
 
-    {{if .Groups}}
-    <details class="sched-groups" id="scope-groups">
-      <summary>Группы ({{ len .Groups }}): расписание можно менять, состав — только чтение</summary>
-      <div class="sched-groups-body">
-        {{range .Groups}}
-        <div class="global-row group-row" data-scope="group" data-group="{{ .Name }}">
-          <div class="global-label">
-            <span class="scope-title">Группа <code>{{ .Name }}</code></span>
-            <span class="muted small">{{ len .Services }} сервис(ов): {{ range $i, $s := .Services }}{{if $i}}, {{end}}{{$s}}{{end}}</span>
-            <code class="group-value">{{ .Schedule }}</code>
-          </div>
-          <button type="button" class="btn btn-secondary scope-edit-btn">Изменить</button>
-          <div class="scope-editor" hidden>
-            <select class="preset" aria-label="Быстрый пресет для группы {{ .Name }}">
-              <option value="">— пресет —</option>
-              <option value="manual">Вручную</option>
-              <option value="disabled">Отключено</option>
-              <option value="every 1h">Каждый час</option>
-              <option value="every 6h">Каждые 6 часов</option>
-              <option value="every 12h">Каждые 12 часов</option>
-              <option value="every 1d">Каждый день</option>
-              <option value="daily at 03:00">Ежедневно в 03:00</option>
-              <option value="weekly on sunday at 04:00">Еженедельно, воскресенье 04:00</option>
-              <option value="custom">Своё…</option>
-            </select>
-            <input type="text" class="scope-input" value="{{ .Schedule }}" aria-label="Расписание группы {{ .Name }}" autocomplete="off">
-            <div class="scope-buttons">
-              <button type="button" class="btn btn-primary scope-save-btn">Сохранить</button>
-              <button type="button" class="btn btn-secondary scope-cancel-btn">Отмена</button>
-            </div>
-            <div class="scope-status" aria-live="polite"></div>
-          </div>
-        </div>
-        {{end}}
-      </div>
-    </details>
-    {{end}}
-
     <details class="sched-help">
       <summary>Поддерживаемые форматы и подсказки</summary>
       <ul>
@@ -92,7 +54,7 @@
         <li><code>weekly on sunday at 04:00</code> — еженедельно в указанный день.</li>
         <li><code>0 */6 * * *</code> — cron из 5 полей.</li>
         <li><code>manual</code> — только вручную, <code>disabled</code> — синхронизация отключена.</li>
-        <li>Пустое значение override — наследовать расписание группы или глобальное расписание.</li>
+        <li>Пустое значение override — наследовать глобальное расписание.</li>
       </ul>
       <p class="muted small">
         Ближайший запуск рассчитывается приблизительно по тексту расписания и не учитывает фактическое время последнего запуска.
@@ -103,7 +65,7 @@
       <input
         type="search"
         id="sched-search"
-        placeholder="Поиск: сервис, группа, расписание"
+        placeholder="Поиск: сервис, расписание"
         autocomplete="off"
       >
       <select id="sched-sort" aria-label="Сортировка">
@@ -132,8 +94,6 @@
             data-service="{{ .Name }}"
             data-effective="{{ .Effective }}"
             data-override="{{ .ServiceOv }}"
-            data-group="{{ .Group }}"
-            data-group-schedule="{{ .GroupSched }}"
             data-source="{{ .Source }}"
           >
             <td data-label="Сервис">

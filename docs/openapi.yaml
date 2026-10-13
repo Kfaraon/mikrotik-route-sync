@@ -707,7 +707,7 @@ paths:
 
   /api/v1/schedules:
     get:
-      summary: Все расписания (глобальное, группы, сервисы, эффективные)
+      summary: Все расписания (глобальное, сервисы, эффективные)
       tags: [Schedules]
       responses:
         '200': { $ref: '#/components/responses/OK' }
@@ -740,38 +740,6 @@ paths:
         '200': { $ref: '#/components/responses/OK' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
-
-  /api/v1/schedules/group/{group}:
-    put:
-      summary: Изменить расписание группы
-      description: >-
-        Состав группы не меняется — только расписание. Те же форматы, что и у
-        расписания сервиса, плюс пустая строка (наследовать глобальное).
-      tags: [Schedules]
-      parameters:
-        - name: group
-          in: path
-          required: true
-          schema: { type: string }
-        - name: X-CSRF-Token
-          in: header
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [schedule]
-              properties:
-                schedule: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/OK' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404':
-          description: Группы нет в schedules.groups
 
   /api/v1/schedules/{service}:
     put:

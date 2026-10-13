@@ -275,10 +275,6 @@
     var override = normalizeSpec(row.getAttribute("data-override"));
     if (override) return override;
 
-    var group = normalizeSpec(row.getAttribute("data-group"));
-    var groupSchedule = normalizeSpec(row.getAttribute("data-group-schedule"));
-    if (group && groupSchedule) return groupSchedule;
-
     return normalizeSpec(globalSchedule);
   }
 
@@ -290,13 +286,9 @@
 
   function sourceForRow(row) {
     // Та же логика, что на сервере (атрибут data-source — лишь начальная
-    // подсказка): override → своё, группа с непустым расписанием → группа,
-    // иначе глобальное. Пересчитывается при правках, поэтому не «залипает».
+    // подсказка): override → своё, иначе глобальное. Пересчитывается при
+    // правках, поэтому не «залипает».
     if (normalizeSpec(row.getAttribute("data-override"))) return "service";
-
-    var group = normalizeSpec(row.getAttribute("data-group"));
-    var groupSchedule = normalizeSpec(row.getAttribute("data-group-schedule"));
-    if (group && groupSchedule) return "group";
 
     return "global";
   }
@@ -306,29 +298,19 @@
     if (!sourceEl) return;
 
     var source = sourceForRow(row);
-    var group = normalizeSpec(row.getAttribute("data-group"));
 
     var labels = {
       service: "Своё",
-      group: group ? "Группа: " + group : "группа",
       global: "Глобальное"
     };
     var classes = {
       service: "source-service",
-      group: "source-group",
       global: "source-global"
     };
 
     sourceEl.textContent = labels[source] || source;
     sourceEl.className = "badge source-badge " + (classes[source] || "");
-
-    // Расписание группы — в подсказке бейджа (отдельной колонки больше нет).
-    if (source === "group") {
-      var gs = normalizeSpec(row.getAttribute("data-group-schedule"));
-      sourceEl.title = gs ? "расписание группы: " + gs : "";
-    } else {
-      sourceEl.removeAttribute("title");
-    }
+    sourceEl.removeAttribute("title");
   }
 
   function renderNext(row) {
@@ -441,14 +423,7 @@
     var c = classify(eff);
 
     if (term) {
-      var hay = [
-        service,
-        normalizeSpec(row.getAttribute("data-group")),
-        eff,
-        override
-      ]
-        .join(" ")
-        .toLowerCase();
+      var hay = [service, eff, override].join(" ").toLowerCase();
       if (hay.indexOf(term) === -1) return false;
     }
 
@@ -488,7 +463,7 @@
       }
 
       if (mode === "source") {
-        var order = { service: 0, group: 1, global: 2 };
+        var order = { service: 0, global: 1 };
         var ao = order[sourceForRow(a)] || 99;
         var bo = order[sourceForRow(b)] || 99;
         return (ao - bo) || as.localeCompare(bs);
@@ -661,148 +636,6 @@
       });
   }
 
-  // --- Группы ---
-
-  function scopeValue(scopeRow) {
-    var code = scopeRow.querySelector(".group-value");
-    return code ? normalizeSpec(code.textContent) : "";
-  }
-
-  function setScopeStatus(scopeRow, message, kind) {
-    var el = scopeRow.querySelector(".scope-status");
-    if (!el) return;
-    el.textContent = message || "";
-    el.className = "scope-status" + (kind ? " " + kind : "");
-  }
-
-  function toggleScopeEditor(scopeRow) {
-    var panel = scopeRow.querySelector(".scope-editor");
-    var btn = scopeRow.querySelector(".scope-edit-btn");
-    if (!panel) return;
-
-    var willOpen = panel.hidden;
-    panel.hidden = !willOpen;
-    if (btn) btn.textContent = willOpen ? "Свернуть" : "Изменить";
-
-    if (willOpen) {
-      var input = panel.querySelector(".scope-input");
-      if (input) {
-        input.value = scopeValue(scopeRow);
-        input.focus();
-        input.select();
-      }
-    }
-  }
-
-  function saveScope(scopeRow) {
-    var panel = scopeRow.querySelector(".scope-editor");
-    var input = panel ? panel.querySelector(".scope-input") : null;
-    var spec = normalizeSpec(input ? input.value : "");
-    var group = normalizeSpec(scopeRow.getAttribute("data-group"));
-
-    var url = "/api/v1/schedules/group/" + encodeURIComponent(group);
-
-    setScopeStatus(scopeRow, "Сохранение…", "muted");
-
-    fetch(url, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRF-Token": csrf()
-      },
-      credentials: "same-origin",
-      body: JSON.stringify({ schedule: spec })
-    })
-      .then(function (response) {
-        return response.json().then(function (data) {
-          return { ok: response.ok && data && data.ok, status: response.status, data: data };
-        });
-      })
-      .then(function (result) {
-        if (!result.ok) {
-          var msg = result.data && result.data.error ? result.data.error : "HTTP " + result.status;
-          throw new Error(msg);
-        }
-
-        var code = scopeRow.querySelector(".group-value");
-        if (code) code.textContent = spec;
-        // Обновляем расписание группы у затронутых строк и пересчитываем.
-        rows.forEach(function (row) {
-          if (normalizeSpec(row.getAttribute("data-group")) === group) {
-            row.setAttribute("data-group-schedule", spec);
-          }
-        });
-
-        rows.forEach(updateRow);
-        applyViews();
-        updateSummary();
-
-        setScopeStatus(scopeRow, "Сохранено", "ok");
-        closeScopeEditor(scopeRow);
-        showToast("Расписание сохранено");
-      })
-      .catch(function (err) {
-        var msg = err && err.message ? err.message : String(err);
-        setScopeStatus(scopeRow, "Ошибка: " + msg, "err");
-        showToast("Ошибка сохранения: " + msg, true);
-      });
-  }
-
-  function closeScopeEditor(scopeRow) {
-    var panel = scopeRow.querySelector(".scope-editor");
-    var btn = scopeRow.querySelector(".scope-edit-btn");
-    if (panel) panel.hidden = true;
-    if (btn) btn.textContent = "Изменить";
-  }
-
-  function bindScope(scopeRow) {
-    var editBtn = scopeRow.querySelector(".scope-edit-btn");
-    var saveBtn = scopeRow.querySelector(".scope-save-btn");
-    var cancelBtn = scopeRow.querySelector(".scope-cancel-btn");
-    var preset = scopeRow.querySelector(".preset");
-    var input = scopeRow.querySelector(".scope-input");
-
-    if (editBtn) {
-      editBtn.addEventListener("click", function () {
-        toggleScopeEditor(scopeRow);
-      });
-    }
-
-    if (preset && input) {
-      preset.addEventListener("change", function () {
-        var v = preset.value;
-        if (v === "custom") {
-          input.focus();
-          return;
-        }
-        if (v === "") return;
-        input.value = v;
-      });
-    }
-
-    if (input) {
-      input.addEventListener("keydown", function (e) {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          saveScope(scopeRow);
-        }
-      });
-    }
-
-    if (saveBtn) {
-      saveBtn.addEventListener("click", function () {
-        saveScope(scopeRow);
-      });
-    }
-
-    if (cancelBtn) {
-      cancelBtn.addEventListener("click", function () {
-        closeScopeEditor(scopeRow);
-        setScopeStatus(scopeRow, "", "");
-      });
-    }
-  }
-
   function bindRow(row) {
     var preset = row.querySelector(".preset");
     var input = row.querySelector(".schedule-input");
@@ -932,9 +765,6 @@
     updateSummary();
     applyViews();
     rows.forEach(bindRow);
-
-    var scopeRows = page.querySelectorAll(".global-row");
-    Array.prototype.forEach.call(scopeRows, bindScope);
 
     bindGlobal();
 

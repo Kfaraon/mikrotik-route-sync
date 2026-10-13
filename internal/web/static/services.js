@@ -172,7 +172,6 @@
     services: [],
     schedules: {
       global: "",
-      groups: {},
       services: {},
       effective: {}
     },
@@ -605,43 +604,6 @@
     return "";
   }
 
-  function findGroup(name) {
-    var n = lower(name);
-    var groups = state.schedules && state.schedules.groups;
-
-    if (!groups) return "";
-
-    if (Array.isArray(groups)) {
-      for (var i = 0; i < groups.length; i++) {
-        var g = groups[i];
-        var services = g.services || g.Services;
-        if (Array.isArray(services)) {
-          for (var j = 0; j < services.length; j++) {
-            if (lower(services[j]) === n) {
-              return text(g.name || g.Name || "");
-            }
-          }
-        }
-      }
-      return "";
-    }
-
-    for (var key in groups) {
-      if (!Object.prototype.hasOwnProperty.call(groups, key)) continue;
-
-      var val = groups[key];
-      var list = val && (val.services || val.Services);
-
-      if (Array.isArray(list)) {
-        for (var x = 0; x < list.length; x++) {
-          if (lower(list[x]) === n) return key;
-        }
-      }
-    }
-
-    return "";
-  }
-
   function getEffective(name) {
     var n = text(name);
     var ln = lower(n);
@@ -672,21 +634,16 @@
     var override = normalizeSpec(getScheduleOverrideSpec(name));
     if (override) return "service";
 
-    var group = findGroup(name);
-    if (group) return "group";
-
     return "global";
   }
 
   function sourceLabel(source) {
     if (source === "service") return "переопределение сервиса";
-    if (source === "group") return "группа";
     return "глобальное";
   }
 
   function sourceBadge(source) {
     if (source === "service") return '<span class="svc-badge svc-badge-override">сервис</span>';
-    if (source === "group") return '<span class="svc-badge svc-badge-group">группа</span>';
     return '<span class="svc-badge svc-badge-ok">глобально</span>';
   }
 
@@ -1029,7 +986,6 @@
       var errorCount = state.errorCountByService[key] || 0;
       var warnCount = state.warnCountByService[key] || 0;
       var health = computeHealth(name, last, errorCount, warnCount);
-      var group = findGroup(name);
       var source = sourceFor(name);
       var scheduleOverride = !!getScheduleOverrideSpec(name);
       var configOverride = serviceHasOverride(row);
@@ -1052,7 +1008,6 @@
         health: health,
         errorCount: errorCount,
         warnCount: warnCount,
-        group: group,
         source: source,
         scheduleOverride: scheduleOverride,
         configOverride: configOverride,
@@ -1139,15 +1094,10 @@
       ? statusBadge(historyStatus(item.last)) + '<div class="svc-muted svc-small">' + esc(relativeTime(historyTime(item.last))) + "</div>"
       : '<span class="svc-muted">—</span>';
 
-    // Бейдж группы — здесь; счётчики ошибок/предупреждений не дублируем:
-    // они уже отражены в колонке «Состояние» через health.
-    var badges = "";
-    if (item.group) badges += '<span class="svc-badge svc-badge-group">' + esc(item.group) + "</span>";
-
     return '<tr class="' + selectedClass + '" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '">' +
       '<td data-label="Выбор" class="mrs-corner"><input type="checkbox" class="svc-row-check" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '"' + checked + "></td>" +
       '<td data-label="Сервис" class="mrs-title">' +
-        '<div class="svc-name"><strong>' + esc(item.name) + "</strong>" + badges + "</div>" +
+        '<div class="svc-name"><strong>' + esc(item.name) + "</strong></div>" +
         '<div class="svc-progress" hidden>' +
           '<div class="svc-progress-track"><div class="svc-progress-fill"></div></div>' +
           '<div class="svc-progress-label"></div>' +
@@ -1179,7 +1129,6 @@
       var hay = [
         item.name,
         item.effective,
-        item.group,
         item.health.label,
         item.cls.label
       ].join(" ").toLowerCase();
@@ -1506,9 +1455,9 @@
       }
 
       if (results[2].status === "fulfilled") {
-        state.schedules = results[2].value || { global: "", groups: {}, services: {}, effective: {} };
+        state.schedules = results[2].value || { global: "", services: {}, effective: {} };
       } else {
-        state.schedules = { global: "", groups: {}, services: {}, effective: {} };
+        state.schedules = { global: "", services: {}, effective: {} };
         errors.push("schedules");
       }
 
@@ -2100,7 +2049,7 @@
       "Источник",
       sourceBadge(item.source),
       sourceLabel(item.source),
-      item.source === "service" ? "warn" : item.source === "group" ? "muted" : "ok"
+      item.source === "service" ? "warn" : "ok"
     );
 
     html += detailItem(
@@ -2120,15 +2069,8 @@
     html += detailItem(
       "Переопределение",
       item.configOverride ? '<span class="svc-badge svc-badge-override">есть</span>' : '<span class="svc-badge svc-badge-muted">нет</span>',
-      item.scheduleOverride ? "есть переопределение расписания" : "наследуется из группы/глобально",
+      item.scheduleOverride ? "есть переопределение расписания" : "наследуется глобально",
       item.configOverride ? "warn" : "muted"
-    );
-
-    html += detailItem(
-      "Группа",
-      item.group ? '<span class="svc-badge svc-badge-group">' + esc(item.group) + "</span>" : "—",
-      item.group ? "сервис входит в группу расписаний" : "не входит в группу",
-      "muted"
     );
 
     html += "</div>";
@@ -2415,7 +2357,7 @@
       ? esc(domains.slice(0, 12).join(", ")) + (domains.length > 12 ? " …(+" + (domains.length - 12) + ")" : "")
       : "домены не заданы (автоопределение)") + "</p>";
     h += "<p>" + (row.Preset
-      ? 'Пресет: <span class="svc-badge svc-badge-group">' + esc(row.Preset) + "</span>"
+      ? 'Пресет: <span class="svc-badge svc-badge-preset">' + esc(row.Preset) + "</span>"
       : "Пресет: —") + "</p>";
 
     var sg = state.suggest;
