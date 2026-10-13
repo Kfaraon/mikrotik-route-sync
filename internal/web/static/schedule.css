@@ -159,6 +159,13 @@
   border-collapse: collapse;
 }
 
+/* Первые две колонки — по содержимому, редактор забирает остаток,
+   чтобы строка укладывалась в одну линию. */
+.sched-table th:nth-child(1),
+.sched-table th:nth-child(2) {
+  width: 1%;
+}
+
 .sched-table thead {
   background: var(--bg-alt);
 }
@@ -171,7 +178,7 @@
 }
 
 .sched-table th {
-  padding: 1rem;
+  padding: 0.6rem 0.75rem;
   text-align: left;
   font-weight: 600;
   color: var(--text);
@@ -180,9 +187,9 @@
 }
 
 .sched-table td {
-  padding: 1rem;
+  padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .sched-table tr:last-child td {
@@ -208,14 +215,18 @@
 
   .sched-table th,
   .sched-table td {
-    padding: 0.75rem 0.5rem;
+    padding: 0.45rem 0.5rem;
   }
 }
 
 @media (max-width: 768px) {
   /* Карточки таблицы — общий паттерн .mrs-cards из app.css */
-  .edit-buttons { flex-direction: column; }
-  .edit-buttons button { width: 100%; white-space: nowrap; }
+  .edit-panel select,
+  .edit-panel input {
+    flex: 1 1 100%;
+  }
+  .edit-buttons { flex-direction: row; }
+  .edit-buttons button { flex: 1; }
 }
 
 /* Ячейки */
@@ -232,12 +243,13 @@
 
 .cell-schedule {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .cell-schedule code {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 600;
 }
 
@@ -248,35 +260,52 @@
   align-items: center;
 }
 
-/* Компактный редактор расписания — прямо в строке таблицы */
+/* Компактный редактор расписания — прямо в строке таблицы.
+   По умолчанию одна строка: пресет · поле · Сохранить · Сбросить;
+   статус показывается ниже только когда он есть. */
 .edit-panel {
   display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  min-width: 220px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.edit-panel select {
+  flex: 0 1 11rem;
+  min-width: 0;
+}
+
+.edit-panel input {
+  flex: 1 1 12rem;
+  min-width: 0;
 }
 
 .edit-panel select,
 .edit-panel input {
-  width: 100%;
-  padding: 0.35rem 0.5rem;
+  padding: 0.3rem 0.45rem;
   font-size: 0.85rem;
 }
 
 .edit-buttons {
   display: flex;
-  gap: 0.35rem;
+  gap: 0.3rem;
+  flex: 0 0 auto;
 }
 
 .edit-buttons button {
-  flex: 1;
-  padding: 0.35rem 0.6rem;
+  padding: 0.3rem 0.55rem;
   font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 .row-status {
+  flex: 1 1 100%;
   font-size: 0.8rem;
-  min-height: 1rem;
+}
+
+.row-status:empty {
+  display: none;
 }
 
 .row-status.ok {
