@@ -253,6 +253,12 @@ func TestAuthRequiredAndDashboardRenders(t *testing.T) {
 	if !strings.Contains(page, "csrf-token") {
 		t.Fatal("csrf meta missing")
 	}
+	// KPI-карточки перенесены со страницы «Сервисы» на дашборд.
+	for _, want := range []string{"dash-kpi-grid", "dash-total-value", "dash-routes-value", "dash-auto-value", "dash-problems-value"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("dashboard missing KPI %q", want)
+		}
+	}
 	if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {
 		t.Fatalf("security header missing: %q", got)
 	}

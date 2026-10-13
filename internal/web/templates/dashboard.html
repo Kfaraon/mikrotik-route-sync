@@ -28,7 +28,31 @@
     </nav>
 
     <div id="dashboard-page" class="container dashboard-page">
-        <div id="dash-alert" class="dash-alert" hidden></div>
+        <div class="dash-alert" id="dash-alert" hidden></div>
+
+        <!-- KPI-карточки (перенесены со страницы «Сервисы») -->
+        <div class="dash-kpi-grid">
+            <div class="dash-kpi-card">
+                <span class="dash-kpi-label">Всего сервисов</span>
+                <span class="dash-kpi-value" id="dash-total-value">—</span>
+                <span class="dash-kpi-note" id="dash-total-note">загрузка…</span>
+            </div>
+            <div class="dash-kpi-card">
+                <span class="dash-kpi-label">Записей</span>
+                <span class="dash-kpi-value" id="dash-routes-value">—</span>
+                <span class="dash-kpi-note" id="dash-routes-note">загрузка…</span>
+            </div>
+            <div class="dash-kpi-card">
+                <span class="dash-kpi-label">На расписании</span>
+                <span class="dash-kpi-value" id="dash-auto-value">—</span>
+                <span class="dash-kpi-note" id="dash-auto-note">загрузка…</span>
+            </div>
+            <div class="dash-kpi-card">
+                <span class="dash-kpi-label">Проблемы</span>
+                <span class="dash-kpi-value" id="dash-problems-value">—</span>
+                <span class="dash-kpi-note" id="dash-problems-note">загрузка…</span>
+            </div>
+        </div>
 
         <div class="dash-grid dash-grid-3">
             <!-- Состояние системы -->

@@ -103,7 +103,6 @@
     services: [],
     schedules: {
       global: "",
-      groups: {},
       services: {},
       effective: {}
     },
@@ -130,6 +129,23 @@
 
   function setRefreshing(loading) {
     state.loading = loading;
+  }
+
+  // setKpi заполняет карточку-показатель; цвет значения — через svc-state-*.
+  function setKpi(valueId, noteId, value, note, stateName) {
+    var v = byId(valueId);
+    var n = byId(noteId);
+
+    if (v) {
+      v.textContent = text(value);
+      v.title = text(value);
+    }
+    if (n) n.textContent = text(note);
+
+    var card = v && v.closest ? v.closest(".dash-kpi-card") : null;
+    if (card) {
+      card.className = "dash-kpi-card" + (stateName ? " dash-state-" + stateName : "");
+    }
   }
 
   function parseTime(value) {
@@ -314,6 +330,25 @@
     var s = normalizeSpec(spec);
     var parts = s.split(/\s+/);
     return parts.length === 5 && /^[\d*\/,\-\s]+$/.test(s);
+  }
+
+  // classify возвращает ключ класса расписания (для KPI «На расписании»).
+  // Логика совпадает с classify на странице «Сервисы».
+  function classify(spec) {
+    var s = normalizeSpec(spec);
+
+    if (!s) return "empty";
+
+    var l = s.toLowerCase();
+
+    if (l === "manual" || l === "disabled" || l === "inherit") return l;
+
+    if (parseDuration(s) > 0) return "interval";
+    if (/^daily at \d{1,2}:\d{2}$/i.test(s)) return "daily";
+    if (/^weekly on [a-z]+ at \d{1,2}:\d{2}$/i.test(s)) return "weekly";
+    if (isCronLike(s)) return "cron";
+
+    return "custom";
   }
 
   function humanSchedule(spec) {
@@ -565,6 +600,21 @@
     return text(entry && (entry.service || entry.Service));
   }
 
+  // qualityProblem — дыры качества последнего сбора (покрытие, SNI, отсев).
+  // Та же логика, что на странице «Сервисы»; даёт паритет числа «Проблемы».
+  function qualityProblem(rec) {
+    if (!rec) return "";
+    var checked = numField(rec, ["cov_checked"]);
+    var covered = numField(rec, ["cov_covered"]);
+    if (checked > 0 && covered < checked) {
+      return "покрытие " + covered + "/" + checked;
+    }
+    if (rec.sni_primary_failed) return "SNI-провал";
+    var rej = numField(rec, ["rejected_total"]);
+    if (rej > 0) return "отброшено " + rej;
+    return "";
+  }
+
   function buildDerived() {
     // Только активные сервисы: история хранит и удалённые (для страницы
     // логов), но в здоровье/внимание они попадать не должны.
@@ -671,6 +721,13 @@
       if (Object.prototype.hasOwnProperty.call(warnSvc, wk)) problem[wk] = true;
     }
 
+    // Успешный синк с дырами качества тоже считаем проблемой — паритет
+    // с числом «Проблемы» на странице «Сервисы».
+    for (var qk in latestByService) {
+      if (!Object.prototype.hasOwnProperty.call(latestByService, qk)) continue;
+      if (qualityProblem(latestByService[qk])) problem[qk] = true;
+    }
+
     var routes = 0;
 
     for (var s = 0; s < state.services.length; s++) {
@@ -734,48 +791,6 @@
       mikrotikCls = "ok";
     }
 
-    var total = state.services.length;
-    var routes = d.totalRoutes || 0;
-
-    var servicesNote;
-
-    if (total === 0) {
-      servicesNote = "сервисы не добавлены";
-    } else if (routes === 0) {
-      servicesNote = "записей пока нет";
-    } else {
-      servicesNote = routes + " " + plural(routes, ["запись", "записи", "записей"]);
-    }
-
-    var degradedCount = objKeys(degraded).length;
-    var errorCount = objKeys(errorSvc).length;
-    var warnCount = objKeys(warnSvc).length;
-    var problemCount = d.problemCount || 0;
-
-    var problemParts = [];
-
-    if (degradedCount) {
-      problemParts.push("сбойных: " + degradedCount);
-    }
-
-    if (errorCount) {
-      problemParts.push("ошибок: " + errorCount);
-    }
-
-    if (warnCount) {
-      problemParts.push("предупреждений: " + warnCount);
-    }
-
-    var problemNote = problemParts.length
-      ? problemParts.join(" · ")
-      : "проблем не обнаружено";
-
-    var problemCls = "ok";
-
-    if (problemCount) {
-      problemCls = (degradedCount || errorCount) ? "err" : "warn";
-    }
-
     var latest = d.latestHistory;
     var latestValue = latest ? (historyService(latest) || "—") : "—";
     var latestStatus = latest ? historyStatus(latest) : "unknown";
@@ -785,12 +800,64 @@
 
     var html = "";
 
+    // Числа «Сервисы» и «Проблемы» вынесены в KPI-карточки сверху —
+    // в панели не дублируем.
     html += healthRow("RouterOS API", mikrotikValue, mikrotikNote, mikrotikCls);
-    html += healthRow("Сервисы", String(total), servicesNote, "muted");
-    html += healthRow("Проблемы", String(problemCount), problemNote, problemCls);
     html += healthRow("Последняя синхронизация", latestValue, latestNote, latest ? statusClass(latestStatus) : "muted");
 
     els.health.innerHTML = html;
+  }
+
+  // renderKpis заполняет четыре карточки-показателя над панелями.
+  // Логика повторяет прежние KPI со страницы «Сервисы».
+  function renderKpis() {
+    var d = state.derived || {};
+    var total = state.services.length;
+    var withRoutes = 0;
+
+    for (var i = 0; i < state.services.length; i++) {
+      if (serviceRoutes(state.services[i]) > 0) withRoutes++;
+    }
+
+    var auto = 0;
+
+    for (var s = 0; s < state.services.length; s++) {
+      var effective = getEffective(serviceName(state.services[s]));
+      var key = classify(effective);
+
+      if (key === "interval" || key === "daily" || key === "weekly" || key === "cron" || key === "custom") {
+        auto++;
+      }
+    }
+
+    var routes = d.totalRoutes || 0;
+    var problems = d.problemCount || 0;
+
+    setKpi("dash-total-value", "dash-total-note", String(total), withRoutes + " с записями", "muted");
+
+    setKpi(
+      "dash-routes-value",
+      "dash-routes-note",
+      String(routes),
+      routes ? "управляемых адресов" : "записей пока нет",
+      routes ? "ok" : "muted"
+    );
+
+    setKpi(
+      "dash-auto-value",
+      "dash-auto-note",
+      String(auto),
+      (total - auto) + " ручных/отключенных/нет",
+      auto ? "ok" : "muted"
+    );
+
+    setKpi(
+      "dash-problems-value",
+      "dash-problems-note",
+      String(problems),
+      problems ? "ошибки, предупреждения, сбои" : "проблем не обнаружено",
+      problems ? "err" : "ok"
+    );
   }
 
   function renderNext() {
@@ -883,14 +950,12 @@
       if (results[2].status === "fulfilled") {
         state.schedules = results[2].value || {
           global: "",
-          groups: {},
           services: {},
           effective: {}
         };
       } else {
         state.schedules = {
           global: "",
-          groups: {},
           services: {},
           effective: {}
         };
@@ -922,6 +987,7 @@
 
       buildDerived();
       renderHealth();
+      renderKpis();
       renderNext();
       renderAttention();
     }).catch(function (err) {

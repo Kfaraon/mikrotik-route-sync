@@ -263,22 +263,6 @@
     state.loading = loading;
   }
 
-  function setKpi(valueId, noteId, value, note, stateName) {
-    var v = byId(valueId);
-    var n = byId(noteId);
-
-    if (v) {
-      v.textContent = text(value);
-      v.title = text(value);
-    }
-    if (n) n.textContent = text(note);
-
-    var card = v && v.closest ? v.closest(".svc-kpi-card") : null;
-    if (card) {
-      card.className = "svc-kpi-card" + (stateName ? " svc-state-" + stateName : "");
-    }
-  }
-
   function parseTime(value) {
     if (value === null || value === undefined || value === "") return null;
 
@@ -1019,69 +1003,6 @@
     state.selection = validSelection;
   }
 
-  function totalRoutes() {
-    var sum = 0;
-    each(state.items, function (item) {
-      sum += item.routes;
-    });
-    return sum;
-  }
-
-  function renderKpis() {
-    var total = state.items.length;
-    var withRoutes = 0;
-    var auto = 0;
-    var problems = 0;
-
-    each(state.items, function (item) {
-      if (item.routes > 0) withRoutes++;
-
-      if (
-        item.cls.key === "interval" ||
-        item.cls.key === "daily" ||
-        item.cls.key === "weekly" ||
-        item.cls.key === "cron" ||
-        item.cls.key === "custom"
-      ) {
-        auto++;
-      }
-
-      if (item.health.priority <= 1) problems++;
-    });
-
-    setKpi(
-      "svc-total-value",
-      "svc-total-note",
-      String(total),
-      withRoutes + " с записями",
-      total ? "muted" : "muted"
-    );
-
-    setKpi(
-      "svc-routes-value",
-      "svc-routes-note",
-      String(totalRoutes()),
-      totalRoutes() ? "управляемых адресов" : "записей пока нет",
-      totalRoutes() ? "ok" : "muted"
-    );
-
-    setKpi(
-      "svc-auto-value",
-      "svc-auto-note",
-      String(auto),
-      (total - auto) + " ручных/отключенных/нет",
-      auto ? "ok" : "muted"
-    );
-
-    setKpi(
-      "svc-problems-value",
-      "svc-problems-note",
-      String(problems),
-      problems ? "ошибки, предупреждения, сбои" : "проблем не обнаружено",
-      problems ? "err" : "ok"
-    );
-  }
-
   function rowHtml(item) {
     var checked = state.selection[item.key] ? " checked" : "";
     var selectedClass = state.selection[item.key] ? " svc-selected" : "";
@@ -1488,7 +1409,6 @@
 
       buildIndexes();
       buildItems();
-      renderKpis();
       renderTable();
       state.booted = true;
 

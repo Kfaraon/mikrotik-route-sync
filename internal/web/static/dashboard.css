@@ -5,6 +5,71 @@
   margin-bottom: 1.5rem;
 }
 
+/* KPI-карточки (перенесены со страницы «Сервисы») */
+.dash-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.dash-kpi-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 1px 3px var(--shadow);
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.dash-kpi-label {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dash-kpi-value {
+  display: block;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-kpi-note {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.dash-kpi-card.dash-state-ok .dash-kpi-value { color: var(--success); }
+.dash-kpi-card.dash-state-warn .dash-kpi-value { color: var(--warning); }
+.dash-kpi-card.dash-state-err .dash-kpi-value { color: var(--danger); }
+
+@media (max-width: 768px) {
+  .dash-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+
+  .dash-kpi-card { padding: 0.75rem; }
+  .dash-kpi-label { font-size: 0.7rem; }
+  .dash-kpi-value { font-size: 1.25rem; }
+  .dash-kpi-note { font-size: 0.75rem; }
+}
+
+@media (max-width: 420px) {
+  .dash-kpi-card { padding: 0.5rem 0.25rem; }
+  .dash-kpi-value { font-size: 1.1rem; }
+  .dash-kpi-label { font-size: 0.65rem; }
+}
+
 /* Карточки широкие (min 420px): на 1280 в ряд встают две,
    текст строк состояния не рвётся на клочки. */
 .dash-grid-3 {

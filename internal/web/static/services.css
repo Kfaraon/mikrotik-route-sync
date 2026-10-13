@@ -7,58 +7,6 @@
   font-size: 0.9rem;
 }
 
-/* KPI карточки */
-.svc-kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
-  margin-bottom: 2rem;
-}
-
-.svc-kpi-card {
-  background: var(--bg, #fff);
-  border: 1px solid var(--border, #e0e0e0);
-  border-radius: var(--radius, 8px);
-  padding: 1.5rem;
-  box-shadow: 0 1px 3px var(--shadow, rgba(0,0,0,0.05));
-  transition: all 0.2s ease;
-}
-
-.svc-kpi-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px var(--shadow, rgba(0,0,0,0.1));
-}
-
-.svc-kpi-label {
-  display: block;
-  font-size: 0.875rem;
-  color: var(--muted, #666);
-  margin-bottom: 0.5rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.svc-kpi-value {
-  display: block;
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--text, #333);
-  margin-bottom: 0.25rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.svc-kpi-note {
-  display: block;
-  font-size: 0.875rem;
-  color: var(--muted, #666);
-}
-
-.svc-kpi-card.svc-state-ok .svc-kpi-value { color: var(--success, #28a745); }
-.svc-kpi-card.svc-state-warn .svc-kpi-value { color: var(--warning, #ffc107); }
-.svc-kpi-card.svc-state-err .svc-kpi-value { color: var(--danger, #dc3545); }
-
 /* Панель инструментов */
 /* Фильтры в сворачиваемом блоке — карточка как .sched-help
    («Поддерживаемые форматы и подсказки»): шапка-summary с фоном,
@@ -570,11 +518,6 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
 
 /* Адаптивность */
 @media (max-width: 768px) {
-  .svc-kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
-  .svc-kpi-card { padding: 0.75rem; }
-  .svc-kpi-label { font-size: 0.7rem; }
-  .svc-kpi-value { font-size: 1.25rem; }
-  .svc-kpi-note { font-size: 0.75rem; }
   .svc-toolbar-main, .svc-toolbar-actions { flex-direction: column; align-items: stretch; }
   .svc-toolbar-main > * { width: 100%; }
   .svc-diff-toolbar { flex-direction: column; align-items: stretch; }
@@ -604,14 +547,6 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   .svc-list-row { grid-template-columns: 1fr; gap: 0.5rem; }
   .svc-time { min-width: auto; }
   .svc-right { text-align: left; }
-}
-
-/* Компактные KPI на маленьких телефонах: 3 колонки вместо 2 */
-@media (max-width: 480px) {
-  .svc-kpi-grid { grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
-  .svc-kpi-card { padding: 0.5rem 0.25rem; }
-  .svc-kpi-value { font-size: 1.1rem; }
-  .svc-kpi-label { font-size: 0.65rem; }
 }
 
 /* Тосты — общие из app.css (.mrs-toast-msg через window.mrsToast). */
