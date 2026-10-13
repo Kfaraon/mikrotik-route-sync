@@ -647,11 +647,15 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
 | `GET` | `/api/v1/progress` | Активные синхронизации: фаза и процент (in-memory) |
 | `GET` | `/api/v1/services` | Список сервисов (расписание, число записей, overrides) |
 | `POST` | `/api/v1/services` | Добавить сервис |
+| `GET` | `/api/v1/services/add-status` | Прогресс фонового добавления сервиса (`?name=`) |
 | `DELETE` | `/api/v1/services/{name}` | Удалить сервис (`?purge=true` — удалить и его записи) |
 | `POST` | `/api/v1/services/sync` | Запустить синхронизацию набора сервисов (асинхронно) |
 | `POST` | `/api/v1/services/{name}/sync` | Синхронизировать один сервис |
 | `POST` | `/api/v1/services/{name}/dry-run` | Расчёт diff без применения |
 | `POST` | `/api/v1/services/{name}/recommend` | Проверка сервиса за CDN; тело `{"apply": true}` — применить (purge + `method: cdn`) |
+| `POST` | `/api/v1/services/{name}/blockcheck` | Проверить домены сервиса по RU-блоклисту |
+| `POST` | `/api/v1/services/{name}/refresh-preset` | Пересчитать домены из пресета (diff, без применения) |
+| `POST` | `/api/v1/services/{name}/suggest-domains` | Подбор смежных доменов через urlscan (советник) |
 | `GET` | `/api/v1/presets` | Каталог пресетов, состояние зеркал (`mirror`, `upstream`) и доступность подбора |
 | `GET` | `/api/v1/presets/match` | Какие пресеты содержат домен (`?domain=`) |
 | `POST` | `/api/v1/presets/refresh` | Докачка зеркал (`?source=` — `ru`, `upstream` или `all`) |

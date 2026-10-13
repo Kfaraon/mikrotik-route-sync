@@ -247,6 +247,32 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/services/add-status:
+    get:
+      summary: Прогресс фонового добавления сервиса
+      description: >-
+        In-memory карта «сервис → текст текущего шага» (резолв доменов и т. п.),
+        заполняется при POST /api/v1/services и очищается по завершении. Пустой
+        detail и active=false — добавление не идёт.
+      tags: [Services]
+      parameters:
+        - { name: name, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Состояние добавления
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      active: { type: boolean }
+                      detail: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /api/v1/services/{name}/sync:
     post:
       summary: Синхронизировать один сервис (синхронно)
@@ -382,6 +408,152 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/services/{name}/blockcheck:
+    post:
+      summary: Проверить домены сервиса по RU-блоклисту (rublock)
+      description: >-
+        Сверяет домены override сервиса со скачанным RU-зеркалом (rublock).
+        Доступен только для сервисов из конфига; сервис без доменов даёт пустой
+        список. Кэшируется по версии зеркала.
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Заблокированные домены
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      service: { type: string }
+                      blocked: { type: array, items: { type: string } }
+                      blocked_count: { type: integer }
+                      total: { type: integer }
+                      cached: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502':
+          description: Блоклист недоступен (RU-зеркало не скачано)
+
+  /api/v1/services/{name}/refresh-preset:
+    post:
+      summary: Пересчитать домены сервиса из пресета, сохранив ручные
+      description: >-
+        Отвечает diff'ом (added/removed); маршруты не меняются — для применения
+        нужен обычный sync/dry-run. Пустое тело — привязанный пресет.
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preset: { type: string, description: slug пресета; пусто — привязанный }
+                force: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Diff пересчёта (без применения)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      service: { type: string }
+                      added: { type: array, items: { type: string } }
+                      removed: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/services/{name}/suggest-domains:
+    post:
+      summary: Подбор смежных доменов сервиса через urlscan
+      description: >-
+        Советник: возвращает только кандидатов и диагностику, ничего не пишет.
+        Пустое тело — дефолтное число сканов.
+      tags: [Services]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scans: { type: integer }
+      responses:
+        '200':
+          description: Кандидаты и диагностика подбора
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
+                      reason: { type: string }
+                      source: { type: string }
+                      query: { type: string }
+                      mode: { type: string, enum: [off, key, anonymous] }
+                      scans_considered: { type: integer }
+                      cached: { type: boolean }
+                      fetched_at: { type: string, format: date-time }
+                      candidates:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            domain: { type: string }
+                            apex: { type: string }
+                            scans: { type: integer }
+                            requests: { type: integer }
+                            confidence: { type: string, enum: [high, medium, low] }
+                      excluded:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            domain: { type: string }
+                            reason: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/presets:
     get:
       summary: Каталог пресетов и состояние зеркал (mirror, upstream)
@@ -480,6 +652,56 @@ paths:
           description: Обновление этого источника уже выполняется
         '502':
           description: Источник недоступен или ответ битый
+
+  /api/v1/presets/create-from-upstream:
+    post:
+      summary: Создать пресет из файла v2fly-зеркала (runtime-каталог)
+      description: >-
+        Берёт файл data/<slug> из скачанного v2fly-зеркала с полной картой
+        соседних include:, сохраняет как кастомный пресет <slug>.yaml в
+        runtime-каталоге (DiskDir) и сбрасывает кэш. Ответ содержит предупреждение,
+        если список урезан до presets.MaxDomains.
+      tags: [Presets]
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug: { type: string, description: 'имя файла данных v2fly (a-z0-9_-)' }
+      responses:
+        '200':
+          description: Пресет создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      slug: { type: string }
+                      title: { type: string }
+                      domains: { type: integer }
+                      method: { type: string }
+                      source: { type: string }
+                      truncated: { type: integer }
+                      showcase: { type: string }
+                      warning: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: v2fly-зеркало не скачано или файл slug не найден
+        '500':
+          description: Ошибка записи пресета
 
   /api/v1/schedules:
     get:
