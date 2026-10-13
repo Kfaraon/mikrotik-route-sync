@@ -27,83 +27,101 @@
   </nav>
 
   <main class="wrap schedule-page" id="schedule-page" data-global="{{ .Global }}">
-    <section class="sched-summary" aria-label="Сводка по расписаниям">
-      <div class="summary-card">
-        <span>Сервисов</span>
-        <strong id="sum-total">0</strong>
-      </div>
-      <div class="summary-card">
-        <span>Показано</span>
-        <strong id="sum-visible">0</strong>
-      </div>
-      <div class="summary-card">
-        <span>Авто</span>
-        <strong id="sum-auto">0</strong>
-      </div>
-      <div class="summary-card">
-        <span>Вручную</span>
-        <strong id="sum-manual">0</strong>
-      </div>
-      <div class="summary-card">
-        <span>Отключено</span>
-        <strong id="sum-disabled">0</strong>
-      </div>
-      <div class="summary-card">
-        <span>Переопределение</span>
-        <strong id="sum-override">0</strong>
-      </div>
-      <div class="summary-card">
-        <span>Групп</span>
-        <strong id="sum-groups">0</strong>
+    <!-- Чипы-фильтры: клик применяет фильтр, повторный — сбрасывает на «Все». -->
+    <section class="sched-chips" id="sched-chips" aria-label="Фильтр по состоянию расписания">
+      <button type="button" class="sched-chip active" data-filter="all" aria-pressed="true">
+        Все <strong id="sum-total">0</strong>
+      </button>
+      <button type="button" class="sched-chip" data-filter="auto" aria-pressed="false">
+        Авто <strong id="sum-auto">0</strong>
+      </button>
+      <button type="button" class="sched-chip" data-filter="manual" aria-pressed="false">
+        Вручную <strong id="sum-manual">0</strong>
+      </button>
+      <button type="button" class="sched-chip" data-filter="disabled" aria-pressed="false">
+        Отключено <strong id="sum-disabled">0</strong>
+      </button>
+      <button type="button" class="sched-chip" data-filter="override" aria-pressed="false">
+        Своих расписаний <strong id="sum-override">0</strong>
+      </button>
+    </section>
+
+    <section class="sched-global-card">
+      <div class="global-row" data-scope="global">
+        <div class="global-label">
+          <span class="scope-title">Глобальное расписание</span>
+          <code class="global-value" id="global-value">{{ .Global }}</code>
+        </div>
+        <button type="button" class="btn btn-secondary scope-edit-btn">Изменить</button>
+        <div class="scope-editor" hidden>
+          <select class="preset" aria-label="Быстрый пресет для глобального расписания">
+            <option value="">— пресет —</option>
+            <option value="manual">Вручную</option>
+            <option value="disabled">Отключено</option>
+            <option value="every 1h">Каждый час</option>
+            <option value="every 6h">Каждые 6 часов</option>
+            <option value="every 12h">Каждые 12 часов</option>
+            <option value="every 1d">Каждый день</option>
+            <option value="daily at 03:00">Ежедневно в 03:00</option>
+            <option value="weekly on sunday at 04:00">Еженедельно, воскресенье 04:00</option>
+            <option value="custom">Своё…</option>
+          </select>
+          <input type="text" class="scope-input" value="{{ .Global }}" aria-label="Глобальное расписание" autocomplete="off">
+          <div class="scope-buttons">
+            <button type="button" class="btn btn-primary scope-save-btn">Сохранить</button>
+            <button type="button" class="btn btn-secondary scope-cancel-btn">Отмена</button>
+          </div>
+          <div class="scope-status" aria-live="polite"></div>
+        </div>
       </div>
     </section>
 
-    <details class="sched-filter-disclosure" id="schedFilterDisclosure">
-      <summary>Фильтры</summary>
-    <section class="sched-toolbar" aria-label="Фильтры расписаний">
-      <div class="toolbar-main">
-        <input
-          type="search"
-          id="sched-search"
-          placeholder="Поиск: сервис, группа, расписание"
-          autocomplete="off"
-        >
-
-        <select id="sched-filter" aria-label="Фильтр">
-          <option value="all">Все</option>
-          <option value="auto">Автоматические</option>
-          <option value="manual">Вручную</option>
-          <option value="disabled">Отключённые</option>
-          <option value="override">С переопределением</option>
-          <option value="inherited">Наследуемые</option>
-          <option value="grouped">В группах</option>
-        </select>
-
-        <select id="sched-sort" aria-label="Сортировка">
-          <option value="name">По сервису</option>
-          <option value="schedule">По расписанию</option>
-          <option value="next">По ближайшему запуску</option>
-          <option value="source">По источнику</option>
-        </select>
+    {{if .Groups}}
+    <details class="sched-groups" id="scope-groups">
+      <summary>Группы ({{ len .Groups }}): расписание можно менять, состав — только чтение</summary>
+      <div class="sched-groups-body">
+        {{range .Groups}}
+        <div class="global-row group-row" data-scope="group" data-group="{{ .Name }}">
+          <div class="global-label">
+            <span class="scope-title">Группа <code>{{ .Name }}</code></span>
+            <span class="muted small">{{ len .Services }} сервис(ов): {{ range $i, $s := .Services }}{{if $i}}, {{end}}{{$s}}{{end}}</span>
+            <code class="group-value">{{ .Schedule }}</code>
+          </div>
+          <button type="button" class="btn btn-secondary scope-edit-btn">Изменить</button>
+          <div class="scope-editor" hidden>
+            <select class="preset" aria-label="Быстрый пресет для группы {{ .Name }}">
+              <option value="">— пресет —</option>
+              <option value="manual">Вручную</option>
+              <option value="disabled">Отключено</option>
+              <option value="every 1h">Каждый час</option>
+              <option value="every 6h">Каждые 6 часов</option>
+              <option value="every 12h">Каждые 12 часов</option>
+              <option value="every 1d">Каждый день</option>
+              <option value="daily at 03:00">Ежедневно в 03:00</option>
+              <option value="weekly on sunday at 04:00">Еженедельно, воскресенье 04:00</option>
+              <option value="custom">Своё…</option>
+            </select>
+            <input type="text" class="scope-input" value="{{ .Schedule }}" aria-label="Расписание группы {{ .Name }}" autocomplete="off">
+            <div class="scope-buttons">
+              <button type="button" class="btn btn-primary scope-save-btn">Сохранить</button>
+              <button type="button" class="btn btn-secondary scope-cancel-btn">Отмена</button>
+            </div>
+            <div class="scope-status" aria-live="polite"></div>
+          </div>
+        </div>
+        {{end}}
       </div>
-
-      <div class="toolbar-actions">
-        <button type="button" id="sched-copy" class="btn btn-outline">Скопировать JSON</button>
-        <button type="button" id="sched-reset-filters" class="btn btn-secondary">Сбросить фильтры</button>
-      </div>
-    </section>
     </details>
+    {{end}}
 
     <details class="sched-help">
       <summary>Поддерживаемые форматы и подсказки</summary>
-      <p class="global-schedule">Глобальное расписание: <code>{{ .Global }}</code></p>
       <ul>
         <li><code>every 30m</code>, <code>every 6h</code>, <code>every 1d</code>, <code>every 1w</code> — интервал.</li>
         <li><code>daily at 03:00</code> — ежедневно в указанное время.</li>
         <li><code>weekly on sunday at 04:00</code> — еженедельно в указанный день.</li>
         <li><code>0 */6 * * *</code> — cron из 5 полей.</li>
-        <li><code>manual</code> — только вручную.</li>
-        <li><code>disabled</code> — синхронизация отключена.</li>
+        <li><code>manual</code> — только вручную, <code>disabled</code> — синхронизация отключена.</li>
         <li>Пустое значение override — наследовать расписание группы или глобальное расписание.</li>
       </ul>
       <p class="muted small">
@@ -111,14 +129,29 @@
       </p>
     </details>
 
+    <section class="sched-toolbar" aria-label="Поиск и сортировка">
+      <input
+        type="search"
+        id="sched-search"
+        placeholder="Поиск: сервис, группа, расписание"
+        autocomplete="off"
+      >
+      <select id="sched-sort" aria-label="Сортировка">
+        <option value="name">По сервису</option>
+        <option value="schedule">По расписанию</option>
+        <option value="next">По ближайшему запуску</option>
+        <option value="source">По источнику</option>
+      </select>
+      <span class="sched-visible muted small" id="sched-visible"></span>
+      <button type="button" id="sched-reset-filters" class="btn btn-secondary">Сбросить</button>
+    </section>
+
     <article class="sched-table-wrap">
       <table class="sched-table mrs-cards">
         <thead>
           <tr>
             <th>Сервис</th>
-            <th>Эффективное расписание</th>
-            <th>Источник</th>
-            <th>Группа</th>
+            <th>Расписание</th>
             <th>Изменить</th>
           </tr>
         </thead>
@@ -131,70 +164,57 @@
             data-override="{{ .ServiceOv }}"
             data-group="{{ .Group }}"
             data-group-schedule="{{ .GroupSched }}"
+            data-source="{{ .Source }}"
           >
             <td data-label="Сервис">
               <div class="cell-service">
                 <span class="service-name">{{ .Name }}</span>
-                {{if .ServiceOv}}<span class="badge badge-override">переопределение</span>{{end}}
+                <span class="badge source-badge"></span>
               </div>
             </td>
 
             <td data-label="Расписание">
               <div class="cell-schedule">
-                <code class="effective">{{ .Effective }}</code>
+                <code class="effective"></code>
                 <div class="schedule-meta">
                   <span class="badge next-badge"></span>
                 </div>
               </div>
             </td>
 
-            <td data-label="Источник">
-              <span class="badge source-badge"></span>
-            </td>
-
-            <td data-label="Группа">
-              <div class="cell-group">
-                {{if .Group}}
-                  <span class="badge badge-group">{{ .Group }}</span>
-                  {{if .GroupSched}}
-                    <div class="muted small group-sched">{{ .GroupSched }}</div>
-                  {{end}}
-                {{else}}
-                  <span class="muted">—</span>
-                {{end}}
-              </div>
-            </td>
-
             <td data-label="Изменить">
               <div class="edit-block">
-                <select class="preset" aria-label="Быстрый пресет для {{ .Name }}">
-                  <option value="">— пресет —</option>
-                  <option value="inherit">наследовать</option>
-                  <option value="manual">Вручную</option>
-                  <option value="disabled">Отключено</option>
-                  <option value="every 1h">Каждый час</option>
-                  <option value="every 6h">Каждые 6 часов</option>
-                  <option value="every 12h">Каждые 12 часов</option>
-                  <option value="daily at 03:00">Ежедневно в 03:00</option>
-                  <option value="weekly on sunday at 04:00">Еженедельно в воскресенье в 04:00</option>
-                  <option value="custom">Своё…</option>
-                </select>
+                <button type="button" class="btn btn-secondary edit-open-btn" aria-expanded="false">Изменить</button>
+                <div class="edit-panel" hidden>
+                  <select class="preset" aria-label="Быстрый пресет для {{ .Name }}">
+                    <option value="">— пресет —</option>
+                    <option value="inherit">наследовать</option>
+                    <option value="manual">Вручную</option>
+                    <option value="disabled">Отключено</option>
+                    <option value="every 1h">Каждый час</option>
+                    <option value="every 6h">Каждые 6 часов</option>
+                    <option value="every 12h">Каждые 12 часов</option>
+                    <option value="daily at 03:00">Ежедневно в 03:00</option>
+                    <option value="weekly on sunday at 04:00">Еженедельно, воскресенье 04:00</option>
+                    <option value="custom">Своё…</option>
+                  </select>
 
-                <input
-                  type="text"
-                  class="schedule-input"
-                  value="{{ .ServiceOv }}"
-                  placeholder="{{ .Effective }}"
-                  aria-label="Переопределение расписания для {{ .Name }}"
-                  autocomplete="off"
-                >
+                  <input
+                    type="text"
+                    class="schedule-input"
+                    value="{{ .ServiceOv }}"
+                    placeholder="{{ .Effective }}"
+                    aria-label="Переопределение расписания для {{ .Name }}"
+                    autocomplete="off"
+                  >
 
-                <div class="edit-buttons">
-                  <button type="button" class="btn btn-primary save-btn">Сохранить</button>
-                  <button type="button" class="btn btn-secondary reset-btn">Сбросить</button>
+                  <div class="edit-buttons">
+                    <button type="button" class="btn btn-primary save-btn">Сохранить</button>
+                    <button type="button" class="btn btn-secondary reset-btn">Сбросить</button>
+                  </div>
+
+                  <div class="row-status" aria-live="polite"></div>
                 </div>
-
-                <div class="row-status" aria-live="polite"></div>
               </div>
             </td>
           </tr>

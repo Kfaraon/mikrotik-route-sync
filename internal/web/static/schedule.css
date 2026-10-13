@@ -1,86 +1,58 @@
 /* Страница расписаний */
-/* Сводка */
-.sched-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 1rem;
-  margin-bottom: 2rem;
+/* Чипы-фильтры (заменяют 7 карточек сводки): клик = фильтр */
+.sched-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
 }
 
-.summary-card {
+.sched-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.9rem;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.sched-chip:hover {
+  border-color: var(--primary);
+}
+
+.sched-chip strong {
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.sched-chip.active {
+  background: var(--badge-auto-bg);
+  border-color: var(--primary);
+  color: var(--badge-auto-text);
+}
+
+.sched-chip.active strong {
+  color: var(--badge-auto-text);
+}
+
+/* Глобальное расписание — всегда видимая карточка */
+.sched-global-card {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem;
-  text-align: center;
   box-shadow: 0 1px 3px var(--shadow);
-  transition: all var(--transition);
+  margin-bottom: 1.5rem;
+  padding: 0 1rem;
 }
 
-.summary-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px var(--shadow);
-}
-
-.summary-card span {
-  display: block;
-  font-size: 0.875rem;
-  color: var(--muted);
-  margin-bottom: 0.5rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.summary-card strong {
-  display: block;
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: var(--text);
-}
-
-@media (max-width: 768px) {
-  .sched-summary {
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .summary-card {
-    padding: 0.6rem 0.5rem;
-  }
-
-  .summary-card span {
-    font-size: 0.7rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .summary-card strong {
-    font-size: 1.25rem;
-  }
-}
-
-@media (max-width: 480px) {
-  .sched-summary {
-    grid-template-columns: repeat(3, 1fr);
-  }
-
-  .summary-card {
-    padding: 0.5rem 0.25rem;
-  }
-
-  .summary-card span {
-    font-size: 0.65rem;
-  }
-
-  .summary-card strong {
-    font-size: 1.1rem;
-  }
-}
-
-/* Фильтры в сворачиваемом блоке — карточка как .sched-help
-   («Поддерживаемые форматы и подсказки»): шапка-summary с фоном,
-   тулбар внутри без собственной рамки/тени */
-.sched-filter-disclosure {
+/* Группы — сворачиваемый блок (состав только чтение) */
+.sched-groups {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -88,7 +60,7 @@
   overflow: hidden;
 }
 
-.sched-filter-disclosure > summary {
+.sched-groups > summary {
   padding: 1rem;
   cursor: pointer;
   font-weight: 600;
@@ -100,56 +72,112 @@
   align-items: center;
 }
 
-.sched-filter-disclosure > summary:hover {
+.sched-groups > summary:hover {
   background: var(--border);
 }
 
-.sched-filter-disclosure .sched-toolbar {
-  margin-bottom: 0;
-  margin-top: 0;
-  background: none;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
+.sched-groups-body {
+  padding: 0.5rem 1rem 1rem;
 }
 
-/* Панель инструментов */
+.global-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.global-row:first-child {
+  border-top: none;
+}
+
+.global-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 220px;
+}
+
+.scope-title {
+  font-weight: 600;
+}
+
+.global-value,
+.group-value {
+  font-size: 0.95rem;
+  color: var(--code-text);
+  background: var(--code-bg);
+  border-radius: var(--radius);
+  padding: 0.1rem 0.4rem;
+  align-self: flex-start;
+}
+
+.scope-editor {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.scope-editor[hidden] {
+  display: none;
+}
+
+.scope-editor .scope-input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.scope-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.scope-status {
+  flex-basis: 100%;
+  font-size: 0.875rem;
+  min-height: 1.1rem;
+}
+
+.scope-status.ok { color: var(--success); }
+.scope-status.err { color: var(--danger); }
+.scope-status.muted { color: var(--muted); }
+
+/* Панель поиска/сортировки */
 .sched-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1rem;
   margin-bottom: 1.5rem;
   box-shadow: 0 1px 3px var(--shadow);
-  transition: background var(--transition), border-color var(--transition);
 }
 
-.toolbar-main,
-.toolbar-actions {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.toolbar-main {
-  margin-bottom: 1rem;
-}
-
-.toolbar-main > * {
+.sched-toolbar #sched-search {
   flex: 1;
-  min-width: 150px;
+  min-width: 180px;
+}
+
+.sched-visible {
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 @media (max-width: 768px) {
-  .toolbar-main,
-  .toolbar-actions {
+  .sched-toolbar {
     flex-direction: column;
     align-items: stretch;
   }
-
-  .toolbar-main > * {
-    width: 100%;
+  .sched-visible {
+    margin-left: 0;
   }
 }
 
@@ -174,11 +202,6 @@
 
 .sched-help summary:hover {
   background: var(--border);
-}
-
-.sched-help .global-schedule {
-  padding: 1rem 1.5rem 0;
-  margin: 0;
 }
 
 .sched-help ul {
@@ -308,26 +331,31 @@
   align-items: center;
 }
 
-.cell-group {
+/* Блок редактирования (свёрнут по умолчанию) */
+.edit-block {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.5rem;
+  min-width: 150px;
 }
 
-.group-sched {
-  font-size: 0.875rem;
+.edit-open-btn {
+  align-self: flex-start;
 }
 
-/* Блок редактирования */
-.edit-block {
+.edit-panel {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   min-width: 250px;
 }
 
-.edit-block select,
-.edit-block input {
+.edit-panel[hidden] {
+  display: none;
+}
+
+.edit-panel select,
+.edit-panel input {
   width: 100%;
 }
 
@@ -362,6 +390,10 @@
 
 @media (max-width: 768px) {
   .edit-block {
+    min-width: auto;
+  }
+
+  .edit-panel {
     min-width: auto;
   }
 }

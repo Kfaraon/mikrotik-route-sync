@@ -106,6 +106,82 @@ suggest:
 	return srv, cfg
 }
 
+// newTestServerWithGroups — как newTestServer, но сервис testsvc входит в
+// группу social (для проверки групповых расписаний и панели на странице).
+func newTestServerWithGroups(t *testing.T) (*Server, *config.Config) {
+	t.Helper()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := `
+timezone: UTC
+cache_path: ` + filepath.Join(dir, "cache.db") + `
+mikrotik:
+  host: 127.0.0.1
+  port: 9
+  username: api
+  password: x
+  timeout: 1s
+firewall:
+  address_list: TO-VPN
+retry:
+  max_attempts: 1
+  base_delay: 1ms
+  max_delay: 1ms
+safety:
+  min_prefix_v4: 8
+web:
+  enabled: true
+  listen: 127.0.0.1:0
+  allowed_cidrs: [127.0.0.0/8]
+  auth:
+    enabled: true
+    username: admin
+    password: secret-pass
+  session_timeout: 1h
+  csrf_enabled: true
+schedules:
+  global: "every 6h"
+  groups:
+    social:
+      schedule: "every 1h"
+      services: [testsvc]
+services: [testsvc]
+suggest:
+  v2fly_enabled: true
+  ru_enabled: true
+  urlscan_mode: off
+  sources: [preset, urlscan]
+`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cache, err := storage.Open(filepath.Join(dir, "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s, err := core.NewSyncer(cfg, log, cache, &notifier.NoopNotifier{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(cfg, s, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.pingFn = func(ctx context.Context) error {
+		return errors.New("mikrotik down in tests")
+	}
+	return srv, cfg
+}
+
 // H11: ошибка шаблона не должна отдавать 200 с обрывком — рендер в буфер,
 // затем честный 500. Подменяем шаблон на битый (несуществующая функция).
 func TestRenderTemplateErrorIs500(t *testing.T) {
@@ -990,6 +1066,115 @@ func TestAPIUpdateSchedule(t *testing.T) {
 		map[string]any{"schedule": "every 1h"}, "")
 	if st != http.StatusBadRequest {
 		t.Fatalf("bad name: want 400, got %d", st)
+	}
+}
+
+// TestAPIUpdateGlobalSchedule — PUT /api/v1/schedules/global.
+func TestAPIUpdateGlobalSchedule(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	token := csrfToken(t, client, ts.URL)
+
+	st, env := doJSON(client, ts.URL, "PUT", "/api/v1/schedules/global", token,
+		map[string]any{"schedule": "every 12h"}, "")
+	if st != http.StatusOK || !env.OK {
+		t.Fatalf("global update: %d %+v", st, env)
+	}
+	if got := cfg.Schedules.Global; got != "every 12h" {
+		t.Fatalf("global not applied: %q", got)
+	}
+	// Сервис без override наследует новое глобальное расписание.
+	if got := cfg.EffectiveSchedule("testsvc"); got != "every 12h" {
+		t.Fatalf("effective not inherited: %q", got)
+	}
+
+	// Статический /global не должен перехватываться /schedules/{service}.
+	st, _ = doJSON(client, ts.URL, "PUT", "/api/v1/schedules/global", token,
+		map[string]any{"schedule": "sometimes"}, "")
+	if st != http.StatusBadRequest {
+		t.Fatalf("bad global spec: want 400, got %d", st)
+	}
+	if got := cfg.Schedules.Global; got != "every 12h" {
+		t.Fatalf("rejected spec must not change global: %q", got)
+	}
+}
+
+// TestAPIUpdateGroupSchedule — PUT /api/v1/schedules/group/{group}.
+func TestAPIUpdateGroupSchedule(t *testing.T) {
+	srv, cfg := newTestServerWithGroups(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	token := csrfToken(t, client, ts.URL)
+
+	st, env := doJSON(client, ts.URL, "PUT", "/api/v1/schedules/group/social", token,
+		map[string]any{"schedule": "daily at 03:00"}, "")
+	if st != http.StatusOK || !env.OK {
+		t.Fatalf("group update: %d %+v", st, env)
+	}
+	if got := cfg.Schedules.Groups["social"].Schedule; got != "daily at 03:00" {
+		t.Fatalf("group not applied: %q", got)
+	}
+	if got := cfg.EffectiveSchedule("testsvc"); got != "daily at 03:00" {
+		t.Fatalf("effective via group: %q", got)
+	}
+
+	// Двухсегментный /schedules/group/{group} не конфликтует с
+	// /schedules/{service}: неизвестная группа — 404, не 400 об имени.
+	st, _ = doJSON(client, ts.URL, "PUT", "/api/v1/schedules/group/nosuch", token,
+		map[string]any{"schedule": "every 1h"}, "")
+	if st != http.StatusNotFound {
+		t.Fatalf("unknown group: want 404, got %d", st)
+	}
+
+	// Невалидное расписание группы — 400, состояние не меняется.
+	st, _ = doJSON(client, ts.URL, "PUT", "/api/v1/schedules/group/social", token,
+		map[string]any{"schedule": "sometimes"}, "")
+	if st != http.StatusBadRequest {
+		t.Fatalf("bad group spec: want 400, got %d", st)
+	}
+	if got := cfg.Schedules.Groups["social"].Schedule; got != "daily at 03:00" {
+		t.Fatalf("rejected spec must not change group: %q", got)
+	}
+}
+
+// TestPageSchedulesGroupAndGlobalPanel — страница отдаёт блок global/групп
+// и детерминированный источник расписания сервиса.
+func TestPageSchedulesGroupAndGlobalPanel(t *testing.T) {
+	srv, _ := newTestServerWithGroups(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, page := doAuth(client, ts.URL, "GET", "/schedules", "", nil)
+	for _, want := range []string{
+		`sched-chips`,
+		`id="global-value"`,
+		`data-scope="global"`,
+		`data-scope="group"`,
+		`data-group="social"`,
+		`data-source="group"`,
+		`id="sched-visible"`,
+		`sched-groups`,
+		`состав — только чтение`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("schedules page missing %q", want)
+		}
+	}
+	// Старые колонки/блоки убраны.
+	for _, gone := range []string{`sched-summary`, `id="sched-filter"`, `cell-group`, `Группа</th>`} {
+		if strings.Contains(page, gone) {
+			t.Fatalf("schedules page still has %q", gone)
+		}
+	}
+	// Ровно три колонки: Сервис · Расписание · Изменить.
+	if n := strings.Count(page, "<th>"); n != 3 {
+		t.Fatalf("want 3 columns, got %d <th>", n)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -613,6 +614,17 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid service_ids name %q", name)
 		}
 	}
+	// Сервис в нескольких группах с разным расписанием давал бы
+	// недетерминированный EffectiveSchedule (обход map) — ловим на загрузке.
+	groupOf := map[string]string{}
+	for _, gname := range sortedGroupNames(c.Schedules.Groups) {
+		for _, svc := range c.Schedules.Groups[gname].Services {
+			if prev, ok := groupOf[svc]; ok && prev != gname {
+				return fmt.Errorf("service %q is in multiple schedule groups: %s, %s", svc, prev, gname)
+			}
+			groupOf[svc] = gname
+		}
+	}
 	switch c.Suggest.UrlscanMode {
 	case "", "off", "key", "anonymous":
 	default:
@@ -740,7 +752,10 @@ func (c *Config) EffectiveSchedule(service string) string {
 			return s.Schedule
 		}
 	}
-	for _, g := range c.Schedules.Groups {
+	// Группы обходим в алфавитном порядке: map-итерация недетерминирована,
+	// а сервис, попавший в две группы (ошибка конфига), не должен «мигать».
+	for _, gname := range sortedGroupNames(c.Schedules.Groups) {
+		g := c.Schedules.Groups[gname]
 		for _, s := range g.Services {
 			if s == service && g.Schedule != "" {
 				return g.Schedule
@@ -748,6 +763,37 @@ func (c *Config) EffectiveSchedule(service string) string {
 		}
 	}
 	return c.Schedules.Global
+}
+
+// sortedGroupNames возвращает имена групп по алфавиту (детерминированный
+// обход map там, где порядок влияет на результат).
+func sortedGroupNames(groups map[string]GroupConfig) []string {
+	names := make([]string, 0, len(groups))
+	for name := range groups {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// SortedGroupNames — экспорт sortedGroupNames для сборочного кода (web).
+func (c *Config) SortedGroupNames() []string {
+	return sortedGroupNames(c.Schedules.Groups)
+}
+
+// GroupForService возвращает имя группы сервиса и её расписание. Если сервис
+// в нескольких группах, побеждает первая по алфавиту (та же логика, что в
+// EffectiveSchedule) — результат детерминирован.
+func (c *Config) GroupForService(service string) (name, schedule string) {
+	for _, gname := range sortedGroupNames(c.Schedules.Groups) {
+		g := c.Schedules.Groups[gname]
+		for _, s := range g.Services {
+			if s == service {
+				return gname, g.Schedule
+			}
+		}
+	}
+	return "", ""
 }
 
 // ServicesInGroup возвращает список сервисов в группе.

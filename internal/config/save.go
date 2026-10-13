@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// ErrGroupNotFound — группы нет в schedules.groups (запрос к её расписанию).
+var ErrGroupNotFound = errors.New("schedule group not found")
 
 // Save сохраняет текущее состояние Config в файл атомарно.
 func (c *Config) Save() error {
@@ -165,6 +169,29 @@ func (c *Config) ReplaceServiceSchedule(service, spec string) error {
 		c.Schedules.Services = map[string]ServiceSchedule{}
 	}
 	c.Schedules.Services[service] = ServiceSchedule{Schedule: spec}
+	return c.Save()
+}
+
+// ReplaceGlobalSchedule задаёт глобальное расписание и сразу сохраняет файл.
+// Пустая строка = отключить наследуемое по умолчанию (как у сервисов).
+func (c *Config) ReplaceGlobalSchedule(spec string) error {
+	c.Lock()
+	defer c.Unlock()
+	c.Schedules.Global = spec
+	return c.Save()
+}
+
+// ReplaceGroupSchedule задаёт расписание существующей группы и сохраняет
+// файл. Неизвестная группа — ошибка (ErrGroupNotFound).
+func (c *Config) ReplaceGroupSchedule(group, spec string) error {
+	c.Lock()
+	defer c.Unlock()
+	g, ok := c.Schedules.Groups[group]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrGroupNotFound, group)
+	}
+	g.Schedule = spec
+	c.Schedules.Groups[group] = g
 	return c.Save()
 }
 

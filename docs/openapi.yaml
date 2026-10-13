@@ -713,6 +713,66 @@ paths:
         '200': { $ref: '#/components/responses/OK' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/v1/schedules/global:
+    put:
+      summary: Изменить глобальное расписание
+      description: >-
+        Форматы: cron 5 полей ("0 */6 * * *"), "every 6h", "daily at 03:00",
+        "weekly on sunday at 04:00", "manual", "disabled". Пустая строка
+        снимает наследуемое по умолчанию расписание. Маршрут статический,
+        поэтому не перехватывается `/api/v1/schedules/{service}`.
+      tags: [Schedules]
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [schedule]
+              properties:
+                schedule: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/schedules/group/{group}:
+    put:
+      summary: Изменить расписание группы
+      description: >-
+        Состав группы не меняется — только расписание. Те же форматы, что и у
+        расписания сервиса, плюс пустая строка (наследовать глобальное).
+      tags: [Schedules]
+      parameters:
+        - name: group
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [schedule]
+              properties:
+                schedule: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Группы нет в schedules.groups
+
   /api/v1/schedules/{service}:
     put:
       summary: Изменить расписание сервиса

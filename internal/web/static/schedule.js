@@ -11,21 +11,21 @@
     : [];
 
   var search = document.getElementById("sched-search");
-  var filter = document.getElementById("sched-filter");
   var sort = document.getElementById("sched-sort");
-  var copyBtn = document.getElementById("sched-copy");
+  var chips = document.getElementById("sched-chips");
   var resetFiltersBtn = document.getElementById("sched-reset-filters");
   var empty = document.getElementById("sched-empty");
+  var visibleEl = document.getElementById("sched-visible");
 
   var summaryEls = {
     total: document.getElementById("sum-total"),
-    visible: document.getElementById("sum-visible"),
     auto: document.getElementById("sum-auto"),
     manual: document.getElementById("sum-manual"),
     disabled: document.getElementById("sum-disabled"),
-    override: document.getElementById("sum-override"),
-    groups: document.getElementById("sum-groups")
+    override: document.getElementById("sum-override")
   };
+
+  var activeFilter = "all";
 
   var weekdays = {
     sunday: 0,
@@ -271,16 +271,6 @@
     return "через " + day + " дн";
   }
 
-  function sourceForRow(row) {
-    var override = normalizeSpec(row.getAttribute("data-override"));
-    if (override) return "service";
-
-    var group = normalizeSpec(row.getAttribute("data-group"));
-    if (group) return "group";
-
-    return "global";
-  }
-
   function effectiveForRow(row) {
     var override = normalizeSpec(row.getAttribute("data-override"));
     if (override) return override;
@@ -292,13 +282,77 @@
     return normalizeSpec(globalSchedule);
   }
 
+  // Потребители читают уже посчитанное эффективное расписание из data-*
+  // (его поддерживает updateRow) — единый источник, без второго расчёта.
+  function rowEffective(row) {
+    return normalizeSpec(row.getAttribute("data-effective"));
+  }
+
+  function sourceForRow(row) {
+    // Та же логика, что на сервере (атрибут data-source — лишь начальная
+    // подсказка): override → своё, группа с непустым расписанием → группа,
+    // иначе глобальное. Пересчитывается при правках, поэтому не «залипает».
+    if (normalizeSpec(row.getAttribute("data-override"))) return "service";
+
+    var group = normalizeSpec(row.getAttribute("data-group"));
+    var groupSchedule = normalizeSpec(row.getAttribute("data-group-schedule"));
+    if (group && groupSchedule) return "group";
+
+    return "global";
+  }
+
+  function renderSourceBadge(row) {
+    var sourceEl = row.querySelector(".source-badge");
+    if (!sourceEl) return;
+
+    var source = sourceForRow(row);
+    var group = normalizeSpec(row.getAttribute("data-group"));
+
+    var labels = {
+      service: "Своё",
+      group: group ? "Группа: " + group : "группа",
+      global: "Глобальное"
+    };
+    var classes = {
+      service: "source-service",
+      group: "source-group",
+      global: "source-global"
+    };
+
+    sourceEl.textContent = labels[source] || source;
+    sourceEl.className = "badge source-badge " + (classes[source] || "");
+
+    // Расписание группы — в подсказке бейджа (отдельной колонки больше нет).
+    if (source === "group") {
+      var gs = normalizeSpec(row.getAttribute("data-group-schedule"));
+      sourceEl.title = gs ? "расписание группы: " + gs : "";
+    } else {
+      sourceEl.removeAttribute("title");
+    }
+  }
+
+  function renderNext(row) {
+    var nextEl = row.querySelector(".next-badge");
+    if (!nextEl) return;
+
+    var eff = rowEffective(row);
+    var next = nextRun(eff);
+
+    if (next) {
+      nextEl.textContent = "≈ " + formatDateTime(next) + " · " + relativeNext(next);
+      nextEl.className = "badge next-badge badge-auto";
+    } else {
+      nextEl.textContent = "";
+      nextEl.className = "badge next-badge";
+    }
+  }
+
   function updateRow(row) {
     var override = normalizeSpec(row.getAttribute("data-override"));
     var eff = effectiveForRow(row);
-    var source = sourceForRow(row);
 
     row.setAttribute("data-effective", eff);
-    row.setAttribute("data-source", source);
+    row.setAttribute("data-source", sourceForRow(row));
 
     var effEl = row.querySelector(".effective");
     if (effEl) {
@@ -306,55 +360,20 @@
       effEl.title = eff || "";
     }
 
-    var nextEl = row.querySelector(".next-badge");
-    if (nextEl) {
-      var next = nextRun(eff);
-      if (next) {
-        nextEl.textContent = "≈ " + formatDateTime(next) + " · " + relativeNext(next);
-        nextEl.className = "badge next-badge badge-auto";
-      } else {
-        nextEl.textContent = "";
-        nextEl.className = "badge next-badge";
-        nextEl.removeAttribute("title");
-      }
-    }
+    renderSourceBadge(row);
+    renderNext(row);
 
-    var sourceEl = row.querySelector(".source-badge");
-    if (sourceEl) {
-      var labels = {
-        service: "переопределение сервиса",
-        group: "группа",
-        global: "глобальное"
-      };
-
-      var classes = {
-        service: "source-service",
-        group: "source-group",
-        global: "source-global"
-      };
-
-      sourceEl.textContent = labels[source] || source;
-      sourceEl.className = "badge source-badge " + (classes[source] || "");
-    }
-
-    var serviceCell = row.querySelector(".cell-service");
-    if (serviceCell) {
-      var badge = serviceCell.querySelector(".badge-override");
-      if (override && !badge) {
-        badge = document.createElement("span");
-        badge.className = "badge badge-override";
-        badge.textContent = "переопределение";
-        serviceCell.appendChild(badge);
-      } else if (!override && badge && badge.parentNode) {
-        badge.parentNode.removeChild(badge);
+    var panel = row.querySelector(".edit-panel");
+    if (panel && panel.hidden) {
+      // Редактор закрыт — просто синхронизируем значения в контролах.
+      var inputHidden = row.querySelector(".schedule-input");
+      if (inputHidden && document.activeElement !== inputHidden) {
+        inputHidden.value = override;
       }
     }
 
     var input = row.querySelector(".schedule-input");
     if (input) {
-      if (document.activeElement !== input) {
-        input.value = override;
-      }
       input.placeholder = eff ? humanSchedule(eff) : "укажите расписание";
     }
 
@@ -380,12 +399,11 @@
       auto: 0,
       manual: 0,
       disabled: 0,
-      override: 0,
-      groups: {}
+      override: 0
     };
 
     rows.forEach(function (row) {
-      var eff = normalizeSpec(row.getAttribute("data-effective")) || effectiveForRow(row);
+      var eff = rowEffective(row);
       var c = classify(eff);
 
       if (c.key === "manual") {
@@ -405,11 +423,6 @@
       if (normalizeSpec(row.getAttribute("data-override"))) {
         counts.override++;
       }
-
-      var group = normalizeSpec(row.getAttribute("data-group"));
-      if (group) {
-        counts.groups[group] = true;
-      }
     });
 
     setText(summaryEls.total, counts.total);
@@ -417,26 +430,29 @@
     setText(summaryEls.manual, counts.manual);
     setText(summaryEls.disabled, counts.disabled);
     setText(summaryEls.override, counts.override);
-    setText(summaryEls.groups, Object.keys(counts.groups).length);
   }
 
   function rowMatches(row) {
     var term = normalizeSpec(search && search.value).toLowerCase();
-    var mode = (filter && filter.value) || "all";
 
     var service = normalizeSpec(row.getAttribute("data-service"));
-    var group = normalizeSpec(row.getAttribute("data-group"));
-    var eff = normalizeSpec(row.getAttribute("data-effective"));
+    var eff = rowEffective(row);
     var override = normalizeSpec(row.getAttribute("data-override"));
-    var source = row.getAttribute("data-source") || sourceForRow(row);
     var c = classify(eff);
 
     if (term) {
-      var hay = [service, group, eff, override].join(" ").toLowerCase();
+      var hay = [
+        service,
+        normalizeSpec(row.getAttribute("data-group")),
+        eff,
+        override
+      ]
+        .join(" ")
+        .toLowerCase();
       if (hay.indexOf(term) === -1) return false;
     }
 
-    if (mode === "auto") {
+    if (activeFilter === "auto") {
       return (
         c.key === "interval" ||
         c.key === "daily" ||
@@ -446,11 +462,9 @@
       );
     }
 
-    if (mode === "manual") return c.key === "manual";
-    if (mode === "disabled") return c.key === "disabled";
-    if (mode === "override") return !!override;
-    if (mode === "inherited") return source !== "service";
-    if (mode === "grouped") return !!group;
+    if (activeFilter === "manual") return c.key === "manual";
+    if (activeFilter === "disabled") return c.key === "disabled";
+    if (activeFilter === "override") return !!override;
 
     return true;
   }
@@ -468,21 +482,21 @@
       }
 
       if (mode === "schedule") {
-        var ae = normalizeSpec(a.getAttribute("data-effective"));
-        var be = normalizeSpec(b.getAttribute("data-effective"));
+        var ae = rowEffective(a);
+        var be = rowEffective(b);
         return ae.localeCompare(be) || as.localeCompare(bs);
       }
 
       if (mode === "source") {
         var order = { service: 0, group: 1, global: 2 };
-        var ao = order[a.getAttribute("data-source")] || 99;
-        var bo = order[b.getAttribute("data-source")] || 99;
+        var ao = order[sourceForRow(a)] || 99;
+        var bo = order[sourceForRow(b)] || 99;
         return (ao - bo) || as.localeCompare(bs);
       }
 
       if (mode === "next") {
-        var an = nextRun(normalizeSpec(a.getAttribute("data-effective")));
-        var bn = nextRun(normalizeSpec(b.getAttribute("data-effective")));
+        var an = nextRun(rowEffective(a));
+        var bn = nextRun(rowEffective(b));
 
         if (!an && !bn) return as.localeCompare(bs);
         if (!an) return 1;
@@ -509,7 +523,7 @@
       if (match) visible++;
     });
 
-    setText(summaryEls.visible, visible);
+    setText(visibleEl, "Показано " + visible + " из " + rows.length);
 
     if (empty) {
       if (rows.length === 0) {
@@ -530,6 +544,55 @@
 
     el.textContent = message || "";
     el.className = "row-status" + (kind ? " " + kind : "");
+  }
+
+  function setChip(filter) {
+    activeFilter = filter || "all";
+    if (!chips) return;
+    var all = chips.querySelectorAll(".sched-chip");
+    Array.prototype.forEach.call(all, function (chip) {
+      var on = chip.getAttribute("data-filter") === activeFilter;
+      chip.classList.toggle("active", on);
+      chip.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+
+  function closeEditors(except) {
+    rows.forEach(function (row) {
+      if (row === except) return;
+      var panel = row.querySelector(".edit-panel");
+      var btn = row.querySelector(".edit-open-btn");
+      if (panel && !panel.hidden) {
+        panel.hidden = true;
+        if (btn) {
+          btn.setAttribute("aria-expanded", "false");
+          btn.textContent = "Изменить";
+        }
+      }
+    });
+  }
+
+  function toggleEditor(row) {
+    var panel = row.querySelector(".edit-panel");
+    var btn = row.querySelector(".edit-open-btn");
+    if (!panel) return;
+
+    var willOpen = panel.hidden;
+    closeEditors(row);
+    panel.hidden = !willOpen;
+
+    if (btn) {
+      btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+      btn.textContent = willOpen ? "Свернуть" : "Изменить";
+    }
+
+    if (willOpen) {
+      var input = row.querySelector(".schedule-input");
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }
   }
 
   function saveSchedule(row, value) {
@@ -586,6 +649,7 @@
           row.classList.remove("saved");
         }, 1400);
 
+        closeEditors();
         showToast("Расписание " + service + " обновлено");
       })
       .catch(function (err) {
@@ -597,51 +661,165 @@
       });
   }
 
-  function fallbackCopy(text) {
-    var ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "-1000px";
-    ta.style.left = "-1000px";
-    ta.style.opacity = "0";
+  // --- Глобальное расписание и группы ---
 
-    document.body.appendChild(ta);
-    ta.select();
-
-    try {
-      document.execCommand("copy");
-      showToast("Скопировано в буфер обмена");
-    } catch (e) {
-      showToast("Не удалось скопировать", true);
-    }
-
-    document.body.removeChild(ta);
+  function scopeKey(scopeRow) {
+    if (scopeRow.getAttribute("data-scope") === "global") return "global";
+    return "group:" + normalizeSpec(scopeRow.getAttribute("data-group"));
   }
 
-  function copyJson() {
-    var payload = rows.map(function (row) {
-      return {
-        service: normalizeSpec(row.getAttribute("data-service")),
-        effective: normalizeSpec(row.getAttribute("data-effective")),
-        override: normalizeSpec(row.getAttribute("data-override")),
-        group: normalizeSpec(row.getAttribute("data-group")),
-        group_schedule: normalizeSpec(row.getAttribute("data-group-schedule")),
-        source: normalizeSpec(row.getAttribute("data-source")),
-        type: classify(normalizeSpec(row.getAttribute("data-effective"))).key
-      };
-    });
+  function scopeValue(scopeRow) {
+    var code = scopeRow.querySelector(".global-value, .group-value");
+    return code ? normalizeSpec(code.textContent) : "";
+  }
 
-    var text = JSON.stringify(payload, null, 2);
+  function setScopeStatus(scopeRow, message, kind) {
+    var el = scopeRow.querySelector(".scope-status");
+    if (!el) return;
+    el.textContent = message || "";
+    el.className = "scope-status" + (kind ? " " + kind : "");
+  }
 
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () {
-        showToast("JSON расписаний скопирован");
-      }).catch(function () {
-        fallbackCopy(text);
-      });
+  function toggleScopeEditor(scopeRow) {
+    var panel = scopeRow.querySelector(".scope-editor");
+    var btn = scopeRow.querySelector(".scope-edit-btn");
+    if (!panel) return;
+
+    var willOpen = panel.hidden;
+    panel.hidden = !willOpen;
+    if (btn) btn.textContent = willOpen ? "Свернуть" : "Изменить";
+
+    if (willOpen) {
+      var input = panel.querySelector(".scope-input");
+      if (input) {
+        input.value = scopeValue(scopeRow);
+        input.focus();
+        input.select();
+      }
+    }
+  }
+
+  function saveScope(scopeRow) {
+    var panel = scopeRow.querySelector(".scope-editor");
+    var input = panel ? panel.querySelector(".scope-input") : null;
+    var spec = normalizeSpec(input ? input.value : "");
+    var scope = scopeRow.getAttribute("data-scope");
+
+    var url;
+    if (scope === "global") {
+      url = "/api/v1/schedules/global";
     } else {
-      fallbackCopy(text);
+      url = "/api/v1/schedules/group/" + encodeURIComponent(
+        normalizeSpec(scopeRow.getAttribute("data-group"))
+      );
+    }
+
+    setScopeStatus(scopeRow, "Сохранение…", "muted");
+
+    fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrf()
+      },
+      credentials: "same-origin",
+      body: JSON.stringify({ schedule: spec })
+    })
+      .then(function (response) {
+        return response.json().then(function (data) {
+          return { ok: response.ok && data && data.ok, status: response.status, data: data };
+        });
+      })
+      .then(function (result) {
+        if (!result.ok) {
+          var msg = result.data && result.data.error ? result.data.error : "HTTP " + result.status;
+          throw new Error(msg);
+        }
+
+        if (scope === "global") {
+          globalSchedule = spec;
+          page.setAttribute("data-global", spec);
+          var gv = document.getElementById("global-value");
+          if (gv) gv.textContent = spec;
+        } else {
+          var code = scopeRow.querySelector(".group-value");
+          if (code) code.textContent = spec;
+          // Обновляем расписание группы у затронутых строк и пересчитываем.
+          var group = normalizeSpec(scopeRow.getAttribute("data-group"));
+          rows.forEach(function (row) {
+            if (normalizeSpec(row.getAttribute("data-group")) === group) {
+              row.setAttribute("data-group-schedule", spec);
+            }
+          });
+        }
+
+        rows.forEach(updateRow);
+        applyViews();
+        updateSummary();
+
+        setScopeStatus(scopeRow, "Сохранено", "ok");
+        closeScopeEditor(scopeRow);
+        showToast("Расписание сохранено");
+      })
+      .catch(function (err) {
+        var msg = err && err.message ? err.message : String(err);
+        setScopeStatus(scopeRow, "Ошибка: " + msg, "err");
+        showToast("Ошибка сохранения: " + msg, true);
+      });
+  }
+
+  function closeScopeEditor(scopeRow) {
+    var panel = scopeRow.querySelector(".scope-editor");
+    var btn = scopeRow.querySelector(".scope-edit-btn");
+    if (panel) panel.hidden = true;
+    if (btn) btn.textContent = "Изменить";
+  }
+
+  function bindScope(scopeRow) {
+    var editBtn = scopeRow.querySelector(".scope-edit-btn");
+    var saveBtn = scopeRow.querySelector(".scope-save-btn");
+    var cancelBtn = scopeRow.querySelector(".scope-cancel-btn");
+    var preset = scopeRow.querySelector(".preset");
+    var input = scopeRow.querySelector(".scope-input");
+
+    if (editBtn) {
+      editBtn.addEventListener("click", function () {
+        toggleScopeEditor(scopeRow);
+      });
+    }
+
+    if (preset && input) {
+      preset.addEventListener("change", function () {
+        var v = preset.value;
+        if (v === "custom") {
+          input.focus();
+          return;
+        }
+        if (v === "") return;
+        input.value = v;
+      });
+    }
+
+    if (input) {
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          saveScope(scopeRow);
+        }
+      });
+    }
+
+    if (saveBtn) {
+      saveBtn.addEventListener("click", function () {
+        saveScope(scopeRow);
+      });
+    }
+
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", function () {
+        closeScopeEditor(scopeRow);
+        setScopeStatus(scopeRow, "", "");
+      });
     }
   }
 
@@ -650,6 +828,14 @@
     var input = row.querySelector(".schedule-input");
     var saveBtn = row.querySelector(".save-btn");
     var resetBtn = row.querySelector(".reset-btn");
+    var openBtn = row.querySelector(".edit-open-btn");
+
+    if (openBtn) {
+      openBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        toggleEditor(row);
+      });
+    }
 
     if (preset && input) {
       preset.addEventListener("change", function () {
@@ -714,8 +900,19 @@
       });
     }
 
-    if (filter) {
-      filter.addEventListener("change", applyViews);
+    if (chips) {
+      chips.addEventListener("click", function (e) {
+        var chip = e.target.closest ? e.target.closest(".sched-chip") : null;
+        if (!chip) return;
+        var wanted = chip.getAttribute("data-filter");
+        // Повторный клик по активному чипу (кроме «Все») — сброс на «Все».
+        if (wanted === activeFilter && wanted !== "all") {
+          setChip("all");
+        } else {
+          setChip(wanted);
+        }
+        applyViews();
+      });
     }
 
     if (sort) {
@@ -725,14 +922,10 @@
     if (resetFiltersBtn) {
       resetFiltersBtn.addEventListener("click", function () {
         if (search) search.value = "";
-        if (filter) filter.value = "all";
         if (sort) sort.value = "name";
+        setChip("all");
         applyViews();
       });
-    }
-
-    if (copyBtn) {
-      copyBtn.addEventListener("click", copyJson);
     }
 
     document.addEventListener("keydown", function (e) {
@@ -744,9 +937,12 @@
         search.focus();
       }
 
-      if (e.key === "Escape" && document.activeElement === search && search.value) {
-        search.value = "";
-        applyViews();
+      if (e.key === "Escape") {
+        if (document.activeElement === search && search.value) {
+          search.value = "";
+          applyViews();
+        }
+        closeEditors();
       }
     });
   }
@@ -756,7 +952,16 @@
     updateSummary();
     applyViews();
     rows.forEach(bindRow);
+
+    var scopeRows = page.querySelectorAll(".global-row");
+    Array.prototype.forEach.call(scopeRows, bindScope);
+
     bindGlobal();
+
+    // next-run пересчитываем раз в минуту: относительное время устаревает.
+    setInterval(function () {
+      rows.forEach(renderNext);
+    }, 60000);
   }
 
   init();
