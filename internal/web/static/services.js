@@ -2749,9 +2749,12 @@
         : [];
 
       // Отсекаем записи прежнего воплощения сервиса с тем же именем.
+      // Сравниваем id записи с GUID текущего воплощения напрямую: если у
+      // сервиса id нет (старые сервисы) — не фильтруем.
       var guid = currentServiceGUID(name);
       state.details.history = hist.filter(function (rec) {
-        return historyMatchesService(rec, guid);
+        if (!guid) return true;
+        return historyServiceID(rec) === guid;
       });
 
       state.details.logs = results[1].status === "fulfilled" && Array.isArray(results[1].value)
