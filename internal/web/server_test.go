@@ -1043,7 +1043,8 @@ func TestPageSchedulesNoGroups(t *testing.T) {
 	_, page := doAuth(client, ts.URL, "GET", "/schedules", "", nil)
 	for _, want := range []string{
 		`sched-chips`,
-		`id="sched-visible"`,
+		`id="sched-search"`,
+		`id="sched-help"`,
 		`data-service="testsvc"`,
 		`data-global=`,
 	} {
@@ -1056,6 +1057,8 @@ func TestPageSchedulesNoGroups(t *testing.T) {
 		`data-scope="group"`, `data-group=`, `sched-groups`, `source-group`,
 		`sched-global-card`, `id="global-value"`, `data-scope="global"`,
 		`sched-summary`, `id="sched-filter"`, `cell-group`,
+		`sched-toolbar`, `id="sched-sort"`, `id="sched-visible"`,
+		`id="sched-reset-filters"`,
 	} {
 		if strings.Contains(page, gone) {
 			t.Fatalf("schedules page still has %q", gone)

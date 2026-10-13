@@ -43,35 +43,6 @@
   color: var(--badge-auto-text);
 }
 
-/* Панель поиска/сортировки */
-.sched-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  align-items: center;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem;
-  margin-bottom: 1.5rem;
-  box-shadow: 0 1px 3px var(--shadow);
-}
-
-.sched-visible {
-  margin-left: auto;
-  white-space: nowrap;
-}
-
-@media (max-width: 768px) {
-  .sched-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .sched-visible {
-    margin-left: 0;
-  }
-}
-
 /* Поиск + «?» в строке чипов */
 .sched-chips-tools {
   display: flex;

@@ -11,11 +11,8 @@
     : [];
 
   var search = document.getElementById("sched-search");
-  var sort = document.getElementById("sched-sort");
   var chips = document.getElementById("sched-chips");
-  var resetFiltersBtn = document.getElementById("sched-reset-filters");
   var empty = document.getElementById("sched-empty");
-  var visibleEl = document.getElementById("sched-visible");
   var helpPop = document.getElementById("sched-help");
 
   var summaryEls = {
@@ -440,41 +437,12 @@
   }
 
   function sortRows() {
-    var mode = (sort && sort.value) || "name";
     var sorted = rows.slice();
 
     sorted.sort(function (a, b) {
       var as = normalizeSpec(a.getAttribute("data-service"));
       var bs = normalizeSpec(b.getAttribute("data-service"));
-
-      if (mode === "name") {
-        return as.localeCompare(bs);
-      }
-
-      if (mode === "schedule") {
-        var ae = rowEffective(a);
-        var be = rowEffective(b);
-        return ae.localeCompare(be) || as.localeCompare(bs);
-      }
-
-      if (mode === "source") {
-        var order = { service: 0, global: 1 };
-        var ao = order[sourceForRow(a)] || 99;
-        var bo = order[sourceForRow(b)] || 99;
-        return (ao - bo) || as.localeCompare(bs);
-      }
-
-      if (mode === "next") {
-        var an = nextRun(rowEffective(a));
-        var bn = nextRun(rowEffective(b));
-
-        if (!an && !bn) return as.localeCompare(bs);
-        if (!an) return 1;
-        if (!bn) return -1;
-        return an.getTime() - bn.getTime() || as.localeCompare(bs);
-      }
-
-      return 0;
+      return as.localeCompare(bs);
     });
 
     sorted.forEach(function (row) {
@@ -492,8 +460,6 @@
       row.style.display = match ? "" : "none";
       if (match) visible++;
     });
-
-    setText(visibleEl, "Показано " + visible + " из " + rows.length);
 
     if (empty) {
       if (rows.length === 0) {
@@ -672,19 +638,6 @@
         } else {
           setChip(wanted);
         }
-        applyViews();
-      });
-    }
-
-    if (sort) {
-      sort.addEventListener("change", applyViews);
-    }
-
-    if (resetFiltersBtn) {
-      resetFiltersBtn.addEventListener("click", function () {
-        if (search) search.value = "";
-        if (sort) sort.value = "name";
-        setChip("all");
         applyViews();
       });
     }
