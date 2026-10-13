@@ -159,14 +159,10 @@
   border-collapse: collapse;
 }
 
-/* «Сервис» — широкий, «Изменить» — компактный,
-   «Расписание» забирает остаток. */
-.sched-table th:nth-child(1) {
-  width: 34%;
-  min-width: 200px;
-}
-
-.sched-table th:nth-child(3) {
+/* Первые две колонки — по содержимому, редактор забирает остаток,
+   чтобы строка укладывалась в одну линию. */
+.sched-table th:nth-child(1),
+.sched-table th:nth-child(2) {
   width: 1%;
 }
 
@@ -276,19 +272,19 @@
 }
 
 .edit-panel select {
-  flex: 0 1 8.5rem;
+  flex: 0 1 11rem;
   min-width: 0;
 }
 
 .edit-panel input {
-  flex: 1 1 9rem;
+  flex: 1 1 12rem;
   min-width: 0;
 }
 
 .edit-panel select,
 .edit-panel input {
   padding: 0.3rem 0.45rem;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
 }
 
 .edit-buttons {
@@ -298,8 +294,8 @@
 }
 
 .edit-buttons button {
-  padding: 0.3rem 0.5rem;
-  font-size: 0.78rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.8rem;
   white-space: nowrap;
 }
 
