@@ -1,9 +1,11 @@
 /* Страница расписаний */
-/* Чипы-фильтры (заменяют 7 карточек сводки): клик = фильтр */
+/* Чипы-фильтры (заменяют 7 карточек сводки): клик = фильтр.
+   Поиск и «?» — в той же строке, справа (.sched-chips-tools). */
 .sched-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  align-items: center;
   margin-bottom: 1.5rem;
 }
 
@@ -55,11 +57,6 @@
   box-shadow: 0 1px 3px var(--shadow);
 }
 
-.sched-toolbar #sched-search {
-  flex: 1;
-  min-width: 180px;
-}
-
 .sched-visible {
   margin-left: auto;
   white-space: nowrap;
@@ -75,42 +72,97 @@
   }
 }
 
-/* Справка */
+/* Поиск + «?» в строке чипов */
+.sched-chips-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+.sched-chips-tools #sched-search {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Справка «?» — круглая кнопка + всплывающая подсказка */
 .sched-help {
-  background: var(--bg);
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sched-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 1.5rem;
-  overflow: hidden;
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
   transition: background var(--transition), border-color var(--transition);
 }
 
-.sched-help summary {
-  padding: 1rem;
-  cursor: pointer;
-  font-weight: 600;
-  background: var(--bg-alt);
-  user-select: none;
-  color: var(--text);
+.sched-help-btn::-webkit-details-marker {
+  display: none;
 }
 
-.sched-help summary:hover {
-  background: var(--border);
+.sched-help-btn:hover {
+  border-color: var(--primary);
 }
 
-.sched-help ul {
-  padding: 1rem 1.5rem;
+.sched-help[open] .sched-help-btn {
+  background: var(--badge-auto-bg);
+  border-color: var(--primary);
+  color: var(--badge-auto-text);
+}
+
+.sched-help-pop {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 20;
+  width: min(420px, 90vw);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px var(--shadow);
+  padding: 0.25rem 0;
+}
+
+.sched-help-pop ul {
+  padding: 0.75rem 1.25rem;
   margin: 0;
 }
 
-.sched-help li {
+.sched-help-pop li {
   margin-bottom: 0.5rem;
-  line-height: 1.6;
+  line-height: 1.5;
+  font-size: 0.9rem;
 }
 
-.sched-help .small {
-  padding: 0 1.5rem 1rem;
+.sched-help-pop .small {
+  padding: 0 1.25rem 0.75rem;
   margin: 0;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 480px) {
+  .sched-chips-tools {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+  .sched-help-pop {
+    right: auto;
+    left: 0;
+  }
 }
 
 /* Таблица расписаний */

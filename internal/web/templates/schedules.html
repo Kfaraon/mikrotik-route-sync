@@ -44,30 +44,35 @@
       <button type="button" class="sched-chip" data-filter="override" aria-pressed="false">
         Своих расписаний <strong id="sum-override">0</strong>
       </button>
+
+      <!-- Поиск и справка «?» — в той же строке, справа от чипов. -->
+      <div class="sched-chips-tools">
+        <input
+          type="search"
+          id="sched-search"
+          placeholder="Поиск: сервис, расписание"
+          autocomplete="off"
+        >
+        <details class="sched-help" id="sched-help">
+          <summary class="sched-help-btn" aria-label="Поддерживаемые форматы и подсказки" title="Поддерживаемые форматы и подсказки">?</summary>
+          <div class="sched-help-pop" role="note">
+            <ul>
+              <li><code>every 30m</code>, <code>every 6h</code>, <code>every 1d</code>, <code>every 1w</code> — интервал.</li>
+              <li><code>daily at 03:00</code> — ежедневно в указанное время.</li>
+              <li><code>weekly on sunday at 04:00</code> — еженедельно в указанный день.</li>
+              <li><code>0 */6 * * *</code> — cron из 5 полей.</li>
+              <li><code>manual</code> — только вручную, <code>disabled</code> — синхронизация отключена.</li>
+              <li>Пустое значение override — наследовать глобальное расписание.</li>
+            </ul>
+            <p class="muted small">
+              Ближайший запуск рассчитывается приблизительно по тексту расписания и не учитывает фактическое время последнего запуска.
+            </p>
+          </div>
+        </details>
+      </div>
     </section>
 
-    <details class="sched-help">
-      <summary>Поддерживаемые форматы и подсказки</summary>
-      <ul>
-        <li><code>every 30m</code>, <code>every 6h</code>, <code>every 1d</code>, <code>every 1w</code> — интервал.</li>
-        <li><code>daily at 03:00</code> — ежедневно в указанное время.</li>
-        <li><code>weekly on sunday at 04:00</code> — еженедельно в указанный день.</li>
-        <li><code>0 */6 * * *</code> — cron из 5 полей.</li>
-        <li><code>manual</code> — только вручную, <code>disabled</code> — синхронизация отключена.</li>
-        <li>Пустое значение override — наследовать глобальное расписание.</li>
-      </ul>
-      <p class="muted small">
-        Ближайший запуск рассчитывается приблизительно по тексту расписания и не учитывает фактическое время последнего запуска.
-      </p>
-    </details>
-
-    <section class="sched-toolbar" aria-label="Поиск и сортировка">
-      <input
-        type="search"
-        id="sched-search"
-        placeholder="Поиск: сервис, расписание"
-        autocomplete="off"
-      >
+    <section class="sched-toolbar" aria-label="Сортировка">
       <select id="sched-sort" aria-label="Сортировка">
         <option value="name">По сервису</option>
         <option value="schedule">По расписанию</option>

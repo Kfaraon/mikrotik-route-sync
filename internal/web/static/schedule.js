@@ -16,6 +16,7 @@
   var resetFiltersBtn = document.getElementById("sched-reset-filters");
   var empty = document.getElementById("sched-empty");
   var visibleEl = document.getElementById("sched-visible");
+  var helpPop = document.getElementById("sched-help");
 
   var summaryEls = {
     total: document.getElementById("sum-total"),
@@ -688,6 +689,16 @@
       });
     }
 
+    // Подсказка «?» закрывается кликом вне и по Escape (details нативно
+    // закрывается только повторным кликом по summary).
+    if (helpPop) {
+      document.addEventListener("click", function (e) {
+        if (!helpPop.open) return;
+        if (helpPop.contains(e.target)) return;
+        helpPop.open = false;
+      });
+    }
+
     document.addEventListener("keydown", function (e) {
       var tag = document.activeElement && document.activeElement.tagName;
       var typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
@@ -701,6 +712,9 @@
         if (document.activeElement === search && search.value) {
           search.value = "";
           applyViews();
+        }
+        if (helpPop && helpPop.open) {
+          helpPop.open = false;
         }
       }
     });
