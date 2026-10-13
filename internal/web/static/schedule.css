@@ -41,16 +41,6 @@
   color: var(--badge-auto-text);
 }
 
-/* Глобальное расписание — всегда видимая карточка */
-.sched-global-card {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 1px 3px var(--shadow);
-  margin-bottom: 1.5rem;
-  padding: 0 1rem;
-}
-
 /* Группы — сворачиваемый блок (состав только чтение) */
 .sched-groups {
   background: var(--bg);
@@ -105,7 +95,6 @@
   font-weight: 600;
 }
 
-.global-value,
 .group-value {
   font-size: 0.95rem;
   color: var(--code-text);

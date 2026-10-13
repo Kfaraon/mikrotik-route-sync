@@ -46,36 +46,6 @@
       </button>
     </section>
 
-    <section class="sched-global-card">
-      <div class="global-row" data-scope="global">
-        <div class="global-label">
-          <span class="scope-title">Глобальное расписание</span>
-          <code class="global-value" id="global-value">{{ .Global }}</code>
-        </div>
-        <button type="button" class="btn btn-secondary scope-edit-btn">Изменить</button>
-        <div class="scope-editor" hidden>
-          <select class="preset" aria-label="Быстрый пресет для глобального расписания">
-            <option value="">— пресет —</option>
-            <option value="manual">Вручную</option>
-            <option value="disabled">Отключено</option>
-            <option value="every 1h">Каждый час</option>
-            <option value="every 6h">Каждые 6 часов</option>
-            <option value="every 12h">Каждые 12 часов</option>
-            <option value="every 1d">Каждый день</option>
-            <option value="daily at 03:00">Ежедневно в 03:00</option>
-            <option value="weekly on sunday at 04:00">Еженедельно, воскресенье 04:00</option>
-            <option value="custom">Своё…</option>
-          </select>
-          <input type="text" class="scope-input" value="{{ .Global }}" aria-label="Глобальное расписание" autocomplete="off">
-          <div class="scope-buttons">
-            <button type="button" class="btn btn-primary scope-save-btn">Сохранить</button>
-            <button type="button" class="btn btn-secondary scope-cancel-btn">Отмена</button>
-          </div>
-          <div class="scope-status" aria-live="polite"></div>
-        </div>
-      </div>
-    </section>
-
     {{if .Groups}}
     <details class="sched-groups" id="scope-groups">
       <summary>Группы ({{ len .Groups }}): расписание можно менять, состав — только чтение</summary>

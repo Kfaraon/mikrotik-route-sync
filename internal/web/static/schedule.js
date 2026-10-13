@@ -661,15 +661,10 @@
       });
   }
 
-  // --- Глобальное расписание и группы ---
-
-  function scopeKey(scopeRow) {
-    if (scopeRow.getAttribute("data-scope") === "global") return "global";
-    return "group:" + normalizeSpec(scopeRow.getAttribute("data-group"));
-  }
+  // --- Группы ---
 
   function scopeValue(scopeRow) {
-    var code = scopeRow.querySelector(".global-value, .group-value");
+    var code = scopeRow.querySelector(".group-value");
     return code ? normalizeSpec(code.textContent) : "";
   }
 
@@ -703,16 +698,9 @@
     var panel = scopeRow.querySelector(".scope-editor");
     var input = panel ? panel.querySelector(".scope-input") : null;
     var spec = normalizeSpec(input ? input.value : "");
-    var scope = scopeRow.getAttribute("data-scope");
+    var group = normalizeSpec(scopeRow.getAttribute("data-group"));
 
-    var url;
-    if (scope === "global") {
-      url = "/api/v1/schedules/global";
-    } else {
-      url = "/api/v1/schedules/group/" + encodeURIComponent(
-        normalizeSpec(scopeRow.getAttribute("data-group"))
-      );
-    }
+    var url = "/api/v1/schedules/group/" + encodeURIComponent(group);
 
     setScopeStatus(scopeRow, "Сохранение…", "muted");
 
@@ -736,22 +724,14 @@
           throw new Error(msg);
         }
 
-        if (scope === "global") {
-          globalSchedule = spec;
-          page.setAttribute("data-global", spec);
-          var gv = document.getElementById("global-value");
-          if (gv) gv.textContent = spec;
-        } else {
-          var code = scopeRow.querySelector(".group-value");
-          if (code) code.textContent = spec;
-          // Обновляем расписание группы у затронутых строк и пересчитываем.
-          var group = normalizeSpec(scopeRow.getAttribute("data-group"));
-          rows.forEach(function (row) {
-            if (normalizeSpec(row.getAttribute("data-group")) === group) {
-              row.setAttribute("data-group-schedule", spec);
-            }
-          });
-        }
+        var code = scopeRow.querySelector(".group-value");
+        if (code) code.textContent = spec;
+        // Обновляем расписание группы у затронутых строк и пересчитываем.
+        rows.forEach(function (row) {
+          if (normalizeSpec(row.getAttribute("data-group")) === group) {
+            row.setAttribute("data-group-schedule", spec);
+          }
+        });
 
         rows.forEach(updateRow);
         applyViews();

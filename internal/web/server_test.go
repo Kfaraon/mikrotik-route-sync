@@ -1142,9 +1142,10 @@ func TestAPIUpdateGroupSchedule(t *testing.T) {
 	}
 }
 
-// TestPageSchedulesGroupAndGlobalPanel — страница отдаёт блок global/групп
-// и детерминированный источник расписания сервиса.
-func TestPageSchedulesGroupAndGlobalPanel(t *testing.T) {
+// TestPageSchedulesGroupPanel — страница отдаёт список групп и
+// детерминированный источник расписания сервиса; глобального расписания
+// на странице нет (оно правится только через config/API).
+func TestPageSchedulesGroupPanel(t *testing.T) {
 	srv, _ := newTestServerWithGroups(t)
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
@@ -1153,21 +1154,23 @@ func TestPageSchedulesGroupAndGlobalPanel(t *testing.T) {
 	_, page := doAuth(client, ts.URL, "GET", "/schedules", "", nil)
 	for _, want := range []string{
 		`sched-chips`,
-		`id="global-value"`,
-		`data-scope="global"`,
 		`data-scope="group"`,
 		`data-group="social"`,
 		`data-source="group"`,
 		`id="sched-visible"`,
 		`sched-groups`,
 		`состав — только чтение`,
+		`data-global="every 6h"`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("schedules page missing %q", want)
 		}
 	}
-	// Старые колонки/блоки убраны.
-	for _, gone := range []string{`sched-summary`, `id="sched-filter"`, `cell-group`, `Группа</th>`} {
+	// Старые колонки/блоки и карточка глобального расписания убраны.
+	for _, gone := range []string{
+		`sched-summary`, `id="sched-filter"`, `cell-group`, `Группа</th>`,
+		`sched-global-card`, `id="global-value"`, `data-scope="global"`,
+	} {
 		if strings.Contains(page, gone) {
 			t.Fatalf("schedules page still has %q", gone)
 		}
