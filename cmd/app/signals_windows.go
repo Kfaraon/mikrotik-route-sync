@@ -19,3 +19,8 @@ func supportsSIGHUP() bool { return false }
 func sighupSelf() error {
 	return fmt.Errorf("SIGHUP is not supported on Windows")
 }
+
+// writePidFile пишет pid текущего процесса (без stale-check: сигналов нет).
+func writePidFile(path string) error {
+	return os.WriteFile(path, []byte(fmt.Sprint(os.Getpid())), 0o600)
+}

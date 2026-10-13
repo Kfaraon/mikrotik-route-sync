@@ -2144,6 +2144,10 @@ func (s *Server) apiDeleteService(w http.ResponseWriter, r *http.Request) {
 	dctx, cancel := context.WithTimeout(s.baseCtx(), 10*time.Minute)
 	defer cancel()
 	if err := s.syncer.RemoveService(dctx, name, purge); err != nil {
+		if errors.Is(err, core.ErrServiceNotFound) {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -2650,6 +2654,10 @@ func (s *Server) actionDeleteService(w http.ResponseWriter, r *http.Request) {
 	dctx, cancel := context.WithTimeout(s.baseCtx(), 10*time.Minute)
 	defer cancel()
 	if err := s.syncer.RemoveService(dctx, name, purge); err != nil {
+		if errors.Is(err, core.ErrServiceNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

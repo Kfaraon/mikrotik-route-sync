@@ -215,6 +215,15 @@
 /* Утилиты страницы */
 .svc-muted { color: var(--muted, #666); }
 .svc-small { font-size: 0.875rem; }
+
+/* Подсказка о длительности удаления: заметнее обычного muted-текста. */
+.svc-delete-hint {
+  color: var(--warn, #b45309);
+  font-weight: 600;
+  margin: 0.75rem 0 0 0;
+}
+.svc-delete-hint[hidden] { display: none; }
+
 .svc-name { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 
 /* Прогресс синхронизации в строке сервиса */

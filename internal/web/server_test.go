@@ -785,8 +785,8 @@ func TestAPIDeleteService(t *testing.T) {
 	}
 
 	st, _ = doJSON(client, ts.URL, "DELETE", "/api/v1/services/nonexistent", token, nil, "")
-	if st != http.StatusBadRequest {
-		t.Fatalf("unknown service: want 400, got %d", st)
+	if st != http.StatusNotFound {
+		t.Fatalf("unknown service: want 404, got %d", st)
 	}
 }
 
@@ -1253,8 +1253,8 @@ func TestActionDeleteServiceRoute(t *testing.T) {
 	// Несуществующий.
 	resp, _ = doAuth(client, ts.URL, "POST", "/actions/service-delete", token,
 		strings.NewReader("csrf_token="+token+"&name=nope"))
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("unknown: want 400, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown: want 404, got %d", resp.StatusCode)
 	}
 }
 

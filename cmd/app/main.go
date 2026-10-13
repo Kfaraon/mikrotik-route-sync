@@ -812,12 +812,14 @@ func startPresetsMirror(ctx context.Context, cfg *config.Config, log *slog.Logge
 				log.Error("паника в задаче зеркала пресетов", "panic", fmt.Sprintf("%v", r))
 			}
 		}()
-		if st, err := presets.RefreshMirror(context.WithoutCancel(ctx), dir); err != nil {
+		// ctx — жизненный контекст демона: при SIGINT/SIGTERM докачка
+		// прерывается, а не тянется до 120с (внутренний mirrorFetchTimeout).
+		if st, err := presets.RefreshMirror(ctx, dir); err != nil {
 			log.Warn("не удалось обновить зеркало пресетов", "err", err)
 		} else {
 			log.Info("зеркало пресетов обновлено", "entries", st.Entries)
 		}
-		if _, err := presets.RefreshUpstream(context.WithoutCancel(ctx), dir); err != nil {
+		if _, err := presets.RefreshUpstream(ctx, dir); err != nil {
 			log.Warn("не удалось обновить upstream-пресеты", "err", err)
 		}
 	})
@@ -856,7 +858,9 @@ func daemonCmd() *cobra.Command {
 			defer stop()
 
 			pidFile := cfgPath + ".pid"
-			if err := os.WriteFile(pidFile, []byte(fmt.Sprint(os.Getpid())), 0o600); err == nil {
+			if err := writePidFile(pidFile); err != nil {
+				log.Warn("не удалось записать pid-файл", "path", pidFile, "err", err)
+			} else {
 				defer func() { _ = os.Remove(pidFile) }()
 			}
 

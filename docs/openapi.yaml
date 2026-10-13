@@ -215,6 +215,8 @@ paths:
         '200': { $ref: '#/components/responses/OK' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Сервис не найден в конфигурации
 
   /api/v1/services/sync:
     post:

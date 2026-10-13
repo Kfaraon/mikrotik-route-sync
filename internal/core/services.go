@@ -223,7 +223,7 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	removedID := s.cfg.ServiceIDs[name]
 	s.cfg.RUnlock()
 	if !found {
-		return fmt.Errorf("service %s not found", name)
+		return fmt.Errorf("%w: %s", ErrServiceNotFound, name)
 	}
 
 	// Фаза 1: purge записей на роутере — БЕЗ блокировок (сеть на минуты
@@ -251,7 +251,7 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 	}
 	if !found {
 		s.cfg.Unlock()
-		return fmt.Errorf("service %s not found", name)
+		return fmt.Errorf("%w: %s", ErrServiceNotFound, name)
 	}
 	prevServices := s.cfg.Services
 	prevOverride, hadOverride := s.cfg.Overrides[name]

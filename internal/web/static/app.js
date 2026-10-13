@@ -784,7 +784,7 @@
       return n + " Б";
     }
 
-    function setBusy(on, activeBtn) {
+    function setBusy(on, activeBtn, keepResult) {
       buttons.forEach(function (b) {
         if (on && b.dataset.origLabel === undefined) {
           b.dataset.origLabel = b.textContent;
@@ -796,11 +796,12 @@
         }
       });
       if (on && activeBtn) activeBtn.textContent = "Обновление…";
-      if (result) result.textContent = on ? "Обновление… подождите." : "";
+      if (result && !keepResult) result.textContent = on ? "Обновление… подождите." : "";
     }
 
     function refresh(source, btn) {
       setBusy(true, btn);
+      var failed = false;
       fetch("/api/v1/presets/refresh?source=" + encodeURIComponent(source), {
         method: "POST",
         credentials: "same-origin",
@@ -828,15 +829,17 @@
         if (data.upstream) parts.push("v2fly: " + data.upstream.files + " файлов");
         if (window.mrsToast) window.mrsToast("Зеркала обновлены. " + parts.join(", "));
       }).catch(function (err) {
+        failed = true;
         var msg = String((err && err.message) || err);
         if (msg.indexOf("already running") !== -1 || msg.indexOf("429") !== -1) {
           msg = "Обновление уже выполняется, дождитесь завершения.";
         }
-        if (result) result.textContent = "";
+        if (result) result.textContent = "Не удалось обновить: " + msg;
         if (window.mrsToast) window.mrsToast("Не удалось обновить зеркала: " + msg, true);
       }).then(function () {
-        // finally: снять busy в любом случае.
-        setBusy(false);
+        // finally: снять busy в любом случае. Инлайн-статус ошибки сохраняем:
+        // setBusy чистит result только при успехе/в процессе.
+        setBusy(false, null, failed);
       });
     }
 
