@@ -113,38 +113,35 @@
             </td>
 
             <td data-label="Изменить">
-              <div class="edit-block">
-                <button type="button" class="btn btn-secondary edit-open-btn" aria-expanded="false">Изменить</button>
-                <div class="edit-panel" hidden>
-                  <select class="preset" aria-label="Быстрый пресет для {{ .Name }}">
-                    <option value="">— пресет —</option>
-                    <option value="inherit">наследовать</option>
-                    <option value="manual">Вручную</option>
-                    <option value="disabled">Отключено</option>
-                    <option value="every 1h">Каждый час</option>
-                    <option value="every 6h">Каждые 6 часов</option>
-                    <option value="every 12h">Каждые 12 часов</option>
-                    <option value="daily at 03:00">Ежедневно в 03:00</option>
-                    <option value="weekly on sunday at 04:00">Еженедельно, воскресенье 04:00</option>
-                    <option value="custom">Своё…</option>
-                  </select>
+              <div class="edit-panel">
+                <select class="preset" aria-label="Быстрый пресет для {{ .Name }}">
+                  <option value="">— пресет —</option>
+                  <option value="inherit">наследовать</option>
+                  <option value="manual">Вручную</option>
+                  <option value="disabled">Отключено</option>
+                  <option value="every 1h">Каждый час</option>
+                  <option value="every 6h">Каждые 6 часов</option>
+                  <option value="every 12h">Каждые 12 часов</option>
+                  <option value="daily at 03:00">Ежедневно в 03:00</option>
+                  <option value="weekly on sunday at 04:00">Еженедельно, воскресенье 04:00</option>
+                  <option value="custom">Своё…</option>
+                </select>
 
-                  <input
-                    type="text"
-                    class="schedule-input"
-                    value="{{ .ServiceOv }}"
-                    placeholder="{{ .Effective }}"
-                    aria-label="Переопределение расписания для {{ .Name }}"
-                    autocomplete="off"
-                  >
+                <input
+                  type="text"
+                  class="schedule-input"
+                  value="{{ .ServiceOv }}"
+                  placeholder="{{ .Effective }}"
+                  aria-label="Переопределение расписания для {{ .Name }}"
+                  autocomplete="off"
+                >
 
-                  <div class="edit-buttons">
-                    <button type="button" class="btn btn-primary save-btn">Сохранить</button>
-                    <button type="button" class="btn btn-secondary reset-btn">Сбросить</button>
-                  </div>
-
-                  <div class="row-status" aria-live="polite"></div>
+                <div class="edit-buttons">
+                  <button type="button" class="btn btn-primary save-btn">Сохранить</button>
+                  <button type="button" class="btn btn-secondary reset-btn">Сбросить</button>
                 </div>
+
+                <div class="row-status" aria-live="polite"></div>
               </div>
             </td>
           </tr>

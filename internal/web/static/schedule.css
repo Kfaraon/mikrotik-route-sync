@@ -225,49 +225,35 @@
   align-items: center;
 }
 
-/* Блок редактирования (свёрнут по умолчанию) */
-.edit-block {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  min-width: 150px;
-}
-
-.edit-open-btn {
-  align-self: flex-start;
-}
-
+/* Компактный редактор расписания — прямо в строке таблицы */
 .edit-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  min-width: 250px;
-}
-
-.edit-panel[hidden] {
-  display: none;
+  gap: 0.35rem;
+  min-width: 220px;
 }
 
 .edit-panel select,
 .edit-panel input {
   width: 100%;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
 }
 
 .edit-buttons {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .edit-buttons button {
   flex: 1;
-  padding: 0.5rem 1rem;
-  font-size: 0.875rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
 }
 
 .row-status {
-  font-size: 0.875rem;
-  min-height: 1.25rem;
-  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  min-height: 1rem;
 }
 
 .row-status.ok {
@@ -283,10 +269,6 @@
 }
 
 @media (max-width: 768px) {
-  .edit-block {
-    min-width: auto;
-  }
-
   .edit-panel {
     min-width: auto;
   }
@@ -353,9 +335,7 @@
   color: var(--badge-ok-text);
 }
 
-/* Кнопки редактирования: базовые .btn (app.css), компактный размер — .edit-buttons button */
-
-/* Пустое состояние */
+/* Кнопки редактирования: базовые .btn (app.css), компактный размер — .edit-buttons button *//* Пустое состояние */
 .empty-state {
   text-align: center;
   padding: 3rem 1rem;

@@ -345,16 +345,10 @@
     renderSourceBadge(row);
     renderNext(row);
 
-    var panel = row.querySelector(".edit-panel");
-    if (panel && panel.hidden) {
-      // Редактор закрыт — просто синхронизируем значения в контролах.
-      var inputHidden = row.querySelector(".schedule-input");
-      if (inputHidden && document.activeElement !== inputHidden) {
-        inputHidden.value = override;
-      }
-    }
-
     var input = row.querySelector(".schedule-input");
+    if (input && document.activeElement !== input) {
+      input.value = override;
+    }
     if (input) {
       input.placeholder = eff ? humanSchedule(eff) : "укажите расписание";
     }
@@ -532,44 +526,6 @@
     });
   }
 
-  function closeEditors(except) {
-    rows.forEach(function (row) {
-      if (row === except) return;
-      var panel = row.querySelector(".edit-panel");
-      var btn = row.querySelector(".edit-open-btn");
-      if (panel && !panel.hidden) {
-        panel.hidden = true;
-        if (btn) {
-          btn.setAttribute("aria-expanded", "false");
-          btn.textContent = "Изменить";
-        }
-      }
-    });
-  }
-
-  function toggleEditor(row) {
-    var panel = row.querySelector(".edit-panel");
-    var btn = row.querySelector(".edit-open-btn");
-    if (!panel) return;
-
-    var willOpen = panel.hidden;
-    closeEditors(row);
-    panel.hidden = !willOpen;
-
-    if (btn) {
-      btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
-      btn.textContent = willOpen ? "Свернуть" : "Изменить";
-    }
-
-    if (willOpen) {
-      var input = row.querySelector(".schedule-input");
-      if (input) {
-        input.focus();
-        input.select();
-      }
-    }
-  }
-
   function saveSchedule(row, value) {
     var service = normalizeSpec(row.getAttribute("data-service"));
     var spec = normalizeSpec(value);
@@ -624,7 +580,6 @@
           row.classList.remove("saved");
         }, 1400);
 
-        closeEditors();
         showToast("Расписание " + service + " обновлено");
       })
       .catch(function (err) {
@@ -641,14 +596,6 @@
     var input = row.querySelector(".schedule-input");
     var saveBtn = row.querySelector(".save-btn");
     var resetBtn = row.querySelector(".reset-btn");
-    var openBtn = row.querySelector(".edit-open-btn");
-
-    if (openBtn) {
-      openBtn.addEventListener("click", function (e) {
-        e.preventDefault();
-        toggleEditor(row);
-      });
-    }
 
     if (preset && input) {
       preset.addEventListener("change", function () {
@@ -755,7 +702,6 @@
           search.value = "";
           applyViews();
         }
-        closeEditors();
       }
     });
   }
