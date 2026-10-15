@@ -66,6 +66,53 @@ func TestForeignEntriesPartitions(t *testing.T) {
 	}
 }
 
+// Отключённые чужие записи не считаются «чужими» для вычитания: RouterOS не
+// применяет их к трафику, поэтому диапазон должен остаться в желаемом наборе.
+func TestForeignEntriesSkipsDisabled(t *testing.T) {
+	entries := []Entry{
+		{ID: "*1", Address: "64.233.0.0/16", List: "TO-VPN", Comment: "youtube", Disabled: "true"},
+		{ID: "*2", Address: "1.1.1.0/24", List: "TO-VPN", Comment: "Cloudflare"},
+		{ID: "*3", Address: "5.5.5.0/24", List: "TO-VPN", Comment: "Manual", Disabled: "false"},
+	}
+	foreign := ForeignEntries(entries, "TO-VPN", "AUTO:youtube")
+	if len(foreign) != 2 {
+		t.Fatalf("disabled foreign must be skipped: %v", foreign)
+	}
+	for _, e := range foreign {
+		if e.ID == "*1" {
+			t.Fatalf("disabled entry *1 must not be foreign: %v", foreign)
+		}
+	}
+
+	// Желаемый диапазон не вычитается отключённой записью.
+	out, hits := SubtractForeign(
+		[]string{"64.233.160.0/19"},
+		foreign,
+	)
+	if hits != 0 || len(out) != 1 || out[0] != "64.233.160.0/19" {
+		t.Fatalf("disabled foreign must not subtract: hits=%d out=%v", hits, out)
+	}
+
+	// Защита на уровне SubtractForeign: disabled-запись пропускается, даже
+	// если её передали напрямую (в обход ForeignEntries).
+	out, hits = SubtractForeign(
+		[]string{"64.233.160.0/19"},
+		[]Entry{{Address: "64.233.0.0/16", List: "TO-VPN", Comment: "youtube", Disabled: "true"}},
+	)
+	if hits != 0 || len(out) != 1 || out[0] != "64.233.160.0/19" {
+		t.Fatalf("disabled entry must be ignored by SubtractForeign: hits=%d out=%v", hits, out)
+	}
+
+	// Включённая чужая запись по-прежнему вычитается.
+	out, hits = SubtractForeign(
+		[]string{"64.233.160.0/19"},
+		[]Entry{{Address: "64.233.0.0/16", List: "TO-VPN", Comment: "youtube", Disabled: "false"}},
+	)
+	if hits != 1 || len(out) != 0 {
+		t.Fatalf("enabled foreign must still subtract: hits=%d out=%v", hits, out)
+	}
+}
+
 func TestSubtractForeignExactDuplicate(t *testing.T) {
 	out, hits := SubtractForeign(
 		[]string{"5.5.5.0/24", "8.8.8.0/24"},

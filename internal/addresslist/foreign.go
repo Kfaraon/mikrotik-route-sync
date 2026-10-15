@@ -10,6 +10,12 @@ import (
 // записи других сервисов и dynamic. Приложение их никогда не изменяет
 // (PROMPT II.1 — изоляция), но учитывает при формировании желаемого набора,
 // чтобы не создавать пересекающиеся адреса.
+//
+// Отключённые (disabled) чужие записи НЕ учитываются: RouterOS не применяет
+// их к трафику, поэтому вычитать из желаемого набора по ним нельзя — иначе
+// диапазон остаётся «покрытым» мёртвой записью и трафик уходит мимо VPN.
+// Управляемые записи сервиса сюда не попадают вовсе (их обработка disabled —
+// в ComputeDiff: они только re-enable).
 func ForeignEntries(entries []Entry, list, comment string) []Entry {
 	out := make([]Entry, 0, len(entries))
 	for _, e := range entries {
@@ -18,6 +24,9 @@ func ForeignEntries(entries []Entry, list, comment string) []Entry {
 		}
 		if e.Comment == comment && !e.IsDynamic() {
 			continue // собственные управляемые записи сервиса
+		}
+		if e.IsDisabled() {
+			continue // выключенная чужая запись не блокирует диапазон
 		}
 		out = append(out, e)
 	}
@@ -41,6 +50,11 @@ func SubtractForeign(desired []string, foreign []Entry) ([]string, int) {
 
 	blocks := make([]netip.Prefix, 0, len(foreign))
 	for _, e := range foreign {
+		// Отключённая запись не применяется RouterOS — не вычитаем по ней
+		// (иначе диапазон остаётся «покрытым» мёртвой записью).
+		if e.IsDisabled() {
+			continue
+		}
 		n, err := NormalizeAddress(e.Address)
 		if err != nil {
 			continue
