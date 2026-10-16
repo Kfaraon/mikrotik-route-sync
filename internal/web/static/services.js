@@ -2043,7 +2043,6 @@
     h += sourceEditHtml(item);
     h += "</section>";
     h += '<section class="svc-source-block">';
-    h += '<h3 class="svc-block-title">Подбор источника (CDN)</h3>';
     h += cdnBlockHtml();
     h += "</section>";
     if (item) {
@@ -2072,21 +2071,42 @@
 
   // Редактор источника сбора (scope: method + domains). Остальные поля
   // override — через конфиг. Ошибки валидации показывает сервер (400).
+  // Состояние метода — в подписи поля (override/авто/пресет); метод
+  // сервиса с пресетом навязан пресетом — поле заблокировано.
   function sourceEditHtml(item) {
+    var row = (item && item.row) || {};
+    var presetSlug = row.Preset || "";
     var curMethod = item && item.ovMethod ? item.ovMethod : "";
     var curDomains = ((item && item.ovDomains) || []).join(", ");
-    var h = "<p>" + (curMethod
-      ? "Метод: <b>" + esc(curMethod) + "</b> (override)"
-      : "Метод: <b>авто</b> (классификатор)") + "</p>";
-    h += '<label class="svc-field"><span>Метод</span>' +
-      '<input id="svc-ov-method" value="' + esc(curMethod) + '" placeholder="dynamic,whois" spellcheck="false"></label>';
+
+    var locked = false;
+    if (presetSlug) {
+      var pm = presetMethodFor(presetSlug);
+      if (pm) {
+        curMethod = pm;
+        locked = true;
+      }
+    }
+
+    var label = locked ? "Метод (пресет)" : curMethod ? "Метод (override)" : "Метод (авто)";
+    var h = '<label class="svc-field"><span>' + esc(label) + "</span>" +
+      '<input id="svc-ov-method" value="' + esc(curMethod) + '" placeholder="dynamic,whois" spellcheck="false"' +
+      (locked ? ' disabled title="Метод задаётся пресетом"' : "") + "></label>";
+    if (locked) {
+      h += '<p class="svc-muted svc-small">Метод задаётся пресетом <b>' + esc(presetSlug) +
+        "</b> и вручную не меняется. Чтобы выбрать метод, снимите пресет.</p>";
+    }
     // Домены — на всю ширину вкладки; высота растёт по содержимому.
     h += '<label class="svc-field"><span>Домены (через запятую)</span>' +
       '<textarea id="svc-ov-domains" rows="1" placeholder="example.com, cdn.example.com" spellcheck="false">' +
       esc(curDomains) + "</textarea></label>";
-    h += '<div class="svc-row"><button class="btn btn-small btn-primary" data-ov-save="1">Сохранить</button></div>';
-    h += '<p class="svc-muted svc-small">Методы: cdn, asn, dynamic, whois, static_url, preset; списки — через запятую. ' +
-      "preset — по доменам пресета (DNS); пустой метод — авто. Тестовый прогон — кнопкой ниже.</p>";
+    // Кнопка обновления из пресета — только когда метод preset (домены
+    // берутся из пресета); слева от «Сохранить».
+    h += '<div class="svc-row">';
+    if (curMethod === "preset") {
+      h += '<button class="btn btn-small btn-outline" data-preset-refresh="1">Обновить домены из пресета</button>';
+    }
+    h += '<button class="btn btn-small btn-primary" data-ov-save="1">Сохранить</button></div>';
     return h;
   }
 
@@ -2328,9 +2348,8 @@
   }
 
   // Секция действий на вкладке «Источник»: urlscan-подбор доменов (совет,
-  // не синк), обновление из пресета, проверка по блоклисту.
+  // не синк) и проверка по блоклисту.
   function sourceActionsHtml(item) {
-    var row = item.row || {};
     var domains = item.ovDomains || [];
     var h = '<div class="svc-domains">';
 
@@ -2365,9 +2384,6 @@
       }
     }
 
-    if (row.Preset) {
-      h += '<div class="svc-preset-refresh"><button class="btn btn-small btn-outline" data-preset-refresh="1">Обновить домены из пресета</button></div>';
-    }
     if (domains.length) {
       h += '<div class="svc-preset-refresh"><button class="btn btn-small btn-outline" data-blockcheck-run="1">Проверить блокировку (RU)</button>';
       var bc = state.blockcheck;
