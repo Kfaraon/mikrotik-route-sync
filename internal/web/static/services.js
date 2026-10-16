@@ -2044,9 +2044,14 @@
     h += '<h3 class="svc-block-title">Источник сбора</h3>';
     h += sourceEditHtml(item);
     h += "</section>";
-    h += '<section class="svc-source-block">';
-    h += cdnBlockHtml();
-    h += "</section>";
+    // Подбор CDN недоступен сервису с пресетом: сбор идёт строго по его
+    // списку, и сервер замену на cdn не предлагает (cdndetect.go).
+    var presetBound = Boolean(item && item.row && item.row.Preset);
+    if (!presetBound) {
+      h += '<section class="svc-source-block">';
+      h += cdnBlockHtml();
+      h += "</section>";
+    }
     if (item) {
       h += '<section class="svc-source-block">' + sourceActionsHtml(item) + "</section>";
     }
