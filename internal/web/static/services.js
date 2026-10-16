@@ -2424,7 +2424,10 @@
             '<span class="svc-muted">' + esc(c.confidence || "") + ", в " + esc(String(c.scans || 0)) + " ск.</span></label>";
         });
         h += "</div>";
-        h += '<button class="btn btn-small btn-primary" data-suggest-apply="1">Применить выбранные</button>';
+        h += '<div class="svc-row">' +
+          '<button class="btn btn-small btn-primary" data-suggest-apply="1">Применить выбранные</button>' +
+          '<button class="btn btn-small btn-outline" data-suggest-close="1">Закрыть список</button>' +
+          "</div>";
       }
       var excl = sg.data.excluded || [];
       if (excl.length) {
@@ -2462,6 +2465,13 @@
     }
     h += "</div>";
     return h;
+  }
+
+  // closeSuggest — закрыть список подобранных доменов: сбрасываем состояние,
+  // и блок возвращается к кнопке «Подобрать домены (urlscan)».
+  function closeSuggest() {
+    state.suggest = null;
+    renderDetails();
   }
 
   function runSuggest() {
@@ -2993,6 +3003,10 @@
         }
         if (closest(e.target, "[data-suggest-apply]")) {
           applySuggest();
+          return;
+        }
+        if (closest(e.target, "[data-suggest-close]")) {
+          closeSuggest();
           return;
         }
         if (closest(e.target, "[data-preset-refresh]")) {
