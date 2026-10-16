@@ -975,6 +975,7 @@
       var configOverride = serviceHasOverride(row);
       var ovMethod = text(row.Method || row.method);
       var ovDomains = row.Domains || row.domains || [];
+      var ovGenerated = row.Generated || row.generated || [];
 
       if (state.selection[key]) {
         validSelection[key] = name;
@@ -996,7 +997,8 @@
         scheduleOverride: scheduleOverride,
         configOverride: configOverride,
         ovMethod: ovMethod,
-        ovDomains: Array.isArray(ovDomains) ? ovDomains : []
+        ovDomains: Array.isArray(ovDomains) ? ovDomains : [],
+        ovGenerated: Array.isArray(ovGenerated) ? ovGenerated : []
       });
     });
 
@@ -2069,6 +2071,23 @@
     return Boolean(window.matchMedia && window.matchMedia("(max-width: 768px)").matches);
   }
 
+  // manualDomains — домены сервиса, которых нет в снимке пресета: их
+  // пользователь добавил сам. Та же логика, что в ApplyPresetRefresh
+  // на сервере (ручные переживают обновление пресета).
+  function manualDomains(item) {
+    var gen = (item && item.ovGenerated) || [];
+    var seen = {};
+    each(gen, function (d) { seen[lower(d)] = true; });
+    var out = [];
+    each((item && item.ovDomains) || [], function (d) {
+      var k = lower(d);
+      if (!k || seen[k]) return;
+      seen[k] = true;
+      out.push(d);
+    });
+    return out;
+  }
+
   // Редактор источника сбора (scope: method + domains). Остальные поля
   // override — через конфиг. Ошибки валидации показывает сервер (400).
   // Состояние метода — в подписи поля (override/авто/пресет); метод
@@ -2077,7 +2096,12 @@
     var row = (item && item.row) || {};
     var presetSlug = row.Preset || "";
     var curMethod = item && item.ovMethod ? item.ovMethod : "";
-    var curDomains = ((item && item.ovDomains) || []).join(", ");
+    var generated = (item && item.ovGenerated) || [];
+    // У пресет-сервиса домены пресета показываем отдельным (только для
+    // чтения) текстом, а в поле редактирования — только ручные домены.
+    var hasPresetDomains = presetSlug !== "" && generated.length > 0;
+    var editDomains = hasPresetDomains ? manualDomains(item) : ((item && item.ovDomains) || []);
+    var curDomains = editDomains.join(", ");
 
     var locked = false;
     if (presetSlug) {
@@ -2096,8 +2120,16 @@
       h += '<p class="svc-muted svc-small">Метод задаётся пресетом <b>' + esc(presetSlug) +
         "</b> и вручную не меняется. Чтобы выбрать метод, снимите пресет.</p>";
     }
+    // Домены пресета — только отображение (не редактируются).
+    if (hasPresetDomains) {
+      h += '<div class="svc-field svc-field-readonly"><span>Домены пресета (' +
+        generated.length + ")</span>" +
+        '<p class="svc-preset-domains">' + esc(generated.join(", ")) + "</p></div>";
+    }
     // Домены — на всю ширину вкладки; высота растёт по содержимому.
-    h += '<label class="svc-field"><span>Домены (через запятую)</span>' +
+    // Для пресет-сервиса поле содержит только ручные домены.
+    var domainsLabel = hasPresetDomains ? "Домены (ручные, через запятую)" : "Домены (через запятую)";
+    h += '<label class="svc-field"><span>' + esc(domainsLabel) + "</span>" +
       '<textarea id="svc-ov-domains" rows="1" placeholder="example.com, cdn.example.com" spellcheck="false">' +
       esc(curDomains) + "</textarea></label>";
     // Кнопка обновления из пресета — только когда метод preset (домены
@@ -2133,6 +2165,17 @@
       s = trim(s);
       if (s) d.push(s);
     });
+    // У пресет-сервиса поле содержит только ручные домены: дополняем их
+    // доменами пресета, иначе PUT заменил бы список целиком и стёр пресетные.
+    if (((item.row && item.row.Preset) || "") !== "" && ((item.ovGenerated || []).length > 0)) {
+      var seen = {};
+      var merged = [];
+      each(item.ovGenerated, function (g) { seen[lower(g)] = true; merged.push(g); });
+      each(d, function (s) {
+        if (!seen[lower(s)]) { seen[lower(s)] = true; merged.push(s); }
+      });
+      d = merged;
+    }
     if (d.join(",") !== (item.ovDomains || []).join(",")) body.domains = d;
 
     if (!("method" in body) && !("domains" in body)) {

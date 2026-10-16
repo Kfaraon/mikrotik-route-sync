@@ -581,6 +581,18 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   line-height: 1.4;
 }
 .svc-field textarea:focus-visible { outline: 2px solid var(--primary, #007bff); outline-offset: 1px; }
+/* Домены пресета — только отображение (не редактируются) */
+.svc-field-readonly .svc-preset-domains {
+  margin: 0;
+  padding: 8px;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--muted, #666);
+  background: var(--bg-alt, #f8f9fa);
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: var(--radius, 8px);
+  word-break: break-word;
+}
 .svc-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .svc-add-form select { min-width: 140px; }
 
