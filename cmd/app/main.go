@@ -273,7 +273,7 @@ func addServiceCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&method, "method", "", "метод сбора (cdn, asn, dynamic, whois, static_url; можно списком через запятую: dynamic,whois)")
+	cmd.Flags().StringVar(&method, "method", "", "метод сбора (cdn, asn, dynamic, whois, static_url, preset; можно списком через запятую: dynamic,whois)")
 	cmd.Flags().StringVar(&staticURL, "static-url", "", "URL для static_url метода")
 	cmd.Flags().StringSliceVar(&domains, "domains", nil, "домены сервиса")
 	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "CIDR-сети для исключения")

@@ -1446,8 +1446,8 @@
 
     // Пока идёт автоопределение CDN (может занять секунды), показываем
     // подшаги: POST висит, поэтому статус тянем отдельным эндпоинтом.
-    // При явном методе детект на сервере не запускается — не поллим.
-    var poll = method ? null : startAddStatusPoll(name);
+    // При явном методе или пресете детект на сервере не запускается — не поллим.
+    var poll = (method || preset) ? null : startAddStatusPoll(name);
     return api("/api/v1/services", {
       method: "POST",
       body: JSON.stringify(body)
@@ -1502,6 +1502,37 @@
     }
   }
 
+  // Метод, навязываемый пресетом (зеркало нужного правила на сервере):
+  // доменный пресет → preset, IP-пресет (доменов нет, есть static_url) →
+  // static_url. Пусто — пресет неприменим или не выбран.
+  function presetMethodFor(slug) {
+    if (!slug || !state.presets) return "";
+    var found = null;
+    each(state.presets, function (p) {
+      if (p.slug === slug) found = p;
+    });
+    if (!found) return "";
+    if (found.domains && found.domains.length) return "preset";
+    if (found.static_url) return "static_url";
+    return "";
+  }
+
+  // При выборе пресета метод предопределён: подставляем его и блокируем
+  // селект, чтобы выбор в форме не вводил в заблуждение (сервер всё равно
+  // применяет метод пресета). Без пресета — селект снова свободен.
+  function syncAddMethodWithPreset() {
+    if (!els.addMethod || !els.addPreset) return;
+    var m = presetMethodFor(trim(els.addPreset.value));
+    if (m) {
+      els.addMethod.value = m;
+      els.addMethod.disabled = true;
+      els.addMethod.title = "Метод задаётся пресетом";
+    } else {
+      els.addMethod.disabled = false;
+      els.addMethod.title = "";
+    }
+  }
+
   // Автоподсказка пресета по вводимому имени (инвертированный индекс
   // полного зеркала v2fly). Тихо: нет совпадений — нет подсказки.
   function suggestPreset() {
@@ -1546,6 +1577,7 @@
             els.addPreset.appendChild(opt);
           }
           els.addPreset.value = vendored.slug;
+          syncAddMethodWithPreset();
           hint.textContent = "";
           els.addPreset.focus();
         });
@@ -1580,6 +1612,7 @@
                   els.addPreset.appendChild(opt);
                 }
                 els.addPreset.value = resp.slug;
+                syncAddMethodWithPreset();
                 hint.textContent = "";
               });
             }).catch(function (e) {
@@ -1613,6 +1646,7 @@
         html += '<option value="' + esc(p.slug) + '">' + esc(label) + "</option>";
       });
       els.addPreset.innerHTML = html;
+      syncAddMethodWithPreset();
     }).catch(function () {
       state.presets = null;
     });
@@ -2034,8 +2068,8 @@
     h += '<label class="svc-field"><span>Домены (через запятую)</span>' +
       '<input id="svc-ov-domains" value="' + esc(curDomains) + '" placeholder="example.com, cdn.example.com" spellcheck="false"></label>';
     h += '<div class="svc-row"><button class="btn btn-small btn-primary" data-ov-save="1">Сохранить</button></div>';
-    h += '<p class="svc-muted svc-small">Методы: cdn, asn, dynamic, whois, static_url; списки — через запятую. ' +
-      "Пустой метод — авто. Тестовый прогон — кнопкой ниже.</p>";
+    h += '<p class="svc-muted svc-small">Методы: cdn, asn, dynamic, whois, static_url, preset; списки — через запятую. ' +
+      "preset — по доменам пресета (DNS); пустой метод — авто. Тестовый прогон — кнопкой ниже.</p>";
     return h;
   }
 
@@ -2755,6 +2789,10 @@
       });
     }
 
+    if (els.addPreset) {
+      els.addPreset.addEventListener("change", syncAddMethodWithPreset);
+    }
+
     if (els.addForm) {
       els.addForm.addEventListener("submit", function (e) {        e.preventDefault();
 
@@ -2769,8 +2807,9 @@
         handlePromise(withButton(els.addBtn, function () {
           return addService(name, method, preset).then(function () {
             if (els.addInput) els.addInput.value = "";
-            if (els.addMethod) els.addMethod.value = "";
             if (els.addPreset) els.addPreset.value = "";
+            if (els.addMethod) els.addMethod.value = "";
+            syncAddMethodWithPreset();
           });
         }, method ? "" : "Проверяю источник…"));
       });

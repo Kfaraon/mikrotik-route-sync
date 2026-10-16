@@ -42,7 +42,9 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 		ctx = collectors.WithProgress(ctx, collectProgressLo, collectProgressHi, prog)
 	}
 
-	class := classifier.Classify(name, ov.Method)
+	// Эффективный метод: у сервиса с привязанным пресетом он навязан пресетом
+	// (preset/static_url) и приоритетнее сохранённого override.Method.
+	class := classifier.Classify(name, effectiveMethod(ov))
 
 	opts := collectors.Options{
 		Exclude:     ov.Exclude,

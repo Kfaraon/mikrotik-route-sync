@@ -1242,6 +1242,14 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 
 	rows := make([]serviceRow, 0, len(statics))
 	for _, row := range statics {
+		// Метод сервиса с пресетом навязан пресетом (preset/static_url) и
+		// важнее сохранённого override.Method: показываем применяемый.
+		// Резолв пресета — вне блокировки конфига.
+		if row.Preset != "" {
+			if m, ok := presets.CollectMethodForSlug(row.Preset); ok {
+				row.Method = m
+			}
+		}
 		row.Routes = counts[row.Name]
 		if rec, ok := s.syncer.History().LastByID(row.Name, row.GUID); ok {
 			status := "успех"
@@ -1682,6 +1690,9 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 		Domains:   req.Domains,
 	}
 	if req.Preset != "" {
+		// Get требует непустых доменов: привязка к сервису идёт по списку
+		// доменов. IP-пресеты (rublock-ip, static_url) в каталоге не
+		// участвуют — их применяют через обычный method=static_url.
 		p, ok := presets.Get(req.Preset)
 		if !ok {
 			writeErr(w, http.StatusBadRequest, fmt.Sprintf("preset %q unavailable", req.Preset))
@@ -1705,8 +1716,11 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 		ov.Domains = merged
 		ov.Preset = p.Slug
 		ov.Generated = append([]string(nil), p.Domains...)
-		if ov.Method == "" && config.IsValidMethod(p.Method) && (p.Method != "static_url" || p.StaticURL != "") {
-			ov.Method = p.Method
+		// Метод определяет содержимое пресета (домены → preset, IP-лист →
+		// static_url) и приоритетнее выбранного в форме: сервис с пресетом
+		// собирается строго по его списку.
+		if m := presets.CollectMethod(p); m != "" {
+			ov.Method = m
 		}
 		if ov.StaticURL == "" {
 			ov.StaticURL = p.StaticURL

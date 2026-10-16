@@ -80,6 +80,9 @@ func TestRegistryRequiresParams(t *testing.T) {
 	if _, err := r.Build("dynamic", &Params{Service: "x"}); err == nil {
 		t.Fatal("dynamic without domains must fail")
 	}
+	if _, err := r.Build("preset", &Params{Service: "x"}); err == nil {
+		t.Fatal("preset without domains must fail")
+	}
 	if _, err := r.Build("static_url", &Params{Service: "x"}); err == nil {
 		t.Fatal("static_url without URL must fail")
 	}
@@ -89,7 +92,7 @@ func TestRegistryMethods(t *testing.T) {
 	r := NewRegistry(&Deps{})
 	got := append([]string(nil), r.Methods()...)
 	sort.Strings(got)
-	want := []string{"asn", "cdn", "dynamic", "static_url", "whois"}
+	want := []string{"asn", "cdn", "dynamic", "preset", "static_url", "whois"}
 	if len(got) != len(want) {
 		t.Fatalf("methods=%v, want %v", got, want)
 	}
@@ -199,6 +202,42 @@ func TestDynamicCollectorEmptyFails(t *testing.T) {
 	c := NewDynamicCollector(r, nil, []string{"x.net"}, nil, false)
 	if _, err := c.Collect(context.Background(), "x", Options{}); err == nil {
 		t.Fatal("unresolvable domains must fail")
+	}
+}
+
+// preset-коллектор резолвит только домены пресета: /32, никаких диапазонов
+// Google и доп. CDN (их у него и нет по конструкции).
+func TestPresetCollectorResolvesDomains(t *testing.T) {
+	r := &fakeResolver{domains: map[string][]string{
+		"a.net": {"1.2.3.4", "2a00::1"}, // IPv6 отбрасывается
+		"b.net": {"5.6.7.8"},
+	}}
+	c := NewPresetCollector(r, []string{"a.net", "b.net", "dead.net"})
+	if c.Name() != "preset" {
+		t.Fatalf("name=%q, want preset", c.Name())
+	}
+	res, err := c.Collect(context.Background(), "x", Options{})
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if res.Method != "preset" {
+		t.Fatalf("method=%q, want preset", res.Method)
+	}
+	if len(res.Prefixes) != 2 {
+		t.Fatalf("prefixes=%v, want 2x /32", res.Prefixes)
+	}
+	for _, p := range res.Prefixes {
+		if p.Bits() != 32 {
+			t.Fatalf("not a host route: %v", p)
+		}
+	}
+}
+
+func TestPresetCollectorEmptyFails(t *testing.T) {
+	r := &fakeResolver{domains: map[string][]string{}, errOn: map[string]bool{"x.net": true}}
+	c := NewPresetCollector(r, []string{"x.net"})
+	if _, err := c.Collect(context.Background(), "x", Options{}); err == nil {
+		t.Fatal("unresolvable preset domains must fail")
 	}
 }
 

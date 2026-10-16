@@ -73,6 +73,13 @@ func NewRegistry(deps *Deps) *Registry {
 		return NewDynamicCollector(r.deps.Resolver, r.deps.HTTP, p.Domains, p.AlsoCDN, p.IncludeGoogle), nil
 	})
 
+	r.Register("preset", func(p *Params) (Collector, error) {
+		if len(p.Domains) == 0 {
+			return nil, fmt.Errorf("preset: domains are required for service %s", p.Service)
+		}
+		return NewPresetCollector(r.deps.Resolver, p.Domains), nil
+	})
+
 	return r
 }
 

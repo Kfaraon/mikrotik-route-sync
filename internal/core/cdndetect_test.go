@@ -565,6 +565,26 @@ func TestServiceDomains(t *testing.T) {
 	}
 }
 
+// Пресет навязывает метод и приоритетнее сохранённого override.Method.
+func TestEffectiveMethodPresetWins(t *testing.T) {
+	cases := []struct {
+		name string
+		ov   config.ServiceOverride
+		want string
+	}{
+		{"domain preset overrides cdn", config.ServiceOverride{Preset: "youtube", Method: "cdn"}, "preset"},
+		{"ip preset overrides whatever", config.ServiceOverride{Preset: "rublock-ip", Method: "dynamic"}, "static_url"},
+		{"no preset keeps override", config.ServiceOverride{Method: "whois"}, "whois"},
+		{"no preset no override", config.ServiceOverride{}, ""},
+		{"unknown preset keeps override", config.ServiceOverride{Preset: "nope-xyz", Method: "cdn"}, "cdn"},
+	}
+	for _, c := range cases {
+		if got := effectiveMethod(c.ov); got != c.want {
+			t.Errorf("%s: effectiveMethod=%q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestCurrentMethodNameAndSplit(t *testing.T) {
 	if got := currentMethodName("x.net", config.ServiceOverride{Method: "cdn"}); got != "cdn" {
 		t.Fatalf("override method=%q, want cdn", got)
@@ -574,6 +594,10 @@ func TestCurrentMethodNameAndSplit(t *testing.T) {
 	}
 	if got := currentMethodName("youtube", config.ServiceOverride{}); got != "dynamic,cdn" {
 		t.Fatalf("youtube default=%q, want dynamic,cdn", got)
+	}
+	// Сервис с пресетом: метод навязан пресетом, классификатор не участвует.
+	if got := currentMethodName("youtube.com", config.ServiceOverride{Preset: "youtube"}); got != "preset" {
+		t.Fatalf("preset method=%q, want preset", got)
 	}
 	for _, s := range []string{"dynamic,whois", "dynamic whois", "dynamic;whois", " dynamic , whois ", "dynamic+cdn"} {
 		parts := splitMethods(s)

@@ -22,6 +22,7 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/validator"
 )
 
@@ -132,6 +133,8 @@ func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOv
 	}
 
 	switch {
+	case presetMethod(ov) != "":
+		adv.Reason += " — сервис собирается по пресету, замена на cdn не предлагается"
 	case hasMethod(splitMethods(cur), "cdn"):
 		adv.Reason += " — уже используется метод cdn"
 	case ov.Method == "static_url":
@@ -532,10 +535,35 @@ func adviseDomains(name string, ov config.ServiceOverride) []string {
 	return []string{name}
 }
 
-// currentMethodName — текущий метод сервиса: override или дефолт классификатора.
+// presetMethod — метод сбора, навязываемый привязанным пресетом сервиса:
+// доменный пресет → "preset", IP-пресет → "static_url". Пусто — пресета нет
+// или он недоступен/неприменим (тогда действует override.Method).
+func presetMethod(ov config.ServiceOverride) string {
+	if ov.Preset == "" {
+		return ""
+	}
+	m, ok := presets.CollectMethodForSlug(ov.Preset)
+	if !ok {
+		return ""
+	}
+	return m
+}
+
+// effectiveMethod — метод сбора сервиса с учётом привязанного пресета.
+// Пресет важнее сохранённого override.Method: сервис с пресетом всегда
+// собирается по его содержимому. Без пресета — override.Method ("" = авто).
+func effectiveMethod(ov config.ServiceOverride) string {
+	if m := presetMethod(ov); m != "" {
+		return m
+	}
+	return ov.Method
+}
+
+// currentMethodName — текущий метод сервиса: пресет, override или дефолт
+// классификатора.
 func currentMethodName(name string, ov config.ServiceOverride) string {
-	if ov.Method != "" {
-		return ov.Method
+	if m := effectiveMethod(ov); m != "" {
+		return m
 	}
 	return strings.Join(classifier.Classify(name, "").Methods, ",")
 }

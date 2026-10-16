@@ -249,6 +249,39 @@ func listSlow() []Preset {
 	return out
 }
 
+// CollectMethod — метод сбора, которым пресет применяется к сервису:
+//
+//   - доменный пресет → "preset": домены резолвятся в IPv4 (/32) без
+//     подмешивания ASN, диапазонов Google и also_cdn;
+//   - IP-пресет без доменов (rublock-ip) → "static_url": готовый IP-лист.
+//
+// Пустая строка — у пресета нет ни доменов, ни статического URL: применять
+// нечего (метод остаётся на усмотрение вызывающего).
+func CollectMethod(p Preset) string {
+	if len(p.Domains) > 0 {
+		return "preset"
+	}
+	if p.StaticURL != "" {
+		return "static_url"
+	}
+	return ""
+}
+
+// CollectMethodForSlug — CollectMethod для пресета по слагу. Второе значение
+// false, если пресета нет (файл не найден или не распарсился). В отличие от
+// Get, читает и IP-пресеты без доменов: их метод сбора — static_url.
+func CollectMethodForSlug(slug string) (string, bool) {
+	p, ok := loadPreset(slug)
+	if !ok {
+		return "", false
+	}
+	m := CollectMethod(p)
+	if m == "" {
+		return "", false
+	}
+	return m, true
+}
+
 // Domains возвращает домены пресета по слагу — в том числе Large,
 // который List() намеренно не материализует.
 func Domains(slug string) ([]string, bool) {
@@ -270,11 +303,24 @@ func ValidSlug(slug string) bool {
 }
 
 // Get возвращает пресет по слагу. Второе значение false, если пресета
-// нет (в том числе если файл не распарсился).
+// нет, файл не распарсился или в пресете нет доменов: домены обязательны
+// для применения пресета к сервису. IP-пресеты со static_url (без доменов)
+// разбираются напрямую через loadPreset — см. CollectMethodForSlug.
 //
 // Файл читается и разбирается не более одного раза за процесс
 // (rublock содержит >1.5 млн доменов, повторный разбор недопустим).
 func Get(slug string) (Preset, bool) {
+	p, ok := loadPreset(slug)
+	if !ok || len(p.Domains) == 0 {
+		return Preset{}, false
+	}
+	return p, true
+}
+
+// loadPreset читает и разбирает пресет без требования непустых доменов:
+// нужен там, где важен только метод сбора (IP-пресеты со static_url).
+// Результат кэшируется, как у Get.
+func loadPreset(slug string) (Preset, bool) {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	if slug == "" || !validSlug.MatchString(slug) {
 		return Preset{}, false
@@ -309,24 +355,9 @@ func Get(slug string) (Preset, bool) {
 		cacheMu.Unlock()
 	}()
 
-	raw, err := dataFS.ReadFile(path.Join(dataDir, slug+yamlExt))
-	var p Preset
-	if err != nil {
-		// Нет в embed — пробуем диск зеркала (rublock и обновления).
-		var ok bool
-		if p, ok = getDisk(slug); !ok {
-			return Preset{}, false
-		}
-	} else {
-		if err := yaml.Unmarshal(raw, &p); err != nil {
-			return Preset{}, false
-		}
-		if p.Slug == "" {
-			p.Slug = slug
-		}
-		if len(p.Domains) == 0 {
-			return Preset{}, false
-		}
+	p, ok := readPreset(slug)
+	if !ok {
+		return Preset{}, false
 	}
 
 	cacheMu.Lock()
@@ -337,9 +368,41 @@ func Get(slug string) (Preset, bool) {
 	return cp, true
 }
 
-// getDisk читает пресет с диска зеркала (DiskDir). Не кэширует сам:
-// кэширует вызывающий Get под singleflight-gate.
+// readPreset читает пресет из embed, при отсутствии — с диска зеркала.
+func readPreset(slug string) (Preset, bool) {
+	raw, err := dataFS.ReadFile(path.Join(dataDir, slug+yamlExt))
+	if err != nil {
+		// Нет в embed — пробуем диск зеркала (rublock и обновления).
+		return getDiskRaw(slug)
+	}
+	return parsePreset(slug, raw)
+}
+
+// parsePreset разбирает YAML пресета; пустой slug берётся из имени файла.
+func parsePreset(slug string, raw []byte) (Preset, bool) {
+	var p Preset
+	if err := yaml.Unmarshal(raw, &p); err != nil {
+		return Preset{}, false
+	}
+	if p.Slug == "" {
+		p.Slug = slug
+	}
+	return p, true
+}
+
+// getDisk читает пресет с диска зеркала (DiskDir) и требует непустых
+// доменов: каталог показывает только применимые к сервису пресеты.
+// Не кэширует сам — кэширует loadPreset под singleflight-gate.
 func getDisk(slug string) (Preset, bool) {
+	p, ok := getDiskRaw(slug)
+	if !ok || len(p.Domains) == 0 {
+		return Preset{}, false
+	}
+	return p, true
+}
+
+// getDiskRaw читает пресет с диска зеркала без проверки доменов.
+func getDiskRaw(slug string) (Preset, bool) {
 	if DiskDir == "" {
 		return Preset{}, false
 	}
@@ -347,14 +410,7 @@ func getDisk(slug string) (Preset, bool) {
 	if err != nil {
 		return Preset{}, false
 	}
-	var p Preset
-	if err := yaml.Unmarshal(raw, &p); err != nil || len(p.Domains) == 0 {
-		return Preset{}, false
-	}
-	if p.Slug == "" {
-		p.Slug = slug
-	}
-	return p, true
+	return parsePreset(slug, raw)
 }
 
 // FlushAll сбрасывает кэш разобранных пресетов (после обновления зеркала).

@@ -362,6 +362,36 @@ func strconvItoa(i int) string {
 	return string(buf)
 }
 
+// CollectMethod: доменный пресет → preset, IP-пресет → static_url,
+// пустой пресет → "".
+func TestCollectMethod(t *testing.T) {
+	cases := []struct {
+		name string
+		p    Preset
+		want string
+	}{
+		{"domain preset", Preset{Domains: []string{"youtube.com"}}, "preset"},
+		{"ip preset", Preset{Domains: nil, StaticURL: "https://x/list"}, "static_url"},
+		{"empty", Preset{}, ""},
+	}
+	for _, c := range cases {
+		if got := CollectMethod(c.p); got != c.want {
+			t.Errorf("%s: CollectMethod=%q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// Встроенные данные: youtube — доменный, rublock-ip — IP-лист.
+	if m, ok := CollectMethodForSlug("youtube"); !ok || m != "preset" {
+		t.Errorf("youtube: %q,%v want preset,true", m, ok)
+	}
+	if m, ok := CollectMethodForSlug("rublock-ip"); !ok || m != "static_url" {
+		t.Errorf("rublock-ip: %q,%v want static_url,true", m, ok)
+	}
+	if m, ok := CollectMethodForSlug("no-such-preset-xyz"); ok || m != "" {
+		t.Errorf("missing preset: %q,%v want \"\",false", m, ok)
+	}
+}
+
 func testSource() PresetSource {
 	return PresetSource{
 		Repo:   SourceV2Fly,

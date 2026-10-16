@@ -94,8 +94,13 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 	}
 
 	if override.Method != "" && !config.IsValidMethod(override.Method) {
-		return fmt.Errorf("unknown method %q (allowed: cdn, asn, dynamic, whois, static_url; comma-separated lists like \"dynamic,whois\" accepted)", override.Method)
+		return fmt.Errorf("unknown method %q (allowed: cdn, asn, dynamic, whois, static_url, preset; comma-separated lists like \"dynamic,whois\" accepted)", override.Method)
 	}
+
+	// Пресет навязывает метод сбора (домены → preset, IP-лист → static_url)
+	// и приоритетнее переданного: сервис с пресетом собирается строго по его
+	// содержимому, поэтому автоопределение CDN ниже не запускается.
+	override.Method = effectiveMethod(override)
 
 	// UUID текущего воплощения: присваивается этому добавлению (не сервису
 	// вообще) и переживёт удаление только как чужая история/логи. Нужен уже
@@ -428,6 +433,11 @@ func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug
 	nov.Generated = append([]string(nil), p...)
 	nov.Preset = slug
 	nov.Primary = primary
+	// Метод навязывает пресет (домены → preset, IP-лист → static_url):
+	// держим override.Method согласованным с тем, что применяет сбор.
+	if m := presets.CollectMethod(full); m != "" {
+		nov.Method = m
+	}
 
 	cur, hadCur := s.cfg.Overrides[name]
 	if s.cfg.Overrides == nil {

@@ -663,9 +663,11 @@ func validateCDNSources(list []CDNSourceConfig) error {
 }
 
 // knownMethods — допустимые методы сбора (PROMPT II.2).
+// preset — сбор строго по доменам привязанного пресета (DNS → /32), без
+// подмешивания ASN, диапазонов Google и also_cdn (в отличие от dynamic).
 var knownMethods = map[string]bool{
 	"cdn": true, "asn": true, "dynamic": true,
-	"whois": true, "static_url": true,
+	"whois": true, "static_url": true, "preset": true,
 }
 
 // SplitMethods разбивает строку методов на части. Составные методы
@@ -685,7 +687,7 @@ func SplitMethods(s string) []string {
 }
 
 // ValidateMethods проверяет список методов: каждая часть должна входить
-// в известный набор (cdn, asn, dynamic, whois, static_url). Пустые
+// в известный набор (cdn, asn, dynamic, whois, static_url, preset). Пустые
 // сегменты ("dynamic,,whois") — ошибка: обычно это опечатка.
 func ValidateMethods(s string) error {
 	parts := SplitMethods(s)
@@ -704,14 +706,14 @@ func ValidateMethods(s string) error {
 	}
 	for _, m := range parts {
 		if !knownMethods[m] {
-			return fmt.Errorf("unknown method %q in list %q (allowed: cdn, asn, dynamic, whois, static_url)", m, s)
+			return fmt.Errorf("unknown method %q in list %q (allowed: cdn, asn, dynamic, whois, static_url, preset)", m, s)
 		}
 	}
 	return nil
 }
 
 // IsValidMethod проверяет, что метод (или составной список через ",;+")
-// входит в известный набор (cdn, asn, dynamic, whois, static_url).
+// входит в известный набор (cdn, asn, dynamic, whois, static_url, preset).
 func IsValidMethod(m string) bool { return ValidateMethods(m) == nil }
 
 // VerifySNIEnabled — включена ли SNI-проба (дефолт true: nil = включено).

@@ -1865,6 +1865,11 @@ func TestAPIAddServicePreset(t *testing.T) {
 	if ov.Domains[0] != ov.Primary {
 		t.Fatalf("primary must be first: %q vs %q", ov.Primary, ov.Domains[0])
 	}
+	// Доменный пресет навязывает метод preset и важнее выбранного в форме
+	// (в запросе был method=whois).
+	if ov.Method != "preset" {
+		t.Fatalf("preset must force method=preset, got %q", ov.Method)
+	}
 
 	// Refresh: подмешиваем ручной домен и чужой, обновляем — ручной жив,
 	// чужой (не из пресета и не ручной? нет: всё не-preset считается ручным).
