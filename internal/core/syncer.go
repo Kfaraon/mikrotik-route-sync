@@ -434,7 +434,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	requireConfirmationOver := s.cfg.Safety.RequireConfirmationOver
 	warnBroadV4 := s.cfg.Safety.WarnBroadV4
 	maxASNPrefixes := s.cfg.Safety.MaxASNPrefixes
-	verifySNI := safety.VerifySNIEnabled()
+	verifySNI := sniProbeEnabled(safety.VerifySNIEnabled(), ov)
 	s.cfg.RUnlock()
 
 	if !inCfg {

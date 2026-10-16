@@ -585,6 +585,30 @@ func TestEffectiveMethodPresetWins(t *testing.T) {
 	}
 }
 
+// sniProbeEnabled: для метода preset проба не запускается (шумно и
+// бессмысленно — «основной домен» = первый домен файла пресета), даже если
+// флаг конфига включён; для остальных методов решает флаг.
+func TestSNIProbeEnabledSkipsPreset(t *testing.T) {
+	cases := []struct {
+		name       string
+		cfgEnabled bool
+		ov         config.ServiceOverride
+		want       bool
+	}{
+		{"cfg on, no preset", true, config.ServiceOverride{Method: "whois"}, true},
+		{"cfg on, preset domain", true, config.ServiceOverride{Preset: "youtube", Method: "cdn"}, false},
+		{"cfg on, preset ip (static_url)", true, config.ServiceOverride{Preset: "rublock-ip"}, true},
+		{"cfg off, no preset", false, config.ServiceOverride{Method: "whois"}, false},
+		{"cfg off, preset", false, config.ServiceOverride{Preset: "youtube"}, false},
+		{"cfg on, unknown preset", true, config.ServiceOverride{Preset: "nope-xyz", Method: "cdn"}, true},
+	}
+	for _, c := range cases {
+		if got := sniProbeEnabled(c.cfgEnabled, c.ov); got != c.want {
+			t.Errorf("%s: sniProbeEnabled=%v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestCurrentMethodNameAndSplit(t *testing.T) {
 	if got := currentMethodName("x.net", config.ServiceOverride{Method: "cdn"}); got != "cdn" {
 		t.Fatalf("override method=%q, want cdn", got)
@@ -666,6 +690,29 @@ func TestFillQualityWiring(t *testing.T) {
 	}
 	if adv.Verification != nil {
 		t.Fatalf("sni disabled: verification=%v", adv.Verification)
+	}
+}
+
+func TestFillQualitySkipsSNIForPreset(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	s.cdnProbeFn = fakeProbe(true)
+	s.cfg.Services = append(s.cfg.Services, "youtube.com")
+	s.collectFn = func(_ context.Context, _ string, _ config.ServiceOverride) ([]netip.Prefix, string, error) {
+		return []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, "preset", nil
+	}
+	s.resPtr.Store(deadEndResolver())
+
+	// SNI-проба включена в конфиге, но метод навязан пресетом — пропуск.
+	on := true
+	s.cfg.Safety.VerifySNI = &on
+
+	adv := s.AdviseCDN(context.Background(), "youtube.com",
+		config.ServiceOverride{Preset: "youtube", Domains: []string{"youtube.com"}})
+	if adv.Verification != nil {
+		t.Fatalf("preset must skip SNI probe: verification=%v", adv.Verification)
+	}
+	if adv.Coverage == nil {
+		t.Fatal("coverage must still be filled for preset service")
 	}
 }
 

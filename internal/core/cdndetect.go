@@ -168,7 +168,7 @@ func (s *Syncer) fillQuality(ctx context.Context, name string, ov config.Service
 	}
 	maxASN := s.cfg.Safety.MaxASNPrefixes
 	warnBroad := s.cfg.Safety.WarnBroadV4
-	verifySNI := s.cfg.Safety.VerifySNIEnabled()
+	verifySNI := sniProbeEnabled(s.cfg.Safety.VerifySNIEnabled(), ov)
 	s.cfg.RUnlock()
 	if !inCfg || len(adv.Domains) == 0 {
 		return
@@ -566,6 +566,15 @@ func currentMethodName(name string, ov config.ServiceOverride) string {
 		return m
 	}
 	return strings.Join(classifier.Classify(name, "").Methods, ",")
+}
+
+// sniProbeEnabled — нужна ли SNI-проба при заданном флаге конфига. Для метода
+// preset проба не запускается: коллектор уже собирает строго DNS-ответы
+// доменов пресета, а проба резолвит их заново и проверяет TLS — шумно (CDN
+// рвут прямые хендшейки) и дорого на крупных пресетах; «основной домен» =
+// первый домен файла пресета, а не домен сервиса.
+func sniProbeEnabled(cfgEnabled bool, ov config.ServiceOverride) bool {
+	return cfgEnabled && effectiveMethod(ov) != "preset"
 }
 
 // splitMethods разбивает строку методов ("dynamic,whois" из конфига,
