@@ -567,8 +567,27 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
 .svc-field { display: flex; flex-direction: column; gap: 4px; }
 .svc-field > span { font-size: 0.875rem; color: var(--muted, #666); }
 .svc-field input { width: 100%; }
+.svc-field textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  font: inherit;
+  color: inherit;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: var(--radius, 8px);
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+}
+.svc-field textarea:focus-visible { outline: 2px solid var(--primary, #007bff); outline-offset: 1px; }
 .svc-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .svc-add-form select { min-width: 140px; }
+
+/* Вкладка «Источник»: секции метода/доменов, CDN и действий */
+.svc-source-block { margin-top: 18px; }
+.svc-source-block:first-child { margin-top: 0; }
+.svc-source-block .svc-cdn-result { margin-top: 8px; }
 
 /* Свочиваемые секции drawer («Качество», «Источник», CDN) */
 .svc-collapsible { margin-top: 14px; }

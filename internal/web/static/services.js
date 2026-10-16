@@ -2030,11 +2030,26 @@
     html += "</div>";
 
     html += detailsHtml("quality", "Качество последнего сбора", lastQualityHtml(item));
-    html += detailsHtml("source", "Источник сбора", sourceEditHtml(item));
-    html += detailsHtml("cdn", "Подбор источника (CDN)", cdnBlockHtml());
-    html += detailsHtml("domains", "Домены и пресеты", domainsBlockHtml(item));
 
     return html;
+  }
+
+  // Вкладка «Источник»: метод сбора, домены, подбор CDN и вспомогательные
+  // действия (urlscan, пресет, блоклист).
+  function renderSource() {
+    var item = findItem(state.details.name);
+    var h = '<section class="svc-source-block">';
+    h += '<h3 class="svc-block-title">Источник сбора</h3>';
+    h += sourceEditHtml(item);
+    h += "</section>";
+    h += '<section class="svc-source-block">';
+    h += '<h3 class="svc-block-title">Подбор источника (CDN)</h3>';
+    h += cdnBlockHtml();
+    h += "</section>";
+    if (item) {
+      h += '<section class="svc-source-block">' + sourceActionsHtml(item) + "</section>";
+    }
+    return h;
   }
 
   // Свочиваемая секция обзора. На телефоне стартует свёрнутой (длинный
@@ -2058,19 +2073,30 @@
   // Редактор источника сбора (scope: method + domains). Остальные поля
   // override — через конфиг. Ошибки валидации показывает сервер (400).
   function sourceEditHtml(item) {
-    var curMethod = item.ovMethod || "";
-    var curDomains = (item.ovDomains || []).join(", ");
+    var curMethod = item && item.ovMethod ? item.ovMethod : "";
+    var curDomains = ((item && item.ovDomains) || []).join(", ");
     var h = "<p>" + (curMethod
       ? "Метод: <b>" + esc(curMethod) + "</b> (override)"
       : "Метод: <b>авто</b> (классификатор)") + "</p>";
     h += '<label class="svc-field"><span>Метод</span>' +
       '<input id="svc-ov-method" value="' + esc(curMethod) + '" placeholder="dynamic,whois" spellcheck="false"></label>';
+    // Домены — на всю ширину вкладки; высота растёт по содержимому.
     h += '<label class="svc-field"><span>Домены (через запятую)</span>' +
-      '<input id="svc-ov-domains" value="' + esc(curDomains) + '" placeholder="example.com, cdn.example.com" spellcheck="false"></label>';
+      '<textarea id="svc-ov-domains" rows="1" placeholder="example.com, cdn.example.com" spellcheck="false">' +
+      esc(curDomains) + "</textarea></label>";
     h += '<div class="svc-row"><button class="btn btn-small btn-primary" data-ov-save="1">Сохранить</button></div>';
     h += '<p class="svc-muted svc-small">Методы: cdn, asn, dynamic, whois, static_url, preset; списки — через запятую. ' +
       "preset — по доменам пресета (DNS); пустой метод — авто. Тестовый прогон — кнопкой ниже.</p>";
     return h;
+  }
+
+  // Высота textarea доменов по содержимому (вызывается после рендера
+  // вкладки «Источник»).
+  function autosizeDomains() {
+    var el = byId("svc-ov-domains");
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
   }
 
   function saveOverride(name) {
@@ -2301,18 +2327,12 @@
     );
   }
 
-  // Блок «Домены и пресеты» во вкладке «Обзор»: текущие домены, привязка,
-  // подбор через urlscan (совет, не синк), обновление из пресета.
-  function domainsBlockHtml(item) {
+  // Секция действий на вкладке «Источник»: urlscan-подбор доменов (совет,
+  // не синк), обновление из пресета, проверка по блоклисту.
+  function sourceActionsHtml(item) {
     var row = item.row || {};
     var domains = item.ovDomains || [];
     var h = '<div class="svc-domains">';
-    h += "<p>" + (domains.length
-      ? esc(domains.slice(0, 12).join(", ")) + (domains.length > 12 ? " …(+" + (domains.length - 12) + ")" : "")
-      : "домены не заданы (автоопределение)") + "</p>";
-    h += "<p>" + (row.Preset
-      ? 'Пресет: <span class="svc-badge svc-badge-preset">' + esc(row.Preset) + "</span>"
-      : "Пресет: —") + "</p>";
 
     var sg = state.suggest;
     if (!sg || sg.name !== state.details.name) {
@@ -2622,6 +2642,9 @@
       els.drawerBody.innerHTML = renderLogsList(state.details.logs);
     } else if (state.details.tab === "routes") {
       els.drawerBody.innerHTML = renderRoutesList(state.details.routes);
+    } else if (state.details.tab === "source") {
+      els.drawerBody.innerHTML = renderSource();
+      autosizeDomains();
     } else {
       els.drawerBody.innerHTML = renderOverview();
     }
@@ -2870,6 +2893,10 @@
     // Поиск и копирование во вкладке «Записи» (делегирование)
     if (els.drawerBody) {
       els.drawerBody.addEventListener("input", function (e) {
+        if (e.target && e.target.id === "svc-ov-domains") {
+          autosizeDomains();
+          return;
+        }
         if (!e.target || e.target.id !== "svc-routes-search") return;
 
         state.details.routesQuery = e.target.value;
