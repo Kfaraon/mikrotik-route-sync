@@ -21,7 +21,6 @@ firewall:
   # Единый глобальный Firewall Address List для всех сервисов (изоляция по comment)
   address_list: TO-VPN
   comment_prefix: AUTO
-  ignore_dynamic: true
   manage_disabled: false
 telegram:
   enabled: false
@@ -98,6 +97,14 @@ suggest:
 # POST /api/v1/presets/refresh).
 presets:
   update_schedule: ""
+  # Авто-расширение метода доменного пресета по объявленному (проверенному)
+  # ASN сервиса: метод станет "preset,asn" (например instagram/facebook →
+  # AS32934). Выключено по умолчанию: система только советует в UI, а
+  # применяет оператор. Включение расширит набор маршрутов VPN.
+  expand_method_auto: false
+  # Порог «узости» ASN: расширение предлагается, только если в ASN не больше
+  # этого числа префиксов. Защита от расширения до облачного провайдера.
+  expand_max_prefixes: 300
 # Официальные списки диапазонов CDN, используемые методом cdn.
 # service — имя сервиса-алиаса (cloudflare/aws/google/fastly): сервис без
 # доменов получает ASN из этого каталога. asn — ключ, по нему выбирается
@@ -110,4 +117,17 @@ cdn_sources:
   - {service: google, name: Google, asn: 15169, url: "https://www.gstatic.com/ipranges/goog.json", parser: google}
   - {service: fastly, name: Fastly, asn: 54113, url: "https://api.fastly.com/public-ip-list", parser: fastly}
 services: [cloudflare]
+# overrides.<service>:
+#   method: cdn | asn | dynamic | whois | static_url | preset
+#           (можно списком: "preset,asn" — пресет + широкие сети ASN)
+#   domains: [...]        # свои домены (перекрывают классификатор)
+#   primary: instagram.com  # витринный домен: первый для ASN-резолва и SNI
+#   preset: youtube       # привязанный пресет (метод навязывается его типом)
+#   asn: 32934            # явный ASN (приоритетнее классификатора и DNS)
+#   static_url: https://...   # метод static_url: источник CIDR
+#   also_cdn: [google]    # доп. официальные списки CDN к dynamic/preset
+#   max_asn_prefixes: 100 # явный лимит префиксов ASN (иначе asn не капается)
+#   max_prefixes: 50      # общий лимит
+#   exclude: [1.2.3.0/24]
+#   include_only: [1.2.3.0/24]
 overrides: {}

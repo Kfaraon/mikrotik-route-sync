@@ -186,7 +186,10 @@ paths:
                 method:
                   type: string
                   example: dynamic,whois
-                  description: null — не трогать, пустая строка — сбросить в авто
+                  description: >-
+                    null — не трогать, пустая строка — сбросить в авто.
+                    Список через запятую (cdn/asn/dynamic/whois/static_url/preset);
+                    доменный пресет можно дополнить: "preset,asn".
                 domains:
                   type: array
                   items: { type: string }
@@ -389,6 +392,17 @@ paths:
                           current_method: { type: string, example: whois }
                           recommend: { type: boolean }
                           reason: { type: string }
+                          expand_asn: { type: integer, example: 32934 }
+                          expand_prefixes: { type: integer, example: 240 }
+                          expand_recommend:
+                            type: boolean
+                            description: >-
+                              true — предлагается расширить доменный пресет до
+                              "preset,asn" объявленным узким ASN сервиса.
+                          expand_reason: { type: string }
+                          expand_current:
+                            type: boolean
+                            description: расширение уже применено (method preset,asn)
                           coverage:
                             type: object
                             properties:
@@ -407,6 +421,11 @@ paths:
                                 failed: { type: array, items: { type: string } }
                       applied: { type: boolean }
                       purged: { type: integer }
+                      expanded_asn:
+                        type: integer
+                        description: >-
+                          ASN, на который расширен метод (preset → preset,asn).
+                          Присутствует, если применено расширение, а не cdn.
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 

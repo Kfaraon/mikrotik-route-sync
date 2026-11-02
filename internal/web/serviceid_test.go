@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/history"
 )
 
@@ -43,6 +44,36 @@ func TestServiceRowsCarryGUIDAndFilterHistory(t *testing.T) {
 	// LastSync должен отражать запись текущего воплощения (Added=5), а не old.
 	if !contains(rows[0].LastSync, "успех") {
 		t.Fatalf("unexpected LastSync: %q", rows[0].LastSync)
+	}
+}
+
+// TestServiceRowsCarryEffectiveMethod — при пустом override строка отдаёт
+// фактически применяемый метод (дефолт классификатора), чтобы UI показывал
+// работающий сбор, а не пустоту.
+func TestServiceRowsCarryEffectiveMethod(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	srv.cfg.Lock()
+	cfg.Services = []string{"testsvc", "instagram"}
+	cfg.Overrides = map[string]config.ServiceOverride{
+		"testsvc": {Method: "cdn"},
+	}
+	srv.cfg.Unlock()
+
+	rows := srv.serviceRows(httptest.NewRequest("GET", "/api/v1/services", nil))
+	byName := map[string]serviceRow{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	if got := byName["testsvc"].EffectiveMethod; got != "cdn" {
+		t.Errorf("testsvc EffectiveMethod=%q, want cdn", got)
+	}
+	// У instagram override пуст: EffectiveMethod должен показать дефолт
+	// классификатора (dynamic,asn), а Method остаться пустым.
+	if got := byName["instagram"].EffectiveMethod; got != "dynamic,asn" {
+		t.Errorf("instagram EffectiveMethod=%q, want dynamic,asn", got)
+	}
+	if got := byName["instagram"].Method; got != "" {
+		t.Errorf("instagram Method должен быть пустым (авто), got %q", got)
 	}
 }
 

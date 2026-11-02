@@ -974,6 +974,10 @@
       var scheduleOverride = !!getScheduleOverrideSpec(name);
       var configOverride = serviceHasOverride(row);
       var ovMethod = text(row.Method || row.method);
+      // EffectiveMethod — фактически применяемый метод (preset/override/дефолт
+      // классификатора): показываем, когда override пуст, иначе сервис с
+      // работающим сбором выглядел бы без метода.
+      var ovEffective = text(row.EffectiveMethod || row.effective_method);
       var ovDomains = row.Domains || row.domains || [];
       var ovGenerated = row.Generated || row.generated || [];
 
@@ -997,6 +1001,7 @@
         scheduleOverride: scheduleOverride,
         configOverride: configOverride,
         ovMethod: ovMethod,
+        ovEffective: ovEffective,
         ovDomains: Array.isArray(ovDomains) ? ovDomains : [],
         ovGenerated: Array.isArray(ovGenerated) ? ovGenerated : []
       });
@@ -2118,12 +2123,18 @@
     }
 
     var label = locked ? "Метод (пресет)" : curMethod ? "Метод (override)" : "Метод (авто)";
+    // Для авто-сервиса показываем фактически применяемый метод, но поле
+    // остаётся пустым (пустое = авто): иначе выглядело бы, будто метод задан.
+    var autoHint = !curMethod && item.ovEffective ? item.ovEffective : "";
     var h = '<label class="svc-field"><span>' + esc(label) + "</span>" +
       '<input id="svc-ov-method" value="' + esc(curMethod) + '" placeholder="dynamic,whois" spellcheck="false"' +
       (locked ? ' disabled title="Метод задаётся пресетом"' : "") + "></label>";
     if (locked) {
       h += '<p class="svc-muted svc-small">Метод задаётся пресетом <b>' + esc(presetSlug) +
         "</b> и вручную не меняется.</p>";
+    } else if (autoHint) {
+      h += '<p class="svc-muted svc-small">Авто: применяется <b>' + esc(autoHint) +
+        "</b>. Введите метод, чтобы переопределить.</p>";
     }
     // Домены пресета — только отображение (не редактируются).
     if (hasPresetDomains) {
@@ -2245,9 +2256,27 @@
       h += "<p>CDN не обнаружен: " + esc(a.reason || "") + "</p>";
       h += "<p>Рекомендация: оставить текущий метод (" + esc(a.current_method || "") + ")</p>";
     }
+    h += expandHtml(a, c);
     h += qualityHtml(a);
     h += '<button class="btn btn-small btn-outline" data-cdn-run="1">Проверить снова</button>';
     h += "</div>";
+    return h;
+  }
+
+  // expandHtml — совет расширить доменный пресет до "preset,asn" объявленным
+  // ASN сервиса (Meta-семейство и подобные). Применяется отдельной кнопкой;
+  // точные /32 при этом не удаляются.
+  function expandHtml(a, c) {
+    if (!a || (!a.expand_reason && !a.expand_recommend)) return "";
+    if (c && c.expanded_asn) {
+      return '<p><span class="svc-badge svc-badge-ok">Метод расширен: preset,asn (AS' +
+        c.expanded_asn + ")</span></p>";
+    }
+    var h = "<p>" + esc(a.expand_reason || "") + "</p>";
+    if (a.expand_recommend) {
+      h += '<button class="btn btn-small btn-primary" data-expand-apply="1">Расширить: preset,asn (AS' +
+        a.expand_asn + ")" + (a.expand_prefixes ? ", +" + a.expand_prefixes + " сетей" : "") + "</button>";
+    }
     return h;
   }
 
@@ -2374,14 +2403,19 @@
           name: name,
           advice: data && data.advice ? data.advice : null,
           applied: Boolean(data && data.applied),
-          purged: data && typeof data.purged === "number" ? data.purged : 0
+          purged: data && typeof data.purged === "number" ? data.purged : 0,
+          expanded_asn: data && typeof data.expanded_asn === "number" ? data.expanded_asn : 0
         };
         renderDetails();
         if (data && data.applied) {
-          showToast(
-            "Метод изменён на cdn" +
-              (state.cdn.purged ? ", удалено записей: " + state.cdn.purged : "")
-          );
+          if (state.cdn.expanded_asn) {
+            showToast("Метод расширен: preset,asn (AS" + state.cdn.expanded_asn + ")");
+          } else {
+            showToast(
+              "Метод изменён на cdn" +
+                (state.cdn.purged ? ", удалено записей: " + state.cdn.purged : "")
+            );
+          }
           loadAll(false);
         }
       },
@@ -2990,6 +3024,10 @@
           return;
         }
         if (closest(e.target, "[data-cdn-apply]")) {
+          runCdnProbe(true);
+          return;
+        }
+        if (closest(e.target, "[data-expand-apply]")) {
           runCdnProbe(true);
           return;
         }

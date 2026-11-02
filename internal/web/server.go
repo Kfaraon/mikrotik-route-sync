@@ -1190,9 +1190,13 @@ type serviceRow struct {
 	// сопоставляет с ним историю, чтобы не показывать данные прежнего
 	// сервиса с тем же именем.
 	GUID string
-	// Текущий override для редактора источника (UI): пусто — авто.
+	// Текущий override для редактора источника (UI).
 	Method  string
 	Domains []string
+	// EffectiveMethod — фактически применяемый метод (пресет/override/дефолт
+	// классификатора). Нужен, когда override пуст: UI показывал пустую строку
+	// при работающем сборе (например instagram: dynamic,asn).
+	EffectiveMethod string
 	// Пресет: слаг, витринный домен и последний снимок (для refresh).
 	Preset    string
 	Primary   string
@@ -1251,6 +1255,9 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 			}
 		}
 		row.Routes = counts[row.Name]
+		// Фактически применяемый метод (preset/override/классификатор) — для
+		// UI, когда override пуст, но сбор работает по дефолту классификатора.
+		row.EffectiveMethod = s.syncer.CurrentMethod(row.Name)
 		if rec, ok := s.syncer.History().LastByID(row.Name, row.GUID); ok {
 			status := "успех"
 			if rec.Status == "failed" || rec.Error != "" {
@@ -1360,8 +1367,6 @@ var settingsSpec = []settingSpec{
 		"Единственный Firewall Address List для всех сервисов (например TO-VPN). Обязателен. Все сервисы пишут в него; изоляция — по комментарию. Имя: буквы/цифры/_.- (до 63). Применяется сразу."},
 	{"Firewall Address List", "firewall.comment_prefix", "Префикс комментария", "text",
 		"AUTO-пометка управляемых записей: AUTO:<service>. Формируется автоматически, изоляция сервисов по точному совпадению. Применяется сразу."},
-	{"Firewall Address List", "firewall.ignore_dynamic", "Игнорировать dynamic-записи", "bool",
-		"Всегда безопасно true: динамические (address dynamic) записи never трогаются программой."},
 	{"Firewall Address List", "firewall.manage_disabled", "Создавать записи disabled", "bool",
 		"false (рекомендуется) — новые записи всегда disabled=false. true — поле disabled не задаётся явно."},
 	{"Telegram", "telegram.enabled", "Включить Telegram", "bool",
@@ -2099,14 +2104,26 @@ func (s *Server) apiRecommendService(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req) // пустое тело = только проверка
 
 	ov := s.syncer.GetServiceOverride(name)
-	adv := s.syncer.AdviseCDN(r.Context(), name, ov)
+	adv := s.syncer.AdviseCDN(r.Context(), name, ov, core.WithExpand())
 
 	resp := map[string]any{"advice": adv}
 	if req.Apply {
 		// Предел как у одиночного синка (purge перебирает записи).
 		actx, cancel := context.WithTimeout(s.baseCtx(), 10*time.Minute)
+		defer cancel()
+		// Расширение пресета (preset → preset,asn) применяется отдельным путём:
+		// оно НЕ purge-ит точные /32 и не переключает метод на cdn.
+		if adv.ExpandRecommend && adv.ExpandASN > 0 && !adv.Detected {
+			if err := s.syncer.ApplyExpandRecommendation(actx, name, adv.ExpandASN); err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			resp["applied"] = true
+			resp["expanded_asn"] = adv.ExpandASN
+			writeOK(w, resp)
+			return
+		}
 		purged, err := s.syncer.ApplyCDNRecommendation(actx, name, adv)
-		cancel()
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return

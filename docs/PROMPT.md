@@ -360,8 +360,12 @@ Docker/LXC:
 - `dynamic`
 - `whois`
 - `static_url`
-- `preset` — сбор по доменам привязанного пресета (DNS → IPv4 `/32`), без
-  ASN/диапазонов Google/`also_cdn`; IP-пресеты идут методом `static_url`
+- `preset` — сбор по доменам привязанного пресета (DNS → IPv4 `/32`), плюс
+  `also_cdn`-источники, если заданы; IP-пресеты идут методом `static_url`.
+  Доменный пресет можно дополнить широкими методами через override:
+  `method: preset,asn` собирает точные `/32` пресета **и** сети указанной ASN
+  (например общий AS32934 для Meta-семейства); `dynamic` дополняется так же.
+  Для IP-пресета (`static_url`) доп. методы не подмешиваются — список узкий.
 - комбинированные списки методов, например `[cdn, dynamic]`
 
 Известные CDN (каталог в конфиге `cdn_sources`, редактируется в настройках;
@@ -376,7 +380,16 @@ ASN и URL не вшиты в код):
 Для CDN-сервисов без доменов (cloudflare/aws/google/fastly) ASN берётся из
 каталога `cdn_sources` по имени сервиса; для сервисов с доменами
 (youtube/instagram/facebook/telegram) ASN определяется резолвом домена в
-рантайме.
+рантайме. Явное поле `overrides.<service>.asn` приоритетнее и классификатора,
+и рантайм-резолва — нужно там, где витринный домен отдаёт anycast-адреса с
+разными ASN или общий ASN у нескольких доменов (Meta-семейство: AS32934).
+
+Авто-расширение доменного пресета: для сервисов с объявленным (проверенным)
+ASN в `classifier.knownServices` (instagram/facebook → AS32934) система может
+предложить `method: preset,asn`. Расширение предлагается, только если ASN не
+входит в `cdn_sources` и его набор узкий (≤ `presets.expand_max_prefixes`).
+По умолчанию — только совет в UI; авто-применение при добавлении включается
+`presets.expand_method_auto: true`. Ручной method/asn не перезаписывается.
 
 Крупные сервисы с собственным ASN:
 - метод `asn` через bgp.tools/RIPEstat.
@@ -1398,7 +1411,6 @@ mikrotik:
 firewall:
   address_list: TO-VPN
   comment_prefix: AUTO
-  ignore_dynamic: true
   manage_disabled: false
 
 telegram:
@@ -1494,6 +1506,13 @@ overrides:
       - ytimg.com
     also_cdn:
       - google
+
+  # Meta-семейство: домены из пресета (точные /32) + широкие сети общего AS32934.
+  # Явный asn избавляет от зависимости ASN от DNS-ответа витринного домена.
+  instagram:
+    method: preset,asn
+    asn: 32934
+    max_asn_prefixes: 300
 ```
 
 Важно:
