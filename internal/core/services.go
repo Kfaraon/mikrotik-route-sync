@@ -149,6 +149,22 @@ func (s *Syncer) AddServiceWithConfig(ctx context.Context, name string, override
 		}
 	}
 
+	// Пресет-сервис: детект CDN выше не запускался (метод навязан пресетом),
+	// но авто-расширение метода по объявленному ASN применимо и здесь.
+	if autoExpand := s.expandAutoEnabled(); autoExpand && presetMethod(override) == "preset" && override.ASN == 0 {
+		s.clearAddProgress(name)
+		defer s.clearAddProgress(name)
+		dctx, cancel := context.WithTimeout(ctx, addDetectTimeout)
+		adv := s.AdviseExpand(dctx, name, override)
+		cancel()
+		if adv.ExpandRecommend && adv.ExpandASN > 0 {
+			override.ASN = adv.ExpandASN
+			override.Method = withMethod(override.Method, "asn")
+			s.log.Info("метод расширен до preset,asn автоматически",
+				"service", name, "service_id", newID, "asn", adv.ExpandASN, "prefixes", adv.ExpandPrefixes)
+		}
+	}
+
 	s.cfg.Lock()
 	for _, p := range s.cfg.Services {
 		if p == name {
@@ -435,8 +451,12 @@ func (s *Syncer) ApplyPresetRefresh(ctx context.Context, name string, presetSlug
 	nov.Primary = primary
 	// Метод навязывает пресет (домены → preset, IP-лист → static_url):
 	// держим override.Method согласованным с тем, что применяет сбор.
+	// Доп. метод asn (расширение) сохраняем: пресет его не отменяет.
 	if m := presets.CollectMethod(full); m != "" {
 		nov.Method = m
+		if m == "preset" && hasMethod(splitMethods(ovFresh.Method), "asn") {
+			nov.Method = "preset,asn"
+		}
 	}
 
 	cur, hadCur := s.cfg.Overrides[name]
@@ -563,7 +583,8 @@ func (s *Syncer) UpdateServiceOverride(ctx context.Context, name string, method 
 	// иначе UI-откаты мусорят конфигом и зажигают бейдж «есть».
 	if ov.Method == "" && len(ov.Domains) == 0 && ov.StaticURL == "" &&
 		len(ov.AlsoCDN) == 0 && ov.MaxASNPrefixes == 0 && ov.MaxPrefixes == 0 &&
-		len(ov.Exclude) == 0 && len(ov.IncludeOnly) == 0 && ov.RefreshInterval == "" {
+		len(ov.Exclude) == 0 && len(ov.IncludeOnly) == 0 && ov.RefreshInterval == "" &&
+		ov.ASN == 0 && ov.Preset == "" && ov.Primary == "" && len(ov.Generated) == 0 {
 		delete(s.cfg.Overrides, name)
 	}
 	if err := s.cfg.Save(); err != nil {

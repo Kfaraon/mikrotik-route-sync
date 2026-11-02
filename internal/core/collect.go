@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"sort"
 	"strings"
 
 	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
@@ -70,11 +71,25 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	if maxPrefixes == 0 {
 		maxPrefixes = maxASN
 	}
+	// Кап для метода asn берём только из явного override: safety.max_asn_prefixes
+	// исторически управляет whois, а официальные большие ASN (akamai, AS20940)
+	// не должны молча резаться. Ограничение объявленных (узких) ASN делает
+	// советник расширения, а не общий дефолт.
+	asnMaxPrefixes := ov.MaxPrefixes
+	if asnMaxPrefixes == 0 {
+		asnMaxPrefixes = ov.MaxASNPrefixes
+	}
 	asn := 0
 	if class.ASN != "" {
 		if n, err := resolverParseASN(class.ASN); err == nil {
 			asn = n
 		}
+	}
+	// Явный ASN из override важнее классификатора и рантайм-резолва: для
+	// Meta-семейства (instagram/facebook/whatsapp) он общий (AS32934) и не
+	// должен зависеть от DNS-ответа витринного домена.
+	if ov.ASN > 0 {
+		asn = ov.ASN
 	}
 	// CDN-сервис без домена (cloudflare/aws/google/fastly): ASN берём из
 	// каталога config.cdn_sources по имени сервиса, а не из кода.
@@ -102,18 +117,25 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 	}
 
 	params := &collectors.Params{
-		Service:       name,
-		ASN:           asn,
-		Domains:       domains,
-		IPs:           class.IPs,
-		StaticURL:     staticURL,
-		MaxPrefixes:   maxPrefixes,
-		AlsoCDN:       alsoCDN,
-		IncludeGoogle: asn == collectors.GoogleASN,
+		Service:        name,
+		ASN:            asn,
+		Domains:        domains,
+		IPs:            class.IPs,
+		StaticURL:      staticURL,
+		MaxPrefixes:    maxPrefixes,
+		ASNMaxPrefixes: asnMaxPrefixes,
+		AlsoCDN:        alsoCDN,
+		IncludeGoogle:  asn == collectors.GoogleASN,
 	}
 
+	// Разделяем набор по источнику: asn-часть пойдёт через RDAP-проверку,
+	// остальное (preset/dynamic/whois) остаётся нетронутым. Это критично для
+	// составного "preset,asn": /32 доменов пресета могут принадлежать другому
+	// ASN (CDN/хостинг/бренд-сквоттеры), и проверка всего набора против одного
+	// ASN молча обедняла бы результат.
 	var (
-		acc     []netip.Prefix
+		nonASN  []netip.Prefix
+		asnPart []netip.Prefix
 		used    []string
 		lastErr error
 	)
@@ -131,12 +153,16 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 			continue
 		}
 		if res != nil && len(res.Prefixes) > 0 {
-			acc = append(acc, res.Prefixes...)
+			if method == "asn" {
+				asnPart = append(asnPart, res.Prefixes...)
+			} else {
+				nonASN = append(nonASN, res.Prefixes...)
+			}
 			used = append(used, res.Method)
 		}
 	}
 
-	if len(acc) == 0 {
+	if len(nonASN) == 0 && len(asnPart) == 0 {
 		if lastErr != nil {
 			return nil, "", lastErr
 		}
@@ -145,16 +171,19 @@ func (s *Syncer) collect(ctx context.Context, name string, ov config.ServiceOver
 
 	usedMethod := strings.Join(used, "+")
 
-	// RDAP-проверка принадлежности одному ASN имеет смысл только для метода
-	// asn (он собирает префиксы известного ASN). whois собирает префиксы
-	// ВСЕХ ASN, найденных по резолвленным IP: проверка против одного
-	// (основного) ASN отвергала бы легитимные префиксы вторичных ASN.
-	if shouldVerifyASNOwnership(usedMethod, asn) {
+	// RDAP-проверка принадлежности одному ASN применяется только к вкладу
+	// метода asn. whois собирает префиксы ВСЕХ ASN по резолвленным IP, а
+	// preset/dynamic — точные /32: проверка против одного (основного) ASN
+	// отвергала бы легитимные адреса вторичных ASN и хосты.
+	if shouldVerifyASNOwnership(usedMethod, asn) && len(asnPart) > 0 {
 		vctx, restore := collectors.Scope(ctx, collectVerifyLo, collectVerifyHi)
-		acc = s.verifyASNOwnership(vctx, acc, asn)
+		asnPart = s.verifyASNOwnership(vctx, asnPart, asn)
 		restore()
 	}
 
+	acc := make([]netip.Prefix, 0, len(nonASN)+len(asnPart))
+	acc = append(acc, nonASN...)
+	acc = append(acc, asnPart...)
 	return acc, usedMethod, nil
 }
 
@@ -196,18 +225,30 @@ func (s *Syncer) verifyASNOwnership(ctx context.Context, in []netip.Prefix, asn 
 	step := rdapVerifyStep(len(in))
 	rejected := 0
 	checked := 0
+	// Порядок проверки детерминирован: вход может быть в порядке методов/выдачи
+	// bgp.tools, и семплирование по позиции отбрасывало бы разные подмножества
+	// от запуска к запуску (мигающие удаления). Сортируем копию для обхода,
+	// исходный порядок вывода сохраняем.
+	ordered := make([]netip.Prefix, len(in))
+	copy(ordered, in)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Addr().Compare(ordered[j].Addr()) != 0 {
+			return ordered[i].Addr().Less(ordered[j].Addr())
+		}
+		return ordered[i].Bits() < ordered[j].Bits()
+	})
 	checkedTotal := (len(in) + step - 1) / step
 	dropped := make(map[netip.Prefix]bool)
 
-	for i := 0; i < len(in); i += step {
+	for i := 0; i < len(ordered); i += step {
 		if ctx.Err() != nil {
 			break
 		}
 		checked++
 		collectors.Report(ctx, fmt.Sprintf("проверка AS%d: %d/%d", asn, checked, checkedTotal), checked, checkedTotal)
-		ok, err := s.resolver().VerifyPrefixBelongsToASN(ctx, in[i], asn)
+		ok, err := s.resolver().VerifyPrefixBelongsToASN(ctx, ordered[i], asn)
 		if err == nil && !ok {
-			dropped[in[i]] = true
+			dropped[ordered[i]] = true
 			rejected++
 		}
 	}

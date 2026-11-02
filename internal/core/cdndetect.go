@@ -43,6 +43,15 @@ type CDNAdvice struct {
 	Coverage      *CoverageReport `json:"coverage,omitempty"`
 	Broad         []string        `json:"broad,omitempty"`
 	Verification  []*SNIVerdict   `json:"verification,omitempty"`
+
+	// Expand* — совет по расширению доменного пресета до "preset,asn"
+	// объявленным (известным и узким) ASN сервиса. Заполняется независимо от
+	// CDN-детекта и не зависит от него.
+	ExpandASN       int    `json:"expand_asn,omitempty"`
+	ExpandPrefixes  int    `json:"expand_prefixes,omitempty"`
+	ExpandRecommend bool   `json:"expand_recommend"`
+	ExpandReason    string `json:"expand_reason"`
+	ExpandCurrent   bool   `json:"expand_current,omitempty"`
 }
 
 // cdnProbeDeps — зависимости пробника (внедряются в тестах).
@@ -67,6 +76,10 @@ type adviseConfig struct {
 	// полный обход не укладывался в addDetectTimeout, из-за чего сервис
 	// оставался на широком whois-методе.
 	maxProbeDomains int
+	// expand включает расчёт совета по расширению пресета до "preset,asn"
+	// (измерение размера объявленного ASN — сетевой шаг). Выключен в пути
+	// добавления, когда авто-расширение не разрешено конфигом.
+	expand bool
 }
 
 // AdviseOption настраивает конкретный вызов AdviseCDN.
@@ -94,6 +107,12 @@ const cdnProbeDomainTimeout = 4 * time.Second
 // подтвердить по нескольким, а полный обход не укладывается в таймаут.
 func WithProbeDomains(n int) AdviseOption {
 	return func(c *adviseConfig) { c.maxProbeDomains = n }
+}
+
+// WithExpand включает расчёт совета о расширении пресета до "preset,asn"
+// (измерение размера объявленного ASN — сетевой шаг, идёт через BGP-таблицу).
+func WithExpand() AdviseOption {
+	return func(c *adviseConfig) { c.expand = true }
 }
 
 // AdviseCDN проверяет, обслуживается ли сервис за CDN, и возвращает
@@ -129,6 +148,7 @@ func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOv
 	}
 	if !adv.Detected {
 		s.fillQuality(ctx, name, ov, adv)
+		s.adviseExpand(ctx, name, ov, &cfg, adv)
 		return adv
 	}
 
@@ -147,6 +167,7 @@ func (s *Syncer) AdviseCDN(ctx context.Context, name string, ov config.ServiceOv
 		adv.Recommend = true
 	}
 	s.fillQuality(ctx, name, ov, adv)
+	s.adviseExpand(ctx, name, ov, &cfg, adv)
 	return adv
 }
 
@@ -399,6 +420,12 @@ func (s *Syncer) ApplyCDNRecommendation(ctx context.Context, name string, adv *C
 	if orig.Method == "cdn" {
 		return 0, fmt.Errorf("service %s already uses method cdn", name)
 	}
+	// Сервис с доменным пресетом нельзя переключать на cdn: это снесло бы
+	// привязанный пресет (пресет навязывает метод). Расширение пресета до
+	// preset,asn — отдельный путь (ApplyExpandRecommendation).
+	if presetMethod(orig) != "" {
+		return 0, fmt.Errorf("service %s has a preset bound, cannot switch to cdn — use preset expansion instead", name)
+	}
 	if orig.Method == "static_url" && (orig.StaticURL == "" || orig.StaticURL == adv.URL) {
 		return 0, fmt.Errorf("service %s already uses official CDN list via static_url", name)
 	}
@@ -550,13 +577,32 @@ func presetMethod(ov config.ServiceOverride) string {
 }
 
 // effectiveMethod — метод сбора сервиса с учётом привязанного пресета.
-// Пресет важнее сохранённого override.Method: сервис с пресетом всегда
-// собирается по его содержимому. Без пресета — override.Method ("" = авто).
+// Пресет навязывает свой основной метод, но доменный пресет ("preset") можно
+// дополнить явно запрошенными методами asn/dynamic: "preset,asn" собирает
+// точные /32 доменов пресета ПЛЮС широкие сети ASN (например Meta-семейство).
+// Для IP-пресета (static_url) доп. методы не подмешиваются: список намеренно
+// узкий. Без пресета — override.Method ("" = авто).
 func effectiveMethod(ov config.ServiceOverride) string {
-	if m := presetMethod(ov); m != "" {
-		return m
+	pm := presetMethod(ov)
+	if pm == "" {
+		return ov.Method
 	}
-	return ov.Method
+	if pm != "preset" {
+		return pm
+	}
+	var extra []string
+	for _, m := range splitMethods(ov.Method) {
+		switch m {
+		case "preset", "":
+			continue
+		case "asn", "dynamic":
+			extra = append(extra, m)
+		}
+	}
+	if len(extra) == 0 {
+		return pm
+	}
+	return pm + "," + strings.Join(extra, ",")
 }
 
 // currentMethodName — текущий метод сервиса: пресет, override или дефолт
@@ -568,13 +614,24 @@ func currentMethodName(name string, ov config.ServiceOverride) string {
 	return strings.Join(classifier.Classify(name, "").Methods, ",")
 }
 
-// sniProbeEnabled — нужна ли SNI-проба при заданном флаге конфига. Для метода
-// preset проба не запускается: коллектор уже собирает строго DNS-ответы
-// доменов пресета, а проба резолвит их заново и проверяет TLS — шумно (CDN
-// рвут прямые хендшейки) и дорого на крупных пресетах; «основной домен» =
-// первый домен файла пресета, а не домен сервиса.
+// CurrentMethod — фактически применяемый метод сервиса (для UI/API):
+// пресет с доп. методами, override или дефолт классификатора. Нужен, когда
+// override пуст: пользователь должен видеть работающий метод, а не пустоту.
+func (s *Syncer) CurrentMethod(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	s.cfg.RLock()
+	ov := s.cfg.Overrides[name]
+	s.cfg.RUnlock()
+	return currentMethodName(name, ov)
+}
+
+// sniProbeEnabled — нужна ли SNI-проба при заданном флаге конфига. При
+// наличии метода preset проба не запускается: коллектор собирает DNS-ответы
+// десятков доменов пресета, а проба резолвит их заново и проверяет TLS —
+// шумно (CDN рвут прямые хендшейки) и дорого; «основной домен» = первый
+// домен файла пресета, а не домен сервиса.
 func sniProbeEnabled(cfgEnabled bool, ov config.ServiceOverride) bool {
-	return cfgEnabled && effectiveMethod(ov) != "preset"
+	return cfgEnabled && !hasMethod(splitMethods(effectiveMethod(ov)), "preset")
 }
 
 // splitMethods разбивает строку методов ("dynamic,whois" из конфига,

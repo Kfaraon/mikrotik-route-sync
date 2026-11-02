@@ -25,6 +25,9 @@ type Params struct {
 	MaxPrefixes   int
 	AlsoCDN       []int
 	IncludeGoogle bool // подмешивать диапазоны Google в dynamic (только сервисы Google)
+	// ASNMaxPrefixes — явный (из override) кап префиксов для метода asn.
+	// 0 — без капа: официальные большие ASN (akamai) не должны молча резаться.
+	ASNMaxPrefixes int
 }
 
 // Registry — реестр фабрик коллекторов по имени метода.
@@ -48,7 +51,8 @@ func NewRegistry(deps *Deps) *Registry {
 		if p.ASN <= 0 {
 			return nil, fmt.Errorf("asn: ASN is required for service %s", p.Service)
 		}
-		return NewASNCollector(p.ASN, r.deps.HTTP, r.deps.Cache, r.deps.TTL), nil
+		return NewASNCollector(p.ASN, r.deps.HTTP, r.deps.Cache, r.deps.TTL).
+			WithMaxPrefixes(p.ASNMaxPrefixes), nil
 	})
 
 	r.Register("whois", func(p *Params) (Collector, error) {
@@ -77,7 +81,7 @@ func NewRegistry(deps *Deps) *Registry {
 		if len(p.Domains) == 0 {
 			return nil, fmt.Errorf("preset: domains are required for service %s", p.Service)
 		}
-		return NewPresetCollector(r.deps.Resolver, p.Domains), nil
+		return NewPresetCollector(r.deps.Resolver, r.deps.HTTP, p.Domains, p.AlsoCDN), nil
 	})
 
 	return r

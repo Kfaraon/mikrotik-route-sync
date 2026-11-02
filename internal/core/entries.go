@@ -89,6 +89,13 @@ func applyForeignExclusions(desired []string, foreign []addresslist.Entry, log *
 	}
 	log.Info("исключены пересечения с существующими записями MikroTik",
 		"overlapped", hits, "before", len(desired), "after", len(out))
+	// Аннигиляция: чужие (ручные/другие сервисы) записи закрыли почти весь
+	// желаемый набор. Синк отработает «успешно» с нулём изменений, но сервис
+	// фактически не управляется — это нужно видеть в логе.
+	if len(out)*2 < len(desired) {
+		log.Warn("чужие записи MikroTik покрывают большую часть желаемого набора, сервис почти не управляется",
+			"before", len(desired), "after", len(out), "foreign", len(foreign))
+	}
 
 	parsed := make([]netip.Prefix, 0, len(out))
 	for _, d := range out {

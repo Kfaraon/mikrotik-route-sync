@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
 )
 
@@ -97,5 +99,77 @@ func TestVerifyASNOwnershipAllGoodKeepsAll(t *testing.T) {
 	}
 	if out := s.verifyASNOwnership(context.Background(), in, 13335); len(out) != 2 {
 		t.Fatalf("len=%d, want 2", len(out))
+	}
+}
+
+// TestCollectPresetASNKeepsHostsIntact: при составном методе "preset,asn"
+// RDAP-проверка ASN не должна затрагивать точные /32 доменов пресета —
+// их ASN может отличаться (CDN/хостинг/бренд-сквоттеры). Проверяется только
+// asn-вклад.
+func TestCollectPresetASNKeepsHostsIntact(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	// RDAP отвергает всё, кроме 10.0.x — чтобы проверить, что /32 не проверяются.
+	s.resPtr.Store(resolver.NewResolver("", &rdapFakeFetch{bad: map[string]bool{"157.240.5.5": true, "157.240.6.6": true}}, nil, 0))
+
+	reg := collectors.NewRegistry(s.deps.Load())
+	reg.Register("preset", func(p *collectors.Params) (collectors.Collector, error) {
+		return &fakeCollector{src: &fakeSource{prefixes: []string{"157.240.5.5/32", "157.240.6.6/32"}}}, nil
+	})
+	reg.Register("asn", func(p *collectors.Params) (collectors.Collector, error) {
+		return &fakeCollector{src: &fakeSource{prefixes: []string{"157.240.0.0/16", "157.241.0.0/16"}}}, nil
+	})
+	s.regPtr.Store(reg)
+
+	ov := config.ServiceOverride{Method: "preset,asn", ASN: 32934, Preset: "", Domains: []string{"instagram.com"}}
+	// Вручную прогоняем effectiveMethod: без пресета он вернёт ov.Method как есть.
+	prefixes, _, err := s.collect(context.Background(), "instagram.com", ov, 0, nil)
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	// /32 должны остаться, широкие сети ASN — тоже (все «свои» для RDAP-стаба).
+	hosts := 0
+	for _, p := range prefixes {
+		if p.Bits() == 32 {
+			hosts++
+		}
+	}
+	if hosts != 2 {
+		t.Fatalf("preset /32 not preserved: %v", prefixes)
+	}
+}
+
+// TestCollectExplicitASNBeatsResolver: явный ASN из override имеет приоритет
+// над ASN классификатора и рантайм-резолвом. Без этого Meta-семейство
+// (instagram/facebook/whatsapp) зависело бы от DNS-ответа витринного домена,
+// а общий для них AS32934 подставлялся бы неверно.
+func TestCollectExplicitASNBeatsResolver(t *testing.T) {
+	s, _ := newTestSyncer(t, noopRouter)
+	// DNS в никуда: если бы код попытался резолвить ASN, тест это заметил бы
+	// по нулю в Params.ASN.
+	s.resPtr.Store(deadEndResolver())
+
+	var gotASN int
+	reg := collectors.NewRegistry(s.deps.Load())
+	for _, m := range []string{"asn", "dynamic"} {
+		method := m
+		reg.Register(method, func(p *collectors.Params) (collectors.Collector, error) {
+			gotASN = p.ASN
+			return &fakeCollector{src: &fakeSource{
+				prefixes: []string{"157.240.0.0/16"},
+			}}, nil
+		})
+	}
+	s.regPtr.Store(reg)
+
+	ov := config.ServiceOverride{ASN: 32934}
+	prefixes, used, err := s.collect(context.Background(), "instagram", ov, 100, nil)
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if gotASN != 32934 {
+		t.Fatalf("collector got ASN=%d, want explicit 32934", gotASN)
+	}
+	if len(prefixes) == 0 {
+		t.Fatalf("no prefixes collected, used=%q", used)
 	}
 }

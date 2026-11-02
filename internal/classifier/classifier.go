@@ -22,6 +22,11 @@ type knownService struct {
 	domains []string
 	static  []string
 	asn     string
+	// declaredASN — объявленный (проверенный мейнтейнером) номер ASN сервиса.
+	// Заполняется только когда ASN достоверно известен и узок: используется
+	// как безопасное расширение доменного пресета до "preset,asn" (см.
+	// core.adviseExpand). Пусто — ASN не объявлен.
+	declaredASN int
 }
 
 // knownServices — словарь известных сервисов (PROMPT II.2).
@@ -52,12 +57,14 @@ var knownServices = map[string]knownService{
 		domains: []string{"youtube.com", "googlevideo.com", "ytimg.com"},
 	},
 	"instagram": {
-		methods: []string{"dynamic", "asn"},
-		domains: []string{"instagram.com", "cdninstagram.com"},
+		methods:     []string{"dynamic", "asn"},
+		domains:     []string{"instagram.com", "cdninstagram.com"},
+		declaredASN: 32934,
 	},
 	"facebook": {
-		methods: []string{"dynamic", "asn"},
-		domains: []string{"facebook.com", "fbcdn.net"},
+		methods:     []string{"dynamic", "asn"},
+		domains:     []string{"facebook.com", "fbcdn.net"},
+		declaredASN: 32934,
 	},
 	"telegram": {
 		methods: []string{"dynamic", "asn", "static_url"},
@@ -89,6 +96,17 @@ func matchKnown(s string) (knownService, bool) {
 		}
 	}
 	return knownService{}, false
+}
+
+// DeclaredASN возвращает объявленный (проверенный) ASN сервиса. Второе
+// значение false, если сервис неизвестен или ASN для него не объявлен.
+// Значение безопасно для расширения доменного пресета до "preset,asn".
+func DeclaredASN(service string) (int, bool) {
+	s := strings.ToLower(strings.TrimSpace(service))
+	if k, ok := matchKnown(s); ok && k.declaredASN > 0 {
+		return k.declaredASN, true
+	}
+	return 0, false
 }
 
 // Classify определяет методы сбора для сервиса.

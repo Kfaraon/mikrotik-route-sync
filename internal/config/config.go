@@ -141,7 +141,6 @@ type MikroTikConfig struct {
 type FirewallConfig struct {
 	AddressList    string `yaml:"address_list"`    // например TO-VPN
 	CommentPrefix  string `yaml:"comment_prefix"`  // например AUTO
-	IgnoreDynamic  bool   `yaml:"ignore_dynamic"`  // не трогать dynamic-записи
 	ManageDisabled bool   `yaml:"manage_disabled"` // создавать записи disabled=false
 }
 
@@ -272,11 +271,20 @@ type SuggestConfig struct {
 	Sources []string `yaml:"sources"`
 }
 
-// PresetsConfig — локальное зеркало пресетов.
+// PresetsConfig — локальное зеркало пресетов и авто-расширение методов.
 type PresetsConfig struct {
 	// UpdateSchedule — расписание обновления зеркала (cron/every/daily,
 	// пусто — только вручную).
 	UpdateSchedule string `yaml:"update_schedule"`
+	// ExpandMethodAuto — автоматически расширять метод пресет-сервиса до
+	// "preset,asn" по объявленному (известному) ASN при добавлении сервиса.
+	// По умолчанию false: система только советует (см. поле expand в ответе
+	// recommend), а применяет — оператор. Включение авто-расширения —
+	// осознанный выбор: набор маршрутов VPN вырастет.
+	ExpandMethodAuto bool `yaml:"expand_method_auto"`
+	// ExpandMaxPrefixes — максимум префиксов объявленного ASN, при котором
+	// расширение считается «узким» и предлагается. 0 — дефолт.
+	ExpandMaxPrefixes int `yaml:"expand_max_prefixes"`
 }
 
 // ServiceOverride — переопределения для конкретного сервиса.
@@ -287,6 +295,10 @@ type ServiceOverride struct {
 	Primary string `yaml:"primary,omitempty"`
 	// Preset — слаг пресета, из которого скопированы Generated.
 	Preset string `yaml:"preset,omitempty"`
+	// ASN — явный номер автономной системы для методов asn/cdn (например
+	// 32934 у Meta-семейства). Пусто/0 — ASN определяется рантаймом по
+	// Primary/domains[0]. Явное значение избавляет от зависимости от DNS.
+	ASN int `yaml:"asn,omitempty"`
 	// Generated — последний применённый снимок пресета (для refresh без
 	// потери ручных доменов: ручные = Domains минус Generated).
 	Generated       []string `yaml:"generated,omitempty"`
@@ -399,6 +411,11 @@ func setDefaults(c *Config) {
 	}
 	if c.Safety.MaxASNPrefixes == 0 {
 		c.Safety.MaxASNPrefixes = 100
+	}
+	// Порог «узости» для совета о расширении пресета до preset,asn:
+	// ASN крупнее — не расширяем (это уже широкий набор, обычно CDN/облако).
+	if c.Presets.ExpandMaxPrefixes == 0 {
+		c.Presets.ExpandMaxPrefixes = 300
 	}
 	// Хостовые /32 разрешены по умолчанию (nil = true): материализуем,
 	// чтобы GetPath/UI показывали фактическое значение, а Save фиксировал.
@@ -554,6 +571,9 @@ func (c *Config) Validate() error {
 	if c.Safety.MaxASNPrefixes < 1 || c.Safety.MaxASNPrefixes > 10000 {
 		return fmt.Errorf("safety.max_asn_prefixes must be 1..10000, got %d", c.Safety.MaxASNPrefixes)
 	}
+	if c.Presets.ExpandMaxPrefixes < 1 || c.Presets.ExpandMaxPrefixes > 10000 {
+		return fmt.Errorf("presets.expand_max_prefixes must be 1..10000, got %d", c.Presets.ExpandMaxPrefixes)
+	}
 	if c.Safety.MaxDeleteRatio < 0 || c.Safety.MaxDeleteRatio > 1 {
 		return fmt.Errorf("safety.max_delete_ratio must be 0..1, got %v", c.Safety.MaxDeleteRatio)
 	}
@@ -593,6 +613,9 @@ func (c *Config) Validate() error {
 			if err := ValidateMethods(ov.Method); err != nil {
 				return fmt.Errorf("service %q: %v", name, err)
 			}
+		}
+		if ov.ASN < 0 || ov.ASN > 4294967295 {
+			return fmt.Errorf("service %q: asn must be 0..4294967295, got %d", name, ov.ASN)
 		}
 		if ov.StaticURL != "" {
 			u, err := url.Parse(ov.StaticURL)

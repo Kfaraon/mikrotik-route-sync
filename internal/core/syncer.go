@@ -108,6 +108,10 @@ type Syncer struct {
 	// cdnProbeFn — подмена пробника CDN-детекции в тестах (nil = реальный).
 	cdnProbeFn func(ctx context.Context, name string, domains []string) *CDNAdvice
 
+	// expandCountFn — подмена измерения размера объявленного ASN в тестах
+	// (nil = реальный сбор префиксов ASN).
+	expandCountFn func(ctx context.Context, asn int) (int, error)
+
 	// collectFn — подмена сбора префиксов в тестах (nil = реальный collect).
 	collectFn func(ctx context.Context, name string, ov config.ServiceOverride) ([]netip.Prefix, string, error)
 
@@ -553,7 +557,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// сбор не блокируется, только WARN и поле в результате.
 	// Долгая фаза (резолв десятков доменов): прогресс двигается по доменам
 	// в отрезке [50,52], иначе UI замирал бы на «агрегация префиксов · 50%».
-	svcDomains := serviceDomains(name, ov, classifier.Classify(name, ov.Method))
+	svcDomains := serviceDomains(name, ov, classifier.Classify(name, effectiveMethod(ov)))
 	cov := s.checkServiceCoverageProgress(ctx, svcDomains, agg,
 		func(done, total int, domain string) {
 			s.reportVerificationStep(name, "контроль покрытия", dry,

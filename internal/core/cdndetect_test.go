@@ -577,6 +577,12 @@ func TestEffectiveMethodPresetWins(t *testing.T) {
 		{"no preset keeps override", config.ServiceOverride{Method: "whois"}, "whois"},
 		{"no preset no override", config.ServiceOverride{}, ""},
 		{"unknown preset keeps override", config.ServiceOverride{Preset: "nope-xyz", Method: "cdn"}, "cdn"},
+		// Доменный пресет можно дополнить asn/dynamic: "preset,asn" собирает
+		// точные /32 пресета плюс широкие сети ASN (Meta-семейство).
+		{"domain preset plus asn", config.ServiceOverride{Preset: "youtube", Method: "preset,asn"}, "preset,asn"},
+		{"domain preset plus dynamic", config.ServiceOverride{Preset: "youtube", Method: "dynamic,preset"}, "preset,dynamic"},
+		{"domain preset ignores whois/cdn extras", config.ServiceOverride{Preset: "youtube", Method: "whois,cdn"}, "preset"},
+		{"ip preset drops extras", config.ServiceOverride{Preset: "rublock-ip", Method: "static_url,asn"}, "static_url"},
 	}
 	for _, c := range cases {
 		if got := effectiveMethod(c.ov); got != c.want {
@@ -601,6 +607,8 @@ func TestSNIProbeEnabledSkipsPreset(t *testing.T) {
 		{"cfg off, no preset", false, config.ServiceOverride{Method: "whois"}, false},
 		{"cfg off, preset", false, config.ServiceOverride{Preset: "youtube"}, false},
 		{"cfg on, unknown preset", true, config.ServiceOverride{Preset: "nope-xyz", Method: "cdn"}, true},
+		// preset+asn: метод всё ещё содержит preset — проба выключена.
+		{"cfg on, preset+asn", true, config.ServiceOverride{Preset: "youtube", Method: "preset,asn"}, false},
 	}
 	for _, c := range cases {
 		if got := sniProbeEnabled(c.cfgEnabled, c.ov); got != c.want {
@@ -628,6 +636,33 @@ func TestCurrentMethodNameAndSplit(t *testing.T) {
 		if len(parts) != 2 || parts[0] != "dynamic" || (parts[1] != "whois" && parts[1] != "cdn") {
 			t.Fatalf("splitMethods(%q)=%v", s, parts)
 		}
+	}
+}
+
+// TestSyncerCurrentMethod: UI/API должны видеть фактически применяемый метод,
+// даже когда override пуст (иначе сервис с работающим сбором показывался без
+// метода вовсе).
+func TestSyncerCurrentMethod(t *testing.T) {
+	s, cfg := newTestSyncer(t, noopRouter)
+	cfg.Overrides = map[string]config.ServiceOverride{
+		"demo": {Method: "cdn"},
+		"yt":   {Preset: "youtube"},
+	}
+
+	cases := []struct{ name, want string }{
+		{"demo", "cdn"},              // явный override
+		{"yt", "preset"},             // метод навязан пресетом
+		{"instagram", "dynamic,asn"}, // дефолт классификатора
+		{"rutracker.net", "whois"},   // неизвестный домен → whois
+	}
+	for _, c := range cases {
+		if got := s.CurrentMethod(c.name); got != c.want {
+			t.Errorf("CurrentMethod(%q)=%q, want %q", c.name, got, c.want)
+		}
+	}
+	// Имя сервиса нормализуется (регистр/пробелы).
+	if got := s.CurrentMethod("  DEMO  "); got != "cdn" {
+		t.Errorf("CurrentMethod должен нормализовать имя: %q", got)
 	}
 }
 

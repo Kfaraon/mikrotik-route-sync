@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
 )
 
 // bgpToolsTableURL — публичный дамп BGP-таблицы bgp.tools (формат: "CIDR ASN"
@@ -113,15 +115,22 @@ func getASPrefixes(ctx context.Context, h *HTTP, cache PrefixCache, ttl time.Dur
 //
 // bgp.tools таблица (основной) → RIPEstat (fallback), с кэшированием в bbolt.
 type ASNCollector struct {
-	asn   int
-	http  *HTTP
-	cache PrefixCache
-	ttl   time.Duration
+	asn         int
+	http        *HTTP
+	cache       PrefixCache
+	ttl         time.Duration
+	maxPrefixes int
 }
 
 // NewASNCollector создаёт коллектор для ASN.
 func NewASNCollector(asn int, h *HTTP, cache PrefixCache, ttl time.Duration) *ASNCollector {
 	return &ASNCollector{asn: asn, http: h, cache: cache, ttl: ttl}
+}
+
+// WithMaxPrefixes задаёт кап префиксов (агрегированных). 0 — без капа.
+func (c *ASNCollector) WithMaxPrefixes(n int) *ASNCollector {
+	c.maxPrefixes = n
+	return c
 }
 
 func (c *ASNCollector) Name() string { return "asn" }
@@ -136,6 +145,19 @@ func (c *ASNCollector) Collect(ctx context.Context, service string, opts Options
 	out := filterPrefixes(parsePrefixLines(lines), opts)
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no valid prefixes after filtering for AS%d", c.asn)
+	}
+	// Кап применяется ПОСЛЕ агрегации/дедупликации — считаем покрытие, а не
+	// «строки»: у сжатого набора одна /20 заменяет множество смежных /24.
+	// Усечение не должно быть молчаливым: если отрезали — это признак того,
+	// что сработал not-declared кап (защита от гигантских ASN).
+	if c.maxPrefixes > 0 {
+		if agg, err := aggregator.Aggregate(out); err == nil {
+			out = agg
+		}
+		if len(out) > c.maxPrefixes {
+			ReportCreep(ctx, fmt.Sprintf("AS%d: набор усечён до %d префиксов (было %d)", c.asn, c.maxPrefixes, len(out)))
+			out = out[:c.maxPrefixes]
+		}
 	}
 
 	return &Result{

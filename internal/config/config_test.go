@@ -397,6 +397,8 @@ func TestValidateSafetyRanges(t *testing.T) {
 		{"warn_broad_v4 high", func(c *Config) { c.Safety.WarnBroadV4 = 33 }},
 		{"max_asn_prefixes zero", func(c *Config) { c.Safety.MaxASNPrefixes = 0 }},
 		{"max_asn_prefixes huge", func(c *Config) { c.Safety.MaxASNPrefixes = 10001 }},
+		{"expand_max_prefixes zero", func(c *Config) { c.Presets.ExpandMaxPrefixes = 0 }},
+		{"expand_max_prefixes huge", func(c *Config) { c.Presets.ExpandMaxPrefixes = 10001 }},
 		{"max_delete_ratio negative", func(c *Config) { c.Safety.MaxDeleteRatio = -0.1 }},
 		{"max_delete_ratio above one", func(c *Config) { c.Safety.MaxDeleteRatio = 1.1 }},
 		{"require_confirmation_over negative", func(c *Config) { c.Safety.RequireConfirmationOver = -1 }},

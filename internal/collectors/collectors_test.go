@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
 )
 
 func TestFilterPrefixes(t *testing.T) {
@@ -212,7 +214,7 @@ func TestPresetCollectorResolvesDomains(t *testing.T) {
 		"a.net": {"1.2.3.4", "2a00::1"}, // IPv6 отбрасывается
 		"b.net": {"5.6.7.8"},
 	}}
-	c := NewPresetCollector(r, []string{"a.net", "b.net", "dead.net"})
+	c := NewPresetCollector(r, nil, []string{"a.net", "b.net", "dead.net"}, nil)
 	if c.Name() != "preset" {
 		t.Fatalf("name=%q, want preset", c.Name())
 	}
@@ -235,9 +237,59 @@ func TestPresetCollectorResolvesDomains(t *testing.T) {
 
 func TestPresetCollectorEmptyFails(t *testing.T) {
 	r := &fakeResolver{domains: map[string][]string{}, errOn: map[string]bool{"x.net": true}}
-	c := NewPresetCollector(r, []string{"x.net"})
+	c := NewPresetCollector(r, nil, []string{"x.net"}, nil)
 	if _, err := c.Collect(context.Background(), "x", Options{}); err == nil {
 		t.Fatal("unresolvable preset domains must fail")
+	}
+}
+
+// preset-коллектор с also_cdn добавляет официальный список CDN поверх /32
+// доменов пресета. HTTP-транспорт подменён стабом, каталог CDN — временный.
+func TestPresetCollectorAlsoCDN(t *testing.T) {
+	defer SetCDNSources(config.DefaultCDNSources())
+	SetCDNSources([]config.CDNSourceConfig{
+		{Service: "custom", Name: "Custom CDN", ASN: 64500, URL: "https://cdn.example/list.txt", Parser: "text"},
+	})
+
+	stub := &stubTransport{status: 200, body: "203.0.113.0/24\n198.51.100.0/24\n"}
+	h := fastHTTP(t, stub)
+
+	r := &fakeResolver{domains: map[string][]string{"a.net": {"1.2.3.4"}}}
+	c := NewPresetCollector(r, h, []string{"a.net"}, []int{64500})
+	res, err := c.Collect(context.Background(), "x", Options{})
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	// 1 host-route домена + 2 сети CDN.
+	if len(res.Prefixes) != 3 {
+		t.Fatalf("prefixes=%v, want 3", res.Prefixes)
+	}
+	got := map[string]bool{}
+	for _, p := range res.Prefixes {
+		got[p.String()] = true
+	}
+	for _, want := range []string{"1.2.3.4/32", "203.0.113.0/24", "198.51.100.0/24"} {
+		if !got[want] {
+			t.Errorf("отсутствует %s: %v", want, res.Prefixes)
+		}
+	}
+	// Метод остаётся preset: also_cdn лишь дополняет его.
+	if res.Method != "preset" {
+		t.Fatalf("method=%q, want preset", res.Method)
+	}
+}
+
+// preset-коллектор с also_cdn, но без HTTP-клиента: CDN молча пропускается,
+// DNS-часть всё равно отдаётся (не падаем из-за недоступного источника).
+func TestPresetCollectorAlsoCDNWithoutHTTP(t *testing.T) {
+	r := &fakeResolver{domains: map[string][]string{"a.net": {"1.2.3.4"}}}
+	c := NewPresetCollector(r, nil, []string{"a.net"}, []int{64500})
+	res, err := c.Collect(context.Background(), "x", Options{})
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if len(res.Prefixes) != 1 || res.Prefixes[0].String() != "1.2.3.4/32" {
+		t.Fatalf("prefixes=%v, want только DNS-часть", res.Prefixes)
 	}
 }
 

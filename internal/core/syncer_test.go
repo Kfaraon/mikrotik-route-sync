@@ -285,6 +285,28 @@ func TestApplyPresetRefreshKeepsManual(t *testing.T) {
 	}
 }
 
+// TestApplyPresetRefreshKeepsASNExpansion — refresh пресета не должен терять
+// расширение до "preset,asn" (метод перевыставляется из пресета, но asn
+// сохраняется). Иначе после первого обновления пресета расширение молча
+// исчезало бы.
+func TestApplyPresetRefreshKeepsASNExpansion(t *testing.T) {
+	m := &mockRouter{t: t}
+	s, _ := newTestSyncer(t, m.serve(nil, false))
+	s.cfg.Overrides = map[string]config.ServiceOverride{
+		"yt": {Preset: "youtube", Method: "preset,asn", ASN: 12345},
+	}
+	if _, _, err := s.ApplyPresetRefresh(context.Background(), "yt", "youtube", false); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	ov := s.GetServiceOverride("yt")
+	if ov.Method != "preset,asn" {
+		t.Fatalf("asn expansion lost after refresh: method=%q", ov.Method)
+	}
+	if ov.ASN != 12345 {
+		t.Fatalf("asn lost after refresh: %d", ov.ASN)
+	}
+}
+
 // reportVerificationStep отображает долю done/total доменов в отрезок
 // [lo,hi] и несёт подпись текущего домена. Верхняя граница не превышается.
 func TestReportVerificationStep(t *testing.T) {
