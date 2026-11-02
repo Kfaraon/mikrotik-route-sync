@@ -1540,6 +1540,14 @@
     }
   }
 
+  // clearPresetHint убирает автоподсказку пресета (кнопки «применить»/
+  // «создать»). Нужна после добавления сервиса: поле имени очищается
+  // программно, событие input не срабатывает, и кнопки остаются висеть.
+  function clearPresetHint() {
+    var hint = byId("svc-preset-hint");
+    if (hint) hint.textContent = "";
+  }
+
   // Автоподсказка пресета по вводимому имени (инвертированный индекс
   // полного зеркала v2fly). Тихо: нет совпадений — нет подсказки.
   function suggestPreset() {
@@ -2941,6 +2949,7 @@
             if (els.addPreset) els.addPreset.value = "";
             if (els.addMethod) els.addMethod.value = "";
             syncAddMethodWithPreset();
+            clearPresetHint();
           });
         }, method ? "" : "Проверяю источник…"));
       });

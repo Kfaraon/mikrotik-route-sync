@@ -1439,6 +1439,26 @@ func TestServicesJSRemovedAlias(t *testing.T) {
 	}
 }
 
+// TestServicesJSClearsPresetHintOnAdd — после добавления сервиса форма
+// очищается программно (событие input не срабатывает), поэтому автоподсказку
+// пресета с кнопками нужно убирать явно, иначе они остаются висеть при
+// выбранном другом методе.
+func TestServicesJSClearsPresetHintOnAdd(t *testing.T) {
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+	start := strings.Index(js, "return addService(name, method, preset).then(function () {")
+	if start < 0 {
+		t.Fatal("submit completion block not found in services.js")
+	}
+	block := js[start : start+300]
+	if !strings.Contains(block, "clearPresetHint()") {
+		t.Fatalf("hint must be cleared after add: %s", block)
+	}
+}
+
 // TestCSRFBasicauthOrigin — Basic без cookie: программный клиент без Origin
 // проходит, браузерный кросс-сайт с чужим Origin режется (403).
 func TestCSRFBasicauthOrigin(t *testing.T) {
