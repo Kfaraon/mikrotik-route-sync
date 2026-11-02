@@ -261,6 +261,10 @@ func TestPresetSourceString(t *testing.T) {
 
 // TestCatalogCoverage — каждый заявленный стартовый слаг есть в
 // сгенерированных данных (ловит забытый апстрим-список).
+//
+// rublock проверяется отдельно: его файл (~39 МБ) — runtime-зеркало и не
+// коммитится, поэтому в свежем клоне он отсутствует и не должен валить тест
+// (остальные тесты на rublock уже скипаются через !Has).
 func TestCatalogCoverage(t *testing.T) {
 	want := []string{
 		"anthropic", "category-proxy-tunnels", "category-vpnservices",
@@ -269,11 +273,16 @@ func TestCatalogCoverage(t *testing.T) {
 		"netflix", "nordvpn", "onedrive", "openai", "paypal", "perplexity",
 		"primevideo", "protonmail", "reddit", "signal", "spotify",
 		"telegram", "tiktok", "twitch", "twitter", "whatsapp", "xai",
-		"youtube", RublockSlug,
+		"youtube",
 	}
 	for _, slug := range want {
 		if _, ok := Get(slug); !ok {
 			t.Errorf("пресет %q отсутствует в data/", slug)
+		}
+	}
+	if Has(RublockSlug) {
+		if _, ok := Get(RublockSlug); !ok {
+			t.Errorf("пресет %q отсутствует в data/", RublockSlug)
 		}
 	}
 }
@@ -300,8 +309,25 @@ func TestShowcaseMatchesCatalog(t *testing.T) {
 		if p.Domains[0] != c.Showcase {
 			t.Errorf("%s: витринный домен %q, ожидался %q", c.Slug, p.Domains[0], c.Showcase)
 		}
-		if !sortedAsc(p.Domains[1:]) {
-			t.Errorf("%s: хвост списка не отсортирован", c.Slug)
+		// Курируемые домены реальной инфраструктуры обязаны выжить под капом
+		// (capDomains), поэтому они идут сразу после витринного и хвост не
+		// обязан быть строго отсортирован. Проверяем: все присутствующие
+		// required на месте, а остаток хвоста отсортирован.
+		required := map[string]bool{}
+		for _, r := range c.Required {
+			required[r] = true
+			if !contains(p.Domains, r) {
+				t.Errorf("%s: курируемый домен %q не попал в пресет", c.Slug, r)
+			}
+		}
+		var rest []string
+		for _, d := range p.Domains[1:] {
+			if !required[d] {
+				rest = append(rest, d)
+			}
+		}
+		if !sortedAsc(rest) {
+			t.Errorf("%s: неотсортированная часть хвоста: %v", c.Slug, rest)
 		}
 	}
 }
@@ -515,6 +541,66 @@ func TestParseUpstreamCap(t *testing.T) {
 		if p.Domains[i] != want[i] {
 			t.Fatalf("nordvpn[%d]=%q, ожидался %q (обрезанный отсортированный список)", i, p.Domains[i], want[i])
 		}
+	}
+}
+
+// TestCapDomainsKeepsRequired — под капом курируемые домены реальной
+// инфраструктуры обязаны выжить, даже если алфавитно они в конце списка.
+func TestCapDomainsKeepsRequired(t *testing.T) {
+	// Отсортированный список: требуемый "zzz.example" стоит в самом конце.
+	domains := []string{"aaa.example", "bbb.example", "ccc.example", "zzz.example"}
+	kept, dropped := capDomains(domains, []string{"zzz.example"}, 3)
+	if len(kept) != 3 {
+		t.Fatalf("kept=%v, ожидалось 3", kept)
+	}
+	if kept[0] != "zzz.example" {
+		t.Errorf("требуемый домен не первый: %v", kept)
+	}
+	if !contains(kept, "aaa.example") || !contains(kept, "bbb.example") {
+		t.Errorf("прочие домены вытеснены: %v", kept)
+	}
+	if len(dropped) != 1 || dropped[0] != "ccc.example" {
+		t.Errorf("dropped=%v, ожидался ccc.example", dropped)
+	}
+}
+
+// TestCapDomainsNoOpWhenFits — если список влезает, домены не меняются.
+func TestCapDomainsNoOpWhenFits(t *testing.T) {
+	domains := []string{"a.example", "b.example"}
+	kept, dropped := capDomains(domains, []string{"a.example"}, 10)
+	if len(kept) != 2 || dropped != nil {
+		t.Fatalf("kept=%v dropped=%v", kept, dropped)
+	}
+}
+
+// TestIntersectPreserve — сохраняет только реально присутствующие required,
+// в порядке want.
+func TestIntersectPreserve(t *testing.T) {
+	got := intersectPreserve([]string{"a.example", "c.example"}, []string{"a.example", "b.example", "c.example"})
+	if len(got) != 2 || got[0] != "a.example" || got[1] != "c.example" {
+		t.Fatalf("got=%v", got)
+	}
+}
+
+// TestParseUpstreamRequiredSurvivesCap — Required-домен, алфавитно стоящий
+// в конце, остаётся в пресете под капом (регрессия: facebook терял fbcdn.net).
+func TestParseUpstreamRequiredSurvivesCap(t *testing.T) {
+	files := upstreamFixture()
+	files["twitter"] = manyDomains(60, "aaa") + "zzz-required.example\n"
+
+	orig := catalog
+	catalog = append(append([]catalogEntry(nil), orig...),
+		catalogEntry{Slug: "twitter", Title: "Twitter (X)", Showcase: "zzz-required.example",
+			Required: []string{"zzz-required.example"}})
+	defer func() { catalog = orig }()
+
+	list, _ := ParseUpstream(files, testSource())
+	p := findPreset(t, list, "twitter")
+	if len(p.Domains) != MaxDomains {
+		t.Fatalf("twitter: %d доменов, ожидался кап %d", len(p.Domains), MaxDomains)
+	}
+	if !contains(p.Domains, "zzz-required.example") {
+		t.Errorf("required-домен вытеснен под капом: %v", p.Domains[:5])
 	}
 }
 

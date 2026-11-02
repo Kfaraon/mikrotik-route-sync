@@ -3,6 +3,7 @@ slug: paypal
 title: PayPal
 domains:
   - paypal.com
+  - paypalobjects.com
   - account-paypal.info
   - account-paypal.net
   - account-paypal.org
@@ -51,7 +52,6 @@ domains:
   - pa9pal.com
   - paaypal.com
   - paily.net
-  - paily.org
 method: static_url
 source:
   repo: v2fly/domain-list-community

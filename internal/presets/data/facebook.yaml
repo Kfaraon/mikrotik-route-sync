@@ -3,6 +3,10 @@ slug: facebook
 title: Facebook
 domains:
   - facebook.com
+  - fb.com
+  - fb.me
+  - fbcdn.com
+  - fbcdn.net
   - aboutfacebook.com
   - accessfacebookfromschool.com
   - acebooik.com
@@ -48,10 +52,6 @@ domains:
   - facebgook.com
   - facebhook.com
   - facebkkk.com
-  - facebo-ok.com
-  - faceboak.com
-  - facebock.com
-  - facebocke.com
 method: static_url
 source:
   repo: v2fly/domain-list-community

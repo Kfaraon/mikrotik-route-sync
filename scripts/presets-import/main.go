@@ -85,6 +85,9 @@ func main() {
 	for _, fb := range st.ShowcaseFallback {
 		logf("WARN: витринный домен не найден (%s), взят фолбэк", fb)
 	}
+	for _, rd := range st.RequiredDropped {
+		logf("WARN: курируемый домен %s отсутствует в апстриме — добавьте вручную в override, если нужен", rd)
+	}
 
 	out := append([]presets.Preset(nil), list...)
 	rublockEntries := 0

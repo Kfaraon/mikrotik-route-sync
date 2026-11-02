@@ -53,43 +53,86 @@ type catalogEntry struct {
 	// (аналог ServiceOverride.Primary: первый домен идёт на ASN-резолв
 	// и SNI-пробу). Пусто — выбирается детерминированным фолбэком.
 	Showcase string
+	// Required — домены, которые обязаны остаться в пресете даже под капом:
+	// реальная инфраструктура сервиса (CDN, контент-домены). Без этого
+	// алфавитная сортировка вытесняла их бренд-двойниками (facebook терял
+	// fbcdn.net, disney — dssott.com, paypal — paypalobjects.com).
+	// Домен обязан присутствовать в апстриме — иначе генератор предупредит,
+	// а тест каталога упадёт (сигнал обновить список).
+	Required []string
+	// Optional — желательные домены, которых может не быть в апстриме
+	// (ручные/внешние ресурсы): при отсутствии генератор предупреждает, но
+	// это не ошибка — такой домен добавляется вручную в override при нужде.
+	Optional []string
 }
 
 // catalog — целевой набор пресетов. Порядок фиксирован и определяет
 // порядок генерации; отсутствующий апстрим-список даёт warn и пропуск.
 var catalog = []catalogEntry{
-	{Slug: "anthropic", Title: "Anthropic (Claude)", Showcase: "anthropic.com"},
-	{Slug: "cloudflare", Title: "Cloudflare", Showcase: "cloudflare.com"},
-	{Slug: "disney", Title: "Disney+", Showcase: "disneyplus.com"},
-	{Slug: "discord", Title: "Discord", Showcase: "discord.com"},
-	{Slug: "dropbox", Title: "Dropbox", Showcase: "dropbox.com"},
-	{Slug: "facebook", Title: "Facebook", Showcase: "facebook.com"},
-	{Slug: "github", Title: "GitHub", Showcase: "github.com"},
-	{Slug: "gitlab", Title: "GitLab", Showcase: "gitlab.com"},
-	{Slug: "google-deepmind", Title: "Google DeepMind / Gemini", Showcase: "deepmind.com"},
-	{Slug: "hbo", Title: "HBO Max", Showcase: "hbo.com"},
-	{Slug: "instagram", Title: "Instagram", Showcase: "instagram.com"},
-	{Slug: "linkedin", Title: "LinkedIn", Showcase: "linkedin.com"},
-	{Slug: "netflix", Title: "Netflix", Showcase: "netflix.com"},
-	{Slug: "nordvpn", Title: "NordVPN", Showcase: "nordvpn.com"},
-	{Slug: "onedrive", Title: "OneDrive", Showcase: "onedrive.com"},
-	{Slug: "openai", Title: "OpenAI (ChatGPT)", Showcase: "openai.com"},
-	{Slug: "paypal", Title: "PayPal", Showcase: "paypal.com"},
-	{Slug: "perplexity", Title: "Perplexity AI", Showcase: "perplexity.ai"},
-	{Slug: "primevideo", Title: "Amazon Prime Video", Showcase: "primevideo.com"},
-	{Slug: "protonmail", Title: "Proton Mail", Showcase: "proton.me"},
-	{Slug: "reddit", Title: "Reddit", Showcase: "reddit.com"},
-	{Slug: "signal", Title: "Signal", Showcase: "signal.org"},
-	{Slug: "spotify", Title: "Spotify", Showcase: "spotify.com"},
-	{Slug: "telegram", Title: "Telegram", Showcase: "telegram.org"},
-	{Slug: "tiktok", Title: "TikTok", Showcase: "tiktok.com"},
-	{Slug: "twitch", Title: "Twitch", Showcase: "twitch.tv"},
-	{Slug: "twitter", Title: "Twitter (X)", Showcase: "twitter.com"},
-	{Slug: "whatsapp", Title: "WhatsApp", Showcase: "whatsapp.com"},
-	{Slug: "xai", Title: "xAI (Grok)", Showcase: "x.ai"},
-	{Slug: "youtube", Title: "YouTube", Showcase: "youtube.com"},
-	{Slug: "category-proxy-tunnels", Title: "Proxy / tunnel services", Showcase: "tailscale.com"},
-	{Slug: "category-vpnservices", Title: "VPN services", Showcase: "nordvpn.com"},
+	{Slug: "anthropic", Title: "Anthropic (Claude)", Showcase: "anthropic.com",
+		Required: []string{"anthropic.com", "claude.ai"}},
+	{Slug: "cloudflare", Title: "Cloudflare", Showcase: "cloudflare.com",
+		Required: []string{"cloudflare.com", "cloudflare.net"}},
+	{Slug: "disney", Title: "Disney+", Showcase: "disneyplus.com",
+		Required: []string{"disneyplus.com", "dssott.com", "bamgrid.com"}},
+	{Slug: "discord", Title: "Discord", Showcase: "discord.com",
+		Required: []string{"discord.com", "discordcdn.com", "discordapp.net"}},
+	{Slug: "dropbox", Title: "Dropbox", Showcase: "dropbox.com",
+		Required: []string{"dropbox.com", "dropboxusercontent.com"}},
+	{Slug: "facebook", Title: "Facebook", Showcase: "facebook.com",
+		Required: []string{"facebook.com", "fbcdn.net", "fbcdn.com", "fb.com", "fb.me"}},
+	{Slug: "github", Title: "GitHub", Showcase: "github.com",
+		Required: []string{"github.com", "githubusercontent.com", "githubassets.com"}},
+	{Slug: "gitlab", Title: "GitLab", Showcase: "gitlab.com",
+		Required: []string{"gitlab.com"}},
+	{Slug: "google-deepmind", Title: "Google DeepMind / Gemini", Showcase: "deepmind.com",
+		Required: []string{"deepmind.com"}, Optional: []string{"googleapis.com", "googleusercontent.com"}},
+	{Slug: "hbo", Title: "HBO Max", Showcase: "hbo.com",
+		Required: []string{"hbo.com", "hbomaxcdn.com"}},
+	{Slug: "instagram", Title: "Instagram", Showcase: "instagram.com",
+		Required: []string{"instagram.com", "cdninstagram.com"}},
+	{Slug: "linkedin", Title: "LinkedIn", Showcase: "linkedin.com",
+		Required: []string{"linkedin.com", "licdn.com"}},
+	{Slug: "netflix", Title: "Netflix", Showcase: "netflix.com",
+		Required: []string{"netflix.com", "nflxso.net", "nflxvideo.net"}},
+	{Slug: "nordvpn", Title: "NordVPN", Showcase: "nordvpn.com",
+		Required: []string{"nordvpn.com"}},
+	{Slug: "onedrive", Title: "OneDrive", Showcase: "onedrive.com",
+		Required: []string{"onedrive.com"}, Optional: []string{"sharepoint.com", "live.com"}},
+	{Slug: "openai", Title: "OpenAI (ChatGPT)", Showcase: "openai.com",
+		Required: []string{"openai.com", "oaistatic.com", "oaiusercontent.com"}},
+	{Slug: "paypal", Title: "PayPal", Showcase: "paypal.com",
+		Required: []string{"paypal.com", "paypalobjects.com"}},
+	{Slug: "perplexity", Title: "Perplexity AI", Showcase: "perplexity.ai",
+		Required: []string{"perplexity.ai"}},
+	{Slug: "primevideo", Title: "Amazon Prime Video", Showcase: "primevideo.com",
+		Required: []string{"primevideo.com", "aiv-cdn.net"}},
+	{Slug: "protonmail", Title: "Proton Mail", Showcase: "proton.me",
+		Required: []string{"proton.me", "protonmail.com"}},
+	{Slug: "reddit", Title: "Reddit", Showcase: "reddit.com",
+		Required: []string{"reddit.com", "redd.it", "redditmedia.com"}},
+	{Slug: "signal", Title: "Signal", Showcase: "signal.org",
+		Required: []string{"signal.org"}, Optional: []string{"signalcdn.com"}},
+	{Slug: "spotify", Title: "Spotify", Showcase: "spotify.com",
+		Required: []string{"spotify.com", "scdn.co", "spotifycdn.com"}},
+	{Slug: "telegram", Title: "Telegram", Showcase: "telegram.org",
+		Required: []string{"telegram.org", "cdn-telegram.org", "telesco.pe", "t.me"}},
+	{Slug: "tiktok", Title: "TikTok", Showcase: "tiktok.com",
+		Required: []string{"tiktok.com", "tiktokcdn.com", "tiktokv.com", "muscdn.com"}},
+	{Slug: "twitch", Title: "Twitch", Showcase: "twitch.tv",
+		Required: []string{"twitch.tv", "ttvnw.net", "jtvnw.net"}},
+	{Slug: "twitter", Title: "Twitter (X)", Showcase: "twitter.com",
+		Required: []string{"twitter.com", "twimg.com", "x.com"}},
+	{Slug: "whatsapp", Title: "WhatsApp", Showcase: "whatsapp.com",
+		Required: []string{"whatsapp.com", "whatsapp.net"}},
+	{Slug: "xai", Title: "xAI (Grok)", Showcase: "x.ai",
+		Required: []string{"x.ai"}},
+	{Slug: "youtube", Title: "YouTube", Showcase: "youtube.com",
+		Required: []string{"youtube.com", "googlevideo.com", "ytimg.com", "ggpht.com", "youtu.be"}},
+	{Slug: "category-proxy-tunnels", Title: "Proxy / tunnel services", Showcase: "tailscale.com",
+		Required: []string{"tailscale.com"}},
+	{Slug: "category-vpnservices", Title: "VPN services", Showcase: "nordvpn.com",
+		Required: []string{"nordvpn.com"}},
 }
 
 // Stats — счётчики конвертации. Заполняются ParseUpstream/ParseRublock
@@ -115,6 +158,11 @@ type Stats struct {
 	MissingIncludes  []string // include: на несуществующий файл
 	ShowcaseFallback []string // пресеты, где витринный домен не найден
 	Skipped          []string // пресеты, пропущенные целиком
+	// RequiredKept / RequiredDropped — курируемые домены реальной
+	// инфраструктуры: оставлены под капом (RequiredKept) или отсутствуют
+	// в апстриме (RequiredDropped, формат "slug:domain").
+	RequiredKept    []string
+	RequiredDropped []string
 }
 
 // ParseUpstream конвертирует снимок data/* из v2fly/domain-list-community
@@ -175,9 +223,17 @@ func ParseUpstream(files map[string]string, src PresetSource) ([]Preset, Stats) 
 		}
 
 		domains = orderDomains(domains, showcase)
+		present := intersectPreserve(domains, c.Required)
+		st.RequiredKept = append(st.RequiredKept, present...)
+		for _, r := range append(append([]string{}, c.Required...), c.Optional...) {
+			if !contains(domains, r) {
+				st.RequiredDropped = append(st.RequiredDropped, c.Slug+":"+r)
+			}
+		}
 		if len(domains) > MaxDomains {
-			st.Truncated += len(domains) - MaxDomains
-			domains = domains[:MaxDomains]
+			var dropped []string
+			domains, dropped = capDomains(domains, present, MaxDomains)
+			st.Truncated += len(dropped)
 		}
 
 		out = append(out, Preset{
@@ -551,6 +607,56 @@ func orderDomains(domains []string, showcase string) []string {
 		domains[0] = showcase
 	}
 	return domains
+}
+
+// capDomains обрезает отсортированный список доменов до max, но гарантирует
+// сохранение курируемых required-доменов (реальная инфраструктура сервиса):
+// иначе алфавитная сортировка вытесняет их бренд-двойниками. required
+// оставляются в исходном порядке (витринный первым, затем required, затем
+// прочие по алфавиту). Возвращает итоговый список и отброшенные домены.
+func capDomains(domains, required []string, max int) (kept, dropped []string) {
+	if len(domains) <= max {
+		return domains, nil
+	}
+	req := make(map[string]bool, len(required))
+	for _, r := range required {
+		req[r] = true
+	}
+	kept = make([]string, 0, max)
+	add := func(d string) {
+		if len(kept) < max {
+			kept = append(kept, d)
+		} else {
+			dropped = append(dropped, d)
+		}
+	}
+	for _, d := range domains {
+		if req[d] {
+			add(d)
+		}
+	}
+	for _, d := range domains {
+		if !req[d] {
+			add(d)
+		}
+	}
+	return kept, dropped
+}
+
+// intersectPreserve возвращает элементы want, присутствующие в domains,
+// в порядке want (для фиксации реально сохранённой инфраструктуры).
+func intersectPreserve(domains, want []string) []string {
+	have := make(map[string]bool, len(domains))
+	for _, d := range domains {
+		have[d] = true
+	}
+	out := make([]string, 0, len(want))
+	for _, w := range want {
+		if have[w] {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // heuristicShowcase — детерминированный фолбэк витринного домена:

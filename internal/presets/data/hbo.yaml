@@ -3,6 +3,7 @@ slug: hbo
 title: HBO Max
 domains:
   - hbo.com
+  - hbomaxcdn.com
   - beforeigners.com
   - brightline.tv
   - cinemax.com
@@ -41,7 +42,6 @@ domains:
   - hbomax-images.warnermediacdn.com
   - hbomax.com
   - hbomax.eu
-  - hbomaxcdn.com
   - hbomaxdash.s.llnwi.net
   - hbomediarelations.com
   - hbonordic.com

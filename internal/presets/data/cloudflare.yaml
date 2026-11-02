@@ -3,6 +3,7 @@ slug: cloudflare
 title: Cloudflare
 domains:
   - cloudflare.com
+  - cloudflare.net
   - argotunnel.com
   - browser.run
   - cf-china.info
@@ -28,7 +29,6 @@ domains:
   - cloudflare-terms-of-service-abuse.com
   - cloudflare.app
   - cloudflare.dev
-  - cloudflare.net
   - cloudflare.pay
   - cloudflare.tv
   - cloudflareaccess.com

@@ -3,6 +3,8 @@ slug: disney
 title: Disney+
 domains:
   - disneyplus.com
+  - bamgrid.com
+  - dssott.com
   - 112263.com
   - 20thcenturystudios.com
   - 20thcenturystudios.com.au
@@ -14,7 +16,6 @@ domains:
   - adventuresbydisney.com
   - babble.com
   - babyzone.com
-  - bamgrid.com
   - bamtech.net
   - beautyandthebeastmusical.co.uk
   - callhulu.com
@@ -51,7 +52,6 @@ domains:
   - disney.gr
   - disney.hu
   - disney.id
-  - disney.in
 method: static_url
 source:
   repo: v2fly/domain-list-community

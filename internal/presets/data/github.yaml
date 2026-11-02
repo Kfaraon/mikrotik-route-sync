@@ -3,6 +3,8 @@ slug: github
 title: GitHub
 domains:
   - github.com
+  - githubassets.com
+  - githubusercontent.com
   - atom.io
   - copilot-proxy.githubusercontent.com
   - copilot-workspace.githubnext.com
@@ -26,7 +28,6 @@ domains:
   - github.dev
   - github.io
   - githubapp.com
-  - githubassets.com
   - githubcopilot.com
   - githubhackathon.com
   - githubnext.com
@@ -34,7 +35,6 @@ domains:
   - githubstatus.com
   - githubsupport.com
   - githubuniverse.com
-  - githubusercontent.com
   - myoctocat.com
   - npm.community
   - npmjs.com
