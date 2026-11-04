@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -2641,5 +2642,139 @@ func TestNavOrderAddressListBeforeServices(t *testing.T) {
 		if dash < 0 || dash > addr {
 			t.Fatalf("%s: dashboard link must precede address-list", page)
 		}
+	}
+}
+
+// TestFontsSelfHosted — шрифты вшиты в бинарник и отдаются с того же origin.
+// CSP (default-src 'self') запрещает внешние CDN, поэтому любая ссылка на
+// fonts.googleapis.com и т.п. ломала бы загрузку шрифтов молча.
+func TestFontsSelfHosted(t *testing.T) {
+	raw, err := os.ReadFile("static/fonts.css")
+	if err != nil {
+		t.Fatalf("read fonts.css: %v", err)
+	}
+	css := string(raw)
+	if !strings.Contains(css, "font-family: \"IBM Plex Mono\"") {
+		t.Fatal("fonts.css must declare IBM Plex Mono")
+	}
+	if !strings.Contains(css, "font-display: swap") {
+		t.Fatal("fonts must use font-display: swap (иначе первый рендер ждёт шрифт)")
+	}
+	// Все src — локальные пути /static/fonts/...
+	for _, bad := range []string{"http://", "https://", "gstatic", "googleapis"} {
+		if strings.Contains(css, bad) {
+			t.Fatalf("fonts.css must not reference external host (%q)", bad)
+		}
+	}
+	// Кириллица обязательна: интерфейс на русском.
+	if !strings.Contains(css, "ibm-plex-mono-cyrillic-400.woff2") {
+		t.Fatal("Cyrillic subset required")
+	}
+
+	// Файлы реально лежат и являются WOFF2.
+	for _, f := range []string{
+		"static/fonts/ibm-plex-mono-latin-400.woff2",
+		"static/fonts/ibm-plex-mono-cyrillic-400.woff2",
+		"static/fonts/ibm-plex-mono-latin-600.woff2",
+		"static/fonts/ibm-plex-mono-cyrillic-600.woff2",
+	} {
+		info, err := os.Stat(f)
+		if err != nil {
+			t.Fatalf("%s missing: %v", f, err)
+		}
+		if info.Size() < 1000 {
+			t.Fatalf("%s too small (%d bytes) — не шрифт", f, info.Size())
+		}
+	}
+	// Лицензия OFL должна ехать вместе со шрифтом.
+	if _, err := os.Stat("static/fonts/OFL.txt"); err != nil {
+		t.Fatalf("OFL.txt missing: %v", err)
+	}
+}
+
+// TestIconsSpriteOnEveryPage — спрайт пиксельных иконок инлайнится на каждой
+// странице, а ссылки ведут на существующие symbol id. Внешний <use href="file">
+// не используется: CSP и часть браузеров его не пропускают.
+func TestIconsSpriteOnEveryPage(t *testing.T) {
+	sprite, err := os.ReadFile("templates/icons.html")
+	if err != nil {
+		t.Fatalf("read icons.html: %v", err)
+	}
+	// id всех symbol из спрайта
+	ids := map[string]bool{}
+	for _, m := range regexp.MustCompile(`<symbol id="([^"]+)"`).FindAllStringSubmatch(string(sprite), -1) {
+		ids[m[1]] = true
+	}
+	if len(ids) < 10 {
+		t.Fatalf("sprite too small: %d symbols", len(ids))
+	}
+
+	pages := []string{"dashboard.html", "services.html", "addresslist.html", "schedules.html", "settings.html", "logs.html"}
+	for _, page := range pages {
+		raw, err := os.ReadFile(filepath.Join("templates", page))
+		if err != nil {
+			t.Fatalf("read %s: %v", page, err)
+		}
+		s := string(raw)
+		if !strings.Contains(s, `{{template "icons" .}}`) {
+			t.Fatalf("%s must inline the icon sprite", page)
+		}
+		if !strings.Contains(s, "/static/fonts.css") || !strings.Contains(s, "/static/icons.css") {
+			t.Fatalf("%s must load fonts.css and icons.css", page)
+		}
+		// Каждая <use href="#..."> должна ссылаться на существующий symbol.
+		for _, m := range regexp.MustCompile(`<use href="#([^"]+)"`).FindAllStringSubmatch(s, -1) {
+			if !ids[m[1]] {
+				t.Fatalf("%s references unknown icon %q", page, m[1])
+			}
+		}
+	}
+}
+
+// TestNoEmojiIconsInUI — эмодзи-иконки заменены пиксельным спрайтом.
+// Эмодзи выглядят по-разному в каждой ОС и не наследуют цвет темы.
+func TestNoEmojiIconsInUI(t *testing.T) {
+	bad := []string{"🌙", "☀️", "⏸", "▶"}
+	files := []string{
+		"static/theme.js", "static/app.js", "static/services.js",
+		"templates/dashboard.html", "templates/services.html",
+		"templates/addresslist.html", "templates/schedules.html",
+		"templates/settings.html", "templates/logs.html",
+	}
+	for _, f := range files {
+		raw, err := os.ReadFile(filepath.FromSlash(f))
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, e := range bad {
+			if strings.Contains(string(raw), e) {
+				t.Fatalf("%s must not use emoji icon %q (use #px-* sprite)", f, e)
+			}
+		}
+	}
+}
+
+// TestOpencodePalette — палитра берётся из темы opencode: primary тёмной
+// темы #fab283, фон #0a0a0a. Проверяем, что цвета не «съехали» обратно
+// к прежнему синему при будущих правках.
+func TestOpencodePalette(t *testing.T) {
+	raw, err := os.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatalf("read app.css: %v", err)
+	}
+	css := string(raw)
+	darkStart := strings.Index(css, "/* Тёмная тема")
+	if darkStart < 0 {
+		t.Fatal("dark theme block not found")
+	}
+	dark := css[darkStart:]
+	for _, want := range []string{"#fab283", "#0a0a0a", "#eeeeee", "#7fd88f", "#e06c75"} {
+		if !strings.Contains(dark, want) {
+			t.Fatalf("dark palette must contain opencode color %s", want)
+		}
+	}
+	// Интерфейс целиком моноширинный (вариант A).
+	if !strings.Contains(css, "--font-sans: var(--font-mono)") {
+		t.Fatal("variant A: --font-sans must alias --font-mono")
 	}
 }

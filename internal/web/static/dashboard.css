@@ -229,7 +229,7 @@ a.list-row.attention-row:hover {
 .attention-warn .health-dot { background: var(--warning); }
 
 .activity-time {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 0.875rem;
   color: var(--muted);
   min-width: 60px;

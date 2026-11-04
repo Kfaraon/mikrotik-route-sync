@@ -6,24 +6,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ .CSRF }}">
     <title>Сервисы — MikroTik Route Sync</title>
+    <link rel="stylesheet" href="/static/fonts.css">
     <link rel="stylesheet" href="/static/app.css">
+    <link rel="stylesheet" href="/static/icons.css">
     <link rel="stylesheet" href="/static/services.css">
     <script src="/static/common.js"></script>
     <script src="/static/theme.js"></script>
 </head>
 <body>
+{{template "icons" .}}
     <a class="mrs-skip" href="#services-page">Перейти к содержимому</a>
     <nav class="bar">
         <span class="brand">MikroTik Route Sync</span>
-        <a href="/">Дашборд</a>
-        <a href="/address-list">Списки адресов</a>
-        <a href="/services" class="active">Сервисы</a>
-        <a href="/schedules">Расписания</a>
-        <a href="/settings">Настройки</a>
-        <a href="/logs">Логи</a>
+        <a href="/"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-dashboard"></use></svg><span class="bar-label">Дашборд</span></a>
+        <a href="/address-list"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-list"></use></svg><span class="bar-label">Списки адресов</span></a>
+        <a href="/services" class="active"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
+        <a href="/schedules"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-clock"></use></svg><span class="bar-label">Расписания</span></a>
+        <a href="/settings"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-settings"></use></svg><span class="bar-label">Настройки</span></a>
+        <a href="/logs"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-logs"></use></svg><span class="bar-label">Логи</span></a>
         <span class="bar-right">
             <span id="live-dot" class="{{ .DotClass }}" title="{{ .DotTitle }}"></span>
-            <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
+            <button type="button" class="theme-toggle" aria-label="Переключить тему"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-moon"></use></svg></button>
         </span>
     </nav>
 
@@ -119,15 +122,15 @@
                     <span id="svc-drawer-subtitle" class="svc-muted svc-small"></span>
                 </div>
                 <div class="svc-drawer-actions">
-                    <button type="button" class="svc-icon-btn" id="svc-drawer-sync" title="Синхронизировать" aria-label="Синхронизировать">↻</button>
+                    <button type="button" class="svc-icon-btn" id="svc-drawer-sync" title="Синхронизировать" aria-label="Синхронизировать"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-sync"></use></svg></button>
                     <div class="svc-menu-wrap">
-                        <button type="button" class="svc-icon-btn" id="svc-drawer-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Дополнительные действия" title="Дополнительные действия">⋯</button>
+                        <button type="button" class="svc-icon-btn" id="svc-drawer-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Дополнительные действия" title="Дополнительные действия"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-menu"></use></svg></button>
                         <div class="svc-menu-list" id="svc-drawer-menu-list" role="menu" hidden>
                             <button type="button" class="svc-menu-item" id="svc-drawer-dry" role="menuitem">Тестовый прогон</button>
                             <button type="button" class="svc-menu-item svc-menu-danger" id="svc-drawer-delete" role="menuitem">Удалить</button>
                         </div>
                     </div>
-                    <button type="button" class="svc-icon-btn" data-svc-close aria-label="Закрыть">&times;</button>
+                    <button type="button" class="svc-icon-btn" data-svc-close aria-label="Закрыть"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-close"></use></svg></button>
                 </div>
             </div>
             <div class="svc-tabs">
@@ -167,7 +170,7 @@
                     <h2>Изменения записей</h2>
                     <span id="svc-diff-subtitle" class="svc-muted svc-small"></span>
                 </div>
-                <button type="button" class="svc-icon-btn" id="svc-diff-close" data-diff-close aria-label="Закрыть">&times;</button>
+                <button type="button" class="svc-icon-btn" id="svc-diff-close" data-diff-close aria-label="Закрыть"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-close"></use></svg></button>
             </div>
             <div class="svc-toolbar svc-diff-toolbar">
                 <input type="search" id="svc-diff-search" class="svc-diff-search" placeholder="Поиск префикса…">

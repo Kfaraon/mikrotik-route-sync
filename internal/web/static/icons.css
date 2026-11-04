@@ -1,0 +1,89 @@
+/* ==========================================================================
+   Пиксельные иконки (см. templates/icons.html)
+   Спрайт инлайнится, иконка — <svg class="px"><use href="#px-*"></use></svg>.
+   currentColor + fill="currentColor" => цвет наследуется от текста и темы.
+   ========================================================================== */
+.px-sprite {
+  display: none;
+}
+
+.px {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-block;
+  vertical-align: -3px;
+  fill: currentColor;
+  stroke: none;
+  shape-rendering: crispEdges;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.px-sm { width: 12px; height: 12px; flex-basis: 12px; vertical-align: -2px; }
+.px-lg { width: 20px; height: 20px; flex-basis: 20px; vertical-align: -4px; }
+
+/* Навигация: иконка слева от подписи */
+.bar a .px {
+  margin-right: 0.4rem;
+}
+
+/* ---------------------------------------------------------------- Анимации
+   Все шаговые (steps): движение остаётся «пиксельным», без сглаживания. */
+
+@keyframes px-step-rotate {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes px-blink {
+  0%, 55%   { opacity: 1; }
+  56%, 100% { opacity: 0.25; }
+}
+
+@keyframes px-pop {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+/* Иконка «синхронизация»: крутится 8 кадрами по 45 градусов. */
+.is-syncing .px-sync,
+.px-spin {
+  animation: px-step-rotate 1s steps(8) infinite;
+  transform-origin: 50% 50%;
+}
+
+/* Наведение на пункт меню — короткое «подпрыгивание». */
+.bar a:hover .px,
+.btn:hover .px {
+  animation: px-pop 240ms steps(3);
+}
+
+/* Статус роутера: мигающий пиксельный квадрат вместо гладкого пульса. */
+.live-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  background: var(--text-light, #9a9a9a);
+  flex-shrink: 0;
+  image-rendering: pixelated;
+}
+
+.live-dot.live-on {
+  background: var(--success);
+  animation: px-blink 2s steps(1) infinite;
+}
+
+.live-dot.live-off {
+  background: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .px-sync,
+  .px-spin,
+  .bar a:hover .px,
+  .btn:hover .px,
+  .live-dot.live-on {
+    animation: none !important;
+  }
+}

@@ -188,19 +188,20 @@
   overflow: hidden;
 }
 
+/* Пиксельная полоса: сегменты по 6px вместо диагональных штрихов.
+   Шаг анимации (steps) сохраняет «терминальный» вид opencode. */
 .svc-progress-fill {
   height: 100%;
   width: 0;
-  border-radius: 3px;
   background-color: var(--primary);
   background-image: repeating-linear-gradient(
-    45deg,
-    rgba(255, 255, 255, 0.25) 0 6px,
-    transparent 6px 12px
+    90deg,
+    var(--primary) 0 6px,
+    transparent 6px 10px
   );
-  background-size: 12px 12px;
+  background-size: 10px 100%;
   transition: width 0.3s ease;
-  animation: svc-progress-stripes 0.8s linear infinite;
+  animation: svc-progress-march 900ms steps(4) infinite;
 }
 
 .svc-progress-label {
@@ -218,8 +219,8 @@
   word-break: break-word;
 }
 
-@keyframes svc-progress-stripes {
-  to { background-position: 12px 0; }
+@keyframes svc-progress-march {
+  to { background-position: 10px 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -292,11 +293,16 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
 .svc-icon-btn {
   background: transparent;
   border: none;
-  font-size: 1.5rem;
   cursor: pointer;
-  padding: 0.5rem;
+  padding: 0.4rem;
   color: var(--muted, #666);
-  border-radius: 4px;
+  border-radius: 3px;
+  /* Иконка теперь SVG 16x16, а не глиф шрифта: размер задаёт .px,
+     поэтому font-size больше не участвует в вёрстке кнопки. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 .svc-icon-btn:hover { background: var(--bg-alt, #f8f9fa); color: var(--text, #333); }
 
@@ -407,7 +413,7 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   border-radius: var(--radius, 8px);
   align-items: center;
 }
-.svc-time { font-family: monospace; font-size: 0.875rem; color: var(--muted, #666); min-width: 140px; }
+.svc-time { font-family: var(--font-mono); font-size: 0.875rem; color: var(--muted, #666); min-width: 140px; }
 .svc-primary-text { font-weight: 600; color: var(--text, #333); }
 .svc-secondary-text { font-size: 0.875rem; color: var(--muted, #666); margin-top: 0.25rem; }
 .svc-right { text-align: right; }
@@ -456,14 +462,14 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
 .svc-diff-list {
   max-height: 60vh;
   overflow-y: auto;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 0.9rem;
   margin-top: 1rem;
 }
 .svc-diff-row { padding: 0.5rem; border-bottom: 1px solid var(--border, #e0e0e0); white-space: nowrap; }
-.svc-diff-add { background: var(--badge-ok-bg); color: var(--badge-ok-text); font-weight: 600; }
-.svc-diff-del { background: var(--badge-err-bg); color: var(--badge-err-text); font-weight: 600; }
-.svc-diff-same { background: var(--bg-alt, #f8f9fa); color: var(--muted, #666); }
+.svc-diff-add { background: var(--diff-add-bg); color: var(--diff-add-text); font-weight: 600; }
+.svc-diff-del { background: var(--diff-del-bg); color: var(--diff-del-text); font-weight: 600; }
+.svc-diff-same { background: var(--diff-same-bg); color: var(--diff-same-text); }
 
 /* План изменений внутри окна деталей (вкладка «Обзор») */
 .svc-plan-summary {
@@ -522,7 +528,7 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
   background: var(--bg-alt);
   border-radius: var(--radius);
   margin-bottom: 0.25rem;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 0.875rem;
 }
 

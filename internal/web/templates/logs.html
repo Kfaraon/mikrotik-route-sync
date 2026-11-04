@@ -6,23 +6,26 @@
   <title>Логи — MikroTik Route Sync</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{ .CSRF }}">
+  <link rel="stylesheet" href="/static/fonts.css">
   <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/icons.css">
   <script src="/static/common.js"></script>
   <script src="/static/theme.js"></script>
 </head>
 <body>
+{{template "icons" .}}
   <a class="mrs-skip" href="#logs-page">Перейти к содержимому</a>
   <nav class="bar">
     <span class="brand">MikroTik Route Sync</span>
-    <a href="/">Дашборд</a>
-    <a href="/address-list">Списки адресов</a>
-    <a href="/services">Сервисы</a>
-    <a href="/schedules">Расписания</a>
-    <a href="/settings">Настройки</a>
-    <a href="/logs" class="active">Логи</a>
+    <a href="/"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-dashboard"></use></svg><span class="bar-label">Дашборд</span></a>
+    <a href="/address-list"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-list"></use></svg><span class="bar-label">Списки адресов</span></a>
+    <a href="/services"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
+    <a href="/schedules"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-clock"></use></svg><span class="bar-label">Расписания</span></a>
+    <a href="/settings"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-settings"></use></svg><span class="bar-label">Настройки</span></a>
+    <a href="/logs" class="active"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-logs"></use></svg><span class="bar-label">Логи</span></a>
     <span class="bar-right">
       <span id="live-dot" class="{{ .DotClass }}" title="{{ .DotTitle }}"></span>
-      <button type="button" class="theme-toggle" aria-label="Переключить тему">🌙</button>
+      <button type="button" class="theme-toggle" aria-label="Переключить тему"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-moon"></use></svg></button>
     </span>
   </nav>
 
@@ -71,7 +74,7 @@
 
       <div class="log-actions">
         <button type="button" id="log-refresh" class="btn btn-primary log-refresh"><span class="btn-ico" aria-hidden="true">⟳</span> Обновить</button>
-        <button type="button" id="log-pause" class="btn btn-secondary log-pause">⏸ Пауза</button>
+        <button type="button" id="log-pause" class="btn btn-secondary log-pause"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-pause"></use></svg><span class="log-pause-label">Пауза</span></button>
         <button type="button" id="log-download" class="btn btn-outline">⬇ Скачать</button>
         <button type="button" class="btn btn-secondary" id="log-clear"
                 hx-post="/actions/logs-clear"

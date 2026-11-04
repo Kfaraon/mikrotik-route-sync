@@ -2798,7 +2798,7 @@
 
       rows += '<div class="svc-route-row">' +
         "<span>" + esc(a) + " " + badges + "</span>" +
-        '<button type="button" class="svc-route-copy svc-secondary" data-addr="' + esc(a) + '" title="Копировать">⧉</button>' +
+        '<button type="button" class="svc-route-copy svc-secondary" data-addr="' + esc(a) + '" title="Копировать" aria-label="Копировать адрес"><svg class="px px-sm" aria-hidden="true" focusable="false"><use href="#px-copy"></use></svg></button>' +
         "</div>";
     });
 

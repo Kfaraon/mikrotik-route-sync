@@ -1,0 +1,32 @@
+{{/*
+  Пиксельные иконки (16×16, шаг 1 px).
+
+  Спрайт вставляется инлайном в каждый шаблон через {{template "icons" .}}:
+  внешний <use href="sprite.svg#id"> режется частью браузеров и попадает под
+  ограничения CSP, а инлайн работает всегда. Иконки рисуются currentColor,
+  поэтому автоматически совпадают с цветом текста и темой.
+
+  Использование: <svg class="px"><use href="#px-sync"></use></svg>
+  Все пути — только прямоугольники (shape-rendering: crispEdges), никаких
+  кривых: при увеличении остаётся пиксельная сетка.
+*/}}
+{{define "icons"}}
+<svg class="px-sprite" aria-hidden="true" focusable="false" width="0" height="0" style="position:absolute">
+  <symbol id="px-dashboard" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></symbol>
+  <symbol id="px-list" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M2 3h2v2H2zM6 3h8v2H6zM2 7h2v2H2zM6 7h8v2H6zM2 11h2v2H2zM6 11h8v2H6z"/></symbol>
+  <symbol id="px-services" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M3 3h10v2H3zM3 3h2v10H3zM11 3h2v10h-2zM3 11h10v2H3zM7 7h2v2H7z"/></symbol>
+  <symbol id="px-clock" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M6 2h4v2H6zM4 4h2v2H4zM10 4h2v2h-2zM2 6h2v4H2zM12 6h2v4h-2zM4 10h2v2H4zM10 10h2v2h-2zM6 12h4v2H6zM7 4h2v5H7zM9 9h2v2H9z"/></symbol>
+  <symbol id="px-settings" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M2 4h12v2H2zM2 10h12v2H2zM9 2h2v5H9zM4 8h2v5H4z"/></symbol>
+  <symbol id="px-logs" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M3 4h2v2H3zM5 6h2v2H5zM3 8h2v2H3zM9 10h5v2H9z"/></symbol>
+  <symbol id="px-sync" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M7 2h3v2H7zM5 3h2v2H5zM10 4h2v2h-2zM12 6h2v3h-2zM10 10h2v2h-2zM7 12h4v2H7zM4 10h2v2H4zM2 7h2v3H2zM4 4h2v2H4z"/></symbol>
+  <symbol id="px-copy" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M2 2h8v2H2zM2 2h2v8H2zM2 8h8v2H2zM6 4h8v2H6zM12 4h2v8h-2zM6 12h8v2H6zM6 10h2v2H6z"/></symbol>
+  <symbol id="px-menu" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M3 7h2v2H3zM7 7h2v2H7zM11 7h2v2h-2z"/></symbol>
+  <symbol id="px-close" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M4 3h2v2H4zM5 5h2v2H5zM6 7h2v2H6zM7 9h2v2H7zM9 11h2v2H9zM10 3h2v2h-2zM9 5h2v2H9zM7 7h2v2H7zM5 9h2v2H5zM4 11h2v2H4z"/></symbol>
+  <symbol id="px-sun" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M6 6h4v4H6zM7 2h2v2H7zM7 12h2v2H7zM2 7h2v2H2zM12 7h2v2h-2zM4 4h2v2H4zM10 4h2v2h-2zM4 10h2v2H4zM10 10h2v2h-2z"/></symbol>
+  <symbol id="px-moon" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M9 2h3v2H9zM7 3h2v2H7zM6 5h2v6H6zM7 11h2v2H7zM9 12h3v2H9zM9 4h2v2H9zM10 6h2v4h-2zM9 10h2v2H9z"/></symbol>
+  <symbol id="px-plus" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M7 3h2v10H7zM3 7h10v2H3z"/></symbol>
+  <symbol id="px-play" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M5 3h2v10H5zM7 5h2v6H7zM9 7h2v2H9z"/></symbol>
+  <symbol id="px-trash" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M6 2h4v2H6zM3 4h10v2H3zM4 6h8v8H4zM6 8h2v4H6zM9 8h2v4H9z"/></symbol>
+  <symbol id="px-pause" viewBox="0 0 16 16" shape-rendering="crispEdges"><path d="M4 3h3v10H4zM9 3h3v10H9z"/></symbol>
+</svg>
+{{end}}

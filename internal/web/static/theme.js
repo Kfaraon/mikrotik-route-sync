@@ -11,10 +11,15 @@
       document.documentElement.classList.remove("dark");
     }
 
+    // Иконка — <use href="#px-*"> внутри кнопки (спрайт в шаблоне).
+    // textContent не трогаем: он стёр бы SVG.
     var buttons = document.querySelectorAll(".theme-toggle");
     for (var i = 0; i < buttons.length; i++) {
       var btn = buttons[i];
-      btn.textContent = isDark ? "☀️" : "🌙";
+      var use = btn.querySelector("use");
+      if (use) {
+        use.setAttribute("href", isDark ? "#px-sun" : "#px-moon");
+      }
       btn.title = isDark ? "Переключить на светлую тему" : "Переключить на тёмную тему";
       btn.setAttribute("aria-label", btn.title);
     }

@@ -486,7 +486,16 @@
       pauseBtn.addEventListener("click", function () {
         logPaused = !logPaused;
         pauseBtn.classList.toggle("paused", logPaused);
-        pauseBtn.textContent = logPaused ? "▶ Продолжить" : "⏸ Пауза";
+        // Иконка — из общего спрайта: textContent стёр бы SVG, поэтому
+        // меняем href у <use> и текст рядом.
+        var use = pauseBtn.querySelector("use");
+        if (use) use.setAttribute("href", logPaused ? "#px-play" : "#px-pause");
+        var label = pauseBtn.querySelector(".log-pause-label");
+        if (label) {
+          label.textContent = logPaused ? "Продолжить" : "Пауза";
+        } else {
+          pauseBtn.textContent = logPaused ? "Продолжить" : "Пауза";
+        }
         scheduleLive();
       });
     }
