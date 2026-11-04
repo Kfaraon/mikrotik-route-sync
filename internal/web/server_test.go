@@ -1459,6 +1459,46 @@ func TestServicesJSClearsPresetHintOnAdd(t *testing.T) {
 	}
 }
 
+// TestServicesJSPresetHintClearsOnNoMatch — подсказка пресета не должна
+// «залипать»: при смене имени на то, чего нет в каталоге, кнопки от прошлого
+// запроса обязаны исчезнуть. Регресс: ранний return при пустом списке
+// совпадений оставлял hint как есть.
+func TestServicesJSPresetHintClearsOnNoMatch(t *testing.T) {
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+	start := strings.Index(js, "function suggestPreset")
+	if start < 0 {
+		t.Fatal("suggestPreset not found")
+	}
+	block := js[start : start+1600]
+
+	// Очистка ДО запроса (а не только в ветке с совпадениями).
+	before := strings.Index(block, `api("/api/v1/presets/match?domain="`)
+	if before < 0 {
+		t.Fatalf("match request not found in suggestPreset: %s", block)
+	}
+	if !strings.Contains(block[:before], "hint.textContent = \"\";") {
+		t.Fatal("hint must be cleared before the request, otherwise stale buttons remain")
+	}
+
+	// Пустой список совпадений не должен оставлять старую подсказку.
+	emptyCheck := strings.Index(block, "if (!list.length) return;")
+	if emptyCheck < 0 {
+		t.Fatal("empty-match guard not found")
+	}
+	if !strings.Contains(block[:emptyCheck], "hint.textContent = \"\";") {
+		t.Fatal("empty-match path must not leave a stale hint")
+	}
+
+	// Гонка ответов: рисуем только результат последнего запроса.
+	if !strings.Contains(block, "presetHintSeq") {
+		t.Fatal("out-of-order responses must be discarded (request sequence missing)")
+	}
+}
+
 // TestCSRFBasicauthOrigin — Basic без cookie: программный клиент без Origin
 // проходит, браузерный кросс-сайт с чужим Origin режется (403).
 func TestCSRFBasicauthOrigin(t *testing.T) {

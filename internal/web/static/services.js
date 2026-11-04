@@ -1532,6 +1532,8 @@
 
   // Автоподсказка пресета по вводимому имени (инвертированный индекс
   // полного зеркала v2fly). Тихо: нет совпадений — нет подсказки.
+  var presetHintSeq = 0;
+
   function suggestPreset() {
     var hint = byId("svc-preset-hint");
     if (!hint || !els.addInput || !els.addPreset) return;
@@ -1540,9 +1542,19 @@
       hint.textContent = "";
       return;
     }
+    // Чистим старую подсказку ДО запроса: иначе при смене имени на то, чего
+    // нет в каталоге (или при сбое сети), внизу оставались кнопки от
+    // предыдущего запроса — подсказка «залипала».
+    hint.textContent = "";
+    // Номер запроса: ответы могут прийти не по порядку (медленный старый
+    // запрос после быстрого нового), рисуем только последний.
+    var seq = ++presetHintSeq;
     api("/api/v1/presets/match?domain=" + encodeURIComponent(q)).then(function (data) {
+      if (seq !== presetHintSeq) return;
       var list = (data && data.matches) || [];
-      if (!list.length || trim(els.addInput.value) !== q) return;
+      // Имя изменили, пока шёл запрос — отрисует более свежий вызов.
+      if (trim(els.addInput.value) !== q) return;
+      if (!list.length) return;
       // Применяем только вендоренный (его option есть в select);
       // невендоренные показываем текстом — их нельзя создать.
       var vendored = null;
