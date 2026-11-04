@@ -74,11 +74,24 @@ type Result struct {
 	// address-list (ручные/другие сервисы). Большое значение означает, что
 	// сервис фактически почти не управляется — UI показывает предупреждение.
 	Suppressed int `json:"suppressed,omitempty"`
+	// Plan — сам план изменений (списки префиксов), чтобы UI показал diff
+	// после тестового прогона, не дожидаясь реальной синхронизации.
+	// Заполняется при dry-run; в остальных случаях nil (не сериализуется).
+	Plan *DiffPlan `json:"plan,omitempty"`
 
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
 	Duration   string    `json:"duration"`
 	Version    string    `json:"version,omitempty"`
+}
+
+// DiffPlan — нормализованные списки будущих изменений (для UI и API).
+// Живёт отдельно от addresslist.Diff, чтобы у результата синка был
+// самодостаточный JSON-контракт.
+type DiffPlan struct {
+	Add       []string `json:"add"`
+	Remove    []string `json:"remove"`
+	Unchanged []string `json:"unchanged"`
 }
 
 type Syncer struct {
@@ -798,6 +811,10 @@ func (s *Syncer) syncService(ctx context.Context, name string, dry, force bool) 
 
 	s.setProgress(name, "подготовка применений", 75, dry)
 
+	// План изменений — во всех режимах: dry-run показывает его в UI как diff,
+	// реальный синк — для логов и API. Списки уже посчитаны, копия дешёвая.
+	res.Plan = buildDiffPlan(diff, toAdd, toRemove)
+
 	// 8. Dry run — только diff, без изменения состояния (bbolt в том числе).
 	if dry {
 		log.Info("DRY-RUN завершён", "add", res.Added, "remove", res.Removed, "update", res.Updated)
@@ -910,6 +927,24 @@ func (s *Syncer) syncService(ctx context.Context, name string, dry, force bool) 
 
 	log.Info("синхронизация успешно завершена", "duration", elapsed)
 	return res, nil
+}
+
+// buildDiffPlan собирает JSON-представление плана изменений для UI/API.
+// toAdd/toRemove — итоговые записи к применению (с учётом safe-diff), поэтому
+// счётчики и списки в Result всегда согласованы.
+func buildDiffPlan(diff *addresslist.Diff, toAdd, toRemove []addresslist.Entry) *DiffPlan {
+	plan := &DiffPlan{
+		Add:       make([]string, 0, len(toAdd)),
+		Remove:    make([]string, 0, len(toRemove)),
+		Unchanged: append([]string(nil), diff.Unchanged...),
+	}
+	for _, e := range toAdd {
+		plan.Add = append(plan.Add, e.Address)
+	}
+	for _, e := range toRemove {
+		plan.Remove = append(plan.Remove, e.Address)
+	}
+	return plan
 }
 
 func (s *Syncer) SyncMany(ctx context.Context, services []string, dry bool, force bool) error {

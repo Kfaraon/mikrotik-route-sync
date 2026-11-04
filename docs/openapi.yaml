@@ -913,6 +913,17 @@ components:
               checked: { type: integer }
               ok: { type: integer }
               failed: { type: array, items: { type: string } }
+        method: { type: string }
+        collected: { type: integer }
+        aggregated: { type: integer }
+        suppressed: { type: integer }
+        plan:
+          type: object
+          description: План изменений (списки префиксов); заполняется и в dry-run.
+          properties:
+            add: { type: array, items: { type: string } }
+            remove: { type: array, items: { type: string } }
+            unchanged: { type: array, items: { type: string } }
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
         duration: { type: string }

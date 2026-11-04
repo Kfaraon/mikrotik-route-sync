@@ -465,6 +465,38 @@ button.svc-danger:hover:not(:disabled) { background: #dc2626; color: white; }
 .svc-diff-del { background: var(--badge-err-bg); color: var(--badge-err-text); font-weight: 600; }
 .svc-diff-same { background: var(--bg-alt, #f8f9fa); color: var(--muted, #666); }
 
+/* План изменений внутри окна деталей (вкладка «Обзор») */
+.svc-plan-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.svc-plan-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.svc-plan-toolbar .svc-plan-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  color: inherit;
+}
+/* В drawer список короче модального: не занимает весь экран */
+.svc-plan-list {
+  max-height: 40vh;
+  margin-top: 0.25rem;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 4px;
+}
+
 /* Вкладка «Записи» в drawer */
 .svc-routes-meta {
   font-size: 0.875rem;

@@ -1459,6 +1459,42 @@ func TestServicesJSClearsPresetHintOnAdd(t *testing.T) {
 	}
 }
 
+// TestServicesJSRendersPlanAfterDryRun — после тестового прогона план
+// изменений виден в окне деталей (списки add/remove/unchanged), а кнопка
+// «Показать изменения» работает и без реальной синхронизации.
+func TestServicesJSRendersPlanAfterDryRun(t *testing.T) {
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+
+	start := strings.Index(js, "function lastPlanHtml")
+	if start < 0 {
+		t.Fatal("lastPlanHtml not found (plan UI missing)")
+	}
+	block := js[start : start+2400]
+	for _, want := range []string{"plan.add", "plan.remove", "plan.unchanged", "data-plan-search"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("plan UI must use %q", want)
+		}
+	}
+
+	// Кнопка diff в «Записях» обязана уметь брать план последнего прогона.
+	diffBtn := strings.Index(js, `closest(e.target, "[data-svc-diff]")`)
+	if diffBtn < 0 {
+		t.Fatal("diff button handler not found")
+	}
+	if !strings.Contains(js[diffBtn:diffBtn+900], "res.plan") {
+		t.Fatal("diff button must fall back to the dry-run plan")
+	}
+
+	// После dry-run открытый drawer перерисовывается (план появляется сразу).
+	if !strings.Contains(js, "if (dry && state.details.open") {
+		t.Fatal("drawer must re-render after a dry run")
+	}
+}
+
 // TestServicesJSPresetHintClearsOnNoMatch — подсказка пресета не должна
 // «залипать»: при смене имени на то, чего нет в каталоге, кнопки от прошлого
 // запроса обязаны исчезнуть. Регресс: ранний return при пустом списке

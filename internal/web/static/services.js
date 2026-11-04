@@ -157,6 +157,8 @@
     collapsed: {},
     lastDiff: {},
     lastResult: {},
+    planQuery: {},
+    planShowSame: {},
     diff: null,
     details: {
       open: false,
@@ -1700,9 +1702,14 @@
           if (c.deleted) parts.push("-" + c.deleted);
           if (c.unchanged) parts.push("=" + c.unchanged);
 
-          // Полный результат (покрытие/SNI/отсев) — в drawer «Обзор»,
+          // Полный результат (покрытие/SNI/отсев/план) — в drawer «Обзор»,
           // краткие флаги — в тост: раньше качество молча выбрасывалось.
           state.lastResult[lower(name)] = data || null;
+          // Тестовый прогон не меняет роутер, но план изменений уже известен:
+          // показываем его сразу в открытом окне деталей.
+          if (dry && state.details.open && lower(state.details.name) === lower(name)) {
+            renderDetails();
+          }
 
           var msg = (dry ? "Тестовый запуск " : "Синхронизация ") + name;
           if (parts.length) msg += ": " + parts.join(" ");
@@ -2039,8 +2046,71 @@
     html += "</div>";
 
     html += detailsHtml("quality", "Качество последнего сбора", lastQualityHtml(item));
+    html += detailsHtml("plan", "Изменения по последнему прогону", lastPlanHtml(item));
 
     return html;
+  }
+
+  // lastPlanHtml — план изменений из последнего прогона (тестового или
+  // реального): списки префиксов + / − / = с поиском. Раньше после «Теста»
+  // были видны только счётчики в тосте, а сами адреса — нет.
+  function lastPlanHtml(item) {
+    var key = lower(item.name);
+    var res = state.lastResult[key];
+    var plan = res && res.plan;
+    if (!plan) {
+      return '<p class="svc-muted">Нет данных — запустите «Тестовый прогон» или синхронизацию.</p>';
+    }
+
+    var add = plan.add || [];
+    var del = plan.remove || [];
+    var same = plan.unchanged || [];
+    if (!add.length && !del.length && !same.length) {
+      return '<p class="svc-muted">План пуст: изменений нет.</p>';
+    }
+
+    var head = '<div class="svc-plan-summary">' +
+      '<span class="svc-badge svc-badge-ok">+' + add.length + "</span> " +
+      '<span class="svc-badge svc-badge-err">−' + del.length + "</span> " +
+      '<span class="svc-badge svc-badge-muted">=' + same.length + "</span>" +
+      (res.suppressed ? ' <span class="svc-muted">перекрыто чужими: ' + res.suppressed + "</span>" : "") +
+      "</div>";
+
+    if (!add.length && !del.length) {
+      return head + '<p class="svc-muted">Добавлять и удалять нечего.</p>';
+    }
+
+    // Список «только изменения» по умолчанию: неизменённые префиксы — по
+    // галочке. Строки помечены классами модалки diff (стили переиспользуются).
+    var h = head +
+      '<div class="svc-plan-toolbar">' +
+      '<input type="search" class="svc-plan-search" placeholder="Поиск префикса…" data-plan-search="' + esc(key) + '">' +
+      '<label class="svc-muted svc-small"><input type="checkbox" data-plan-same="' + esc(key) + '"> показывать без изменений</label>' +
+      "</div>" +
+      '<div class="svc-diff-list svc-plan-list">';
+
+    var rows = [];
+    each(add, function (a) { rows.push({ t: "+", a: a }); });
+    each(del, function (a) { rows.push({ t: "−", a: a }); });
+    if (state.planShowSame[key]) {
+      each(same, function (a) { rows.push({ t: "=", a: a }); });
+    }
+    rows.sort(function (x, y) { return x.a.localeCompare(y.a); });
+
+    var q = lower(state.planQuery[key] || "");
+    if (q) {
+      rows = rows.filter(function (r) { return r.a.toLowerCase().indexOf(q) !== -1; });
+    }
+
+    if (!rows.length) {
+      h += '<div class="svc-empty">Нет префиксов по заданным условиям.</div>';
+    } else {
+      each(rows, function (r) {
+        var cls = r.t === "+" ? "svc-diff-add" : r.t === "−" ? "svc-diff-del" : "svc-diff-same";
+        h += '<div class="svc-diff-row ' + cls + '">' + r.t + " " + esc(r.a) + "</div>";
+      });
+    }
+    return h + "</div>";
   }
 
   // Вкладка «Источник»: метод сбора, домены, подбор CDN и вспомогательные
@@ -3008,6 +3078,19 @@
           autosizeDomains();
           return;
         }
+        // Поиск по плану изменений (вкладка «Обзор»).
+        if (e.target && e.target.getAttribute && e.target.getAttribute("data-plan-search")) {
+          var pkey = e.target.getAttribute("data-plan-search");
+          state.planQuery[pkey] = e.target.value;
+          var caret = e.target.selectionStart;
+          renderDetails();
+          var again = els.drawerBody.querySelector("[data-plan-search]");
+          if (again) {
+            again.focus();
+            try { again.setSelectionRange(caret, caret); } catch (err) {}
+          }
+          return;
+        }
         if (!e.target || e.target.id !== "svc-routes-search") return;
 
         state.details.routesQuery = e.target.value;
@@ -3021,6 +3104,15 @@
       });
 
       els.drawerBody.addEventListener("click", function (e) {
+        // Чекбокс «показывать без изменений» в плане (вкладка «Обзор»).
+        // Ловим на click: change не всплывает от checkbox в некоторых
+        // браузерах при программном перерендере, а click — стабилен.
+        var sameBox = closest(e.target, "[data-plan-same]");
+        if (sameBox) {
+          state.planShowSame[sameBox.getAttribute("data-plan-same")] = sameBox.checked;
+          renderDetails();
+          return;
+        }
         var b = closest(e.target, ".svc-route-copy");
         if (b) {
           copyText(b.getAttribute("data-addr") || "");
@@ -3065,10 +3157,23 @@
         if (closest(e.target, "[data-svc-diff]")) {
           var name = state.details.name;
           var d = name && state.lastDiff[name];
+          // После «Теста» реального «до/после» нет, но сервер вернул план —
+          // показываем его: иначе кнопка бесполезна до первой синхронизации.
+          if (!d && name) {
+            var res = state.lastResult[lower(name)];
+            if (res && res.plan) {
+              d = {
+                service: name,
+                added: res.plan.add || [],
+                removed: res.plan.remove || [],
+                same: res.plan.unchanged || []
+              };
+            }
+          }
           if (d) {
             openDiff(d);
           } else {
-            showToast("Изменения появятся после синхронизации, запущенной из интерфейса");
+            showToast("Изменения появятся после тестового прогона или синхронизации");
           }
         }
       });

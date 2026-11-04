@@ -113,6 +113,58 @@ func TestDryRunNotRecordedInHistory(t *testing.T) {
 	}
 }
 
+// Dry-run возвращает план изменений (списки префиксов), чтобы UI показал
+// diff сразу после теста, не дожидаясь реальной синхронизации.
+func TestDryRunReturnsPlan(t *testing.T) {
+	fr := newFakeRouter(
+		// Собственная устаревшая запись: она должна попасть в remove.
+		addresslist.Entry{ID: "*71", Address: addrB, List: "TO-VPN", Comment: "AUTO:demo", Disabled: "false"},
+	)
+	src := &fakeSource{}
+	src.set([]string{addrA, addrC}, nil)
+	s := newE2ESyncer(t, fr, src, true)
+
+	// force: удаляется единственная managed-запись (полное опустошение
+	// набора защитой блокируется), а нам нужен именно план с remove.
+	res, err := s.SyncService(context.Background(), "demo", true, true)
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if res.Plan == nil {
+		t.Fatalf("dry run must return plan: %+v", res)
+	}
+	if res.Added != len(res.Plan.Add) || res.Removed != len(res.Plan.Remove) ||
+		res.Unchanged != len(res.Plan.Unchanged) {
+		t.Fatalf("plan lists must match counters: %+v plan=%+v", res, res.Plan)
+	}
+	if len(res.Plan.Add) != 2 {
+		t.Fatalf("want 2 adds, got %v", res.Plan.Add)
+	}
+	if len(res.Plan.Remove) != 1 || res.Plan.Remove[0] != addrB {
+		t.Fatalf("want stale %s in remove, got %v", addrB, res.Plan.Remove)
+	}
+	// Dry-run не трогает роутер.
+	if ops := fr.takeOps(); len(ops) != 0 {
+		t.Fatalf("dry run must not mutate router: %v", ops)
+	}
+}
+
+// План приходит и при реальной синхронизации (для логов/API/истории).
+func TestRealSyncReturnsPlan(t *testing.T) {
+	fr := newFakeRouter()
+	src := &fakeSource{}
+	src.set([]string{addrA}, nil)
+	s := newE2ESyncer(t, fr, src, true)
+
+	res, err := s.SyncService(context.Background(), "demo", false, false)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if res.Plan == nil || len(res.Plan.Add) != 1 || res.Plan.Add[0] != addrA {
+		t.Fatalf("unexpected plan: %+v", res.Plan)
+	}
+}
+
 // Успешный синк пишет success-запись (регресс: раньше запись была единственной
 // и жила внутри тела функции).
 func TestSuccessSyncRecordedInHistory(t *testing.T) {
