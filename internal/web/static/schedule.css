@@ -17,7 +17,9 @@
   padding: 0.5rem 0.9rem;
   min-height: 40px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  /* Прямоугольные, как остальные кнопки и бейджи (было 999px — «пилюля»,
+     выбивалась из интерфейса). */
+  border-radius: var(--radius);
   background: var(--bg);
   color: var(--text);
   font-size: 0.9rem;
@@ -74,7 +76,7 @@
   width: 40px;
   height: 40px;
   border: 1px solid var(--border);
-  border-radius: 50%;
+  border-radius: 3px;
   background: var(--bg);
   color: var(--text);
   font-weight: 700;

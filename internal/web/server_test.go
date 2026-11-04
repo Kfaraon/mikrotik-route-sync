@@ -2778,3 +2778,69 @@ func TestOpencodePalette(t *testing.T) {
 		t.Fatal("variant A: --font-sans must alias --font-mono")
 	}
 }
+
+// TestInteractiveShapesAreRectangular — интерактивные элементы (кнопки,
+// чипы-фильтры, табы, поля) прямоугольные: интерфейс в стиле opencode не
+// использует «пилюли» и круги. Исключение — индикаторы-точки (светофор),
+// у них форма — часть смысла.
+func TestInteractiveShapesAreRectangular(t *testing.T) {
+	type rule struct {
+		file string
+		sel  string
+	}
+	checks := []rule{
+		{"static/schedule.css", ".sched-chip {"},
+		{"static/schedule.css", ".sched-help-btn {"},
+		{"static/app.css", ".theme-toggle {"},
+		{"static/app.css", ".group-help-btn {"},
+		{"static/services.css", ".svc-badge {"},
+		{"static/services.css", ".svc-icon-btn {"},
+	}
+	for _, c := range checks {
+		raw, err := os.ReadFile(filepath.FromSlash(c.file))
+		if err != nil {
+			t.Fatalf("read %s: %v", c.file, err)
+		}
+		css := string(raw)
+		i := strings.Index(css, c.sel)
+		if i < 0 {
+			t.Fatalf("%s: rule %q not found", c.file, c.sel)
+		}
+		j := strings.Index(css[i:], "}")
+		body := css[i : i+j]
+		for _, bad := range []string{"border-radius: 999px", "border-radius: 50%", "border-radius: 12px"} {
+			if strings.Contains(body, bad) {
+				t.Fatalf("%s: %q must not use %s (use var(--radius) / 3px)", c.file, c.sel, bad)
+			}
+		}
+		if !strings.Contains(body, "border-radius") {
+			t.Fatalf("%s: %q must set an explicit radius", c.file, c.sel)
+		}
+	}
+}
+
+// TestOnAccentTextColors — текст на акцентной заливке не должен быть
+// захардкожен «white»: в тёмной теме primary светлый, и белый текст на нём
+// даёт контраст 1.79. Проверяем, что кнопочные правила используют --on-*.
+func TestOnAccentTextColors(t *testing.T) {
+	files := []string{"static/app.css", "static/services.css"}
+	for _, f := range files {
+		raw, err := os.ReadFile(filepath.FromSlash(f))
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		css := string(raw)
+		// Ищем кнопочные правила с фоном primary/danger и белым текстом.
+		for _, block := range strings.Split(css, "}") {
+			if !strings.Contains(block, "background: var(--primary)") && !strings.Contains(block, "background: var(--danger)") {
+				continue
+			}
+			if !strings.Contains(block, "button") && !strings.Contains(block, ".tab-btn") && !strings.Contains(block, ".mrs-toast") {
+				continue
+			}
+			if strings.Contains(block, "color: white") || strings.Contains(block, "color: #fff") {
+				t.Fatalf("%s: block uses hardcoded white on accent background:\n%s", f, block)
+			}
+		}
+	}
+}

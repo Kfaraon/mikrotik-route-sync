@@ -8,7 +8,9 @@
   --font-sans: var(--font-mono); /* вариант A: интерфейс целиком моно */
 
   --primary: #2f5fa8;
-  --primary-hover: #3b7dd8;
+  /* Hover темнее основного: осветление до #3b7dd8 давало 4.11 на белом
+     тексте (< AA). */
+  --primary-hover: #255087;
   --secondary: #6a4ca0;
   --accent: #a05c0a;
   --success: #2f7a45;
@@ -26,6 +28,13 @@
   --shadow: rgba(0, 0, 0, 0.12);
   --radius: 3px;
   --transition: 0.2s ease;
+
+  /* Текст поверх акцентной заливки. В светлой теме primary тёмный,
+     поэтому подпись белая; в тёмной primary светлый (#fab283) — там нужен
+     почти чёрный. Одна переменная вместо захардкоженного `white`. */
+  --on-primary: #ffffff;
+  --on-danger: #ffffff;
+  --on-success: #ffffff;
 
   --code-bg: #f0f0f0;
   --code-text: #2f5fa8;
@@ -90,6 +99,12 @@
   --text: #eeeeee;
   --text-light: #808080;
   --shadow: rgba(0, 0, 0, 0.6);
+
+  /* На светлых акцентах (primary #fab283, danger #e06c75) белый текст даёт
+     1.79/3.20 — нечитаемо. Тёмный даёт 10.32/5.76. */
+  --on-primary: #141414;
+  --on-danger: #141414;
+  --on-success: #141414;
 
   --code-bg: #1e1e1e;
   --code-text: #fab283;
@@ -317,7 +332,7 @@ article {
 button,
 input[type="submit"] {
   background: var(--primary);
-  color: white;
+  color: var(--on-primary);
   border: none;
   padding: 0.75rem 1.5rem;
   border-radius: var(--radius);
@@ -346,7 +361,7 @@ button:disabled {
 /* Кнопки (единая система .btn) */
 button.btn {
   background: var(--primary);
-  color: white;
+  color: var(--on-primary);
   border: 1px solid transparent;
   display: inline-flex;
   align-items: center;
@@ -361,12 +376,12 @@ button.btn:hover:not(:disabled) {
 
 button.btn.btn-primary {
   background: var(--primary);
-  color: white;
+  color: var(--on-primary);
 }
 
 button.btn.btn-primary:hover:not(:disabled) {
   background: var(--primary-hover);
-  color: white;
+  color: var(--on-primary);
 }
 
 button.btn.btn-secondary {
@@ -390,21 +405,18 @@ button.btn.btn-outline {
 
 button.btn.btn-outline:hover:not(:disabled) {
   background: var(--primary);
-  color: white;
+  color: var(--on-primary);
 }
 
 button.btn.btn-danger {
   background: var(--danger);
-  color: white;
+  color: var(--on-danger);
 }
 
 button.btn.btn-danger:hover:not(:disabled) {
-  background: #dc2626;
-  color: white;
-}
-
-.dark button.btn.btn-danger:hover:not(:disabled) {
-  background: var(--danger);
+  /* Затемнение вместо фиксированного #dc2626: в тёмной теме он не читался. */
+  filter: brightness(0.92);
+  color: var(--on-danger);
 }
 
 button.btn.btn-small {
@@ -649,8 +661,8 @@ code {
 }
 
 .mrs-toast-msg span { flex: 1; }
-.mrs-toast-ok { background: var(--success); color: white; }
-.mrs-toast-err { background: var(--danger); color: white; }
+.mrs-toast-ok { background: var(--success); color: var(--on-success); }
+.mrs-toast-err { background: var(--danger); color: var(--on-danger); }
 
 .mrs-toast-x {
   background: transparent;
@@ -1040,6 +1052,8 @@ summary:focus-visible {
   text-transform: uppercase;
 }
 
+/* Уровни логов: цвета фиксированные (журнал не должен зависеть от темы),
+   но фон подобран так, чтобы белый текст проходил AA в любой теме. */
 .level-debug {
   background: #4b5563;
   color: #e5e7eb;
@@ -1047,12 +1061,12 @@ summary:focus-visible {
 
 .level-info {
   background: #1e40af;
-  color: white;
+  color: #ffffff;
 }
 
 .level-warn {
   background: #b45309;
-  color: white;
+  color: #ffffff;
 }
 
 .level-error {
@@ -1192,7 +1206,7 @@ summary:focus-visible {
   margin-left: 0.5rem;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 50%;
+  border-radius: 3px;
   background: var(--bg-alt);
   color: var(--muted);
   font-size: 0.8rem;
@@ -1373,7 +1387,8 @@ summary:focus-visible {
 .live-dot {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  /* Квадрат, а не круг: пиксельная эстетика (см. icons.css). */
+  border-radius: 0;
   display: inline-block;
   background: #9ca3af;
   flex-shrink: 0;
@@ -1500,7 +1515,7 @@ button.btn.btn-secondary.log-pause.paused:hover:not(:disabled) {
 
 .tab-btn.active {
   background: var(--primary);
-  color: white;
+  color: var(--on-primary);
 }
 
 .tab-content {

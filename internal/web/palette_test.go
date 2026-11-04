@@ -99,6 +99,15 @@ func TestPaletteContrast(t *testing.T) {
 		{"diff без изм.", "diff-same-text", "diff-same-bg"},
 		{"лог: текст", "log-text", "log-bg"},
 		{"лог: время", "log-time", "log-bg"},
+		// Кнопки: текст поверх акцентной заливки. В тёмной теме primary
+		// светлый, поэтому белый текст на нём нечитаем (1.79) — цвет
+		// задаётся переменной --on-* в каждой теме.
+		{"кнопка primary", "on-primary", "primary"},
+		{"кнопка primary hover", "on-primary", "primary-hover"},
+		{"кнопка danger", "on-danger", "danger"},
+		{"тост success", "on-success", "success"},
+		{"тост error", "on-danger", "danger"},
+		{"outline (текст)", "primary", "bg"},
 	}
 
 	for _, th := range themes {
