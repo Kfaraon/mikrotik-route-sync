@@ -845,14 +845,6 @@ paths:
         '503':
           description: RouterOS недоступен
 
-  /api/v1/ws:
-    get:
-      summary: WebSocket live-событий (sync_start, sync_progress, sync_done, sync_error, service_added, ...)
-      tags: [Observability]
-      responses:
-        '101':
-          description: Switching Protocols
-
 components:
   securitySchemes:
     basicAuth:

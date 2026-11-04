@@ -71,7 +71,7 @@
 - Ограничение общей параллельности через `max_concurrent`
 - Telegram-бот с авторизацией и командами
 - Встроенный Web UI и REST API
-- Live-индикатор состояния роутера (REST, обновление каждые 15 с) и WS-эндпоинт `/api/v1/ws` с событиями синхронизации
+- Live-индикатор состояния роутера (REST, обновление каждые 15 с), прогресс синхронизаций через `/api/v1/progress`
 - Basic Auth, CSRF и ограничение Web UI по CIDR
 - JSON-логирование через `log/slog` и ротация логов
 - Статическая сборка `CGO_ENABLED=0`
@@ -707,7 +707,6 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
 | `GET` | `/api/v1/history` | История синхронизаций (`service`, `limit`) |
 | `GET` | `/api/v1/address-list` | Глобальный address-list |
 | `GET` | `/api/v1/address-list/{service}` | Записи конкретного сервиса |
-| `WS` | `/api/v1/ws` | Live-обновления (события синхронизации) |
 
 Изменяющие запросы от **cookie-сессии** требуют CSRF-токен (`X-CSRF-Token` или поле `csrf_token`).
 Запросы, авторизованные **Basic-заголовком**, освобождены от CSRF (браузер не прикладывает
@@ -924,7 +923,7 @@ CLI-команда не может открыть кэш: демон держи�
       scheduler/        расписания
       storage/          bbolt cache
       validator/        фильтрация сетей
-      web/              Web UI / REST / WebSocket
+      web/              Web UI / REST
     docs/
       ARCHITECTURE.md   описание архитектуры
       SECURITY.md       безопасность

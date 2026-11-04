@@ -497,22 +497,33 @@ func TestE2ESkipsOverlappingManualEntries(t *testing.T) {
 	assertComments("9.9.9.128/25", "AUTO:demo") // вырезанный остаток наш
 	assertComments("8.8.8.0/24", "AUTO:demo")   // без пересечений
 
-	// Весь источник перекрыт чужой записью: «уже покрыто» — успех с нулём
-	// изменений, чужие и управляемые записи на роутере без изменений.
+	// Весь источник перекрыт чужой записью: добавлять нечего, но собственные
+	// устаревшие managed-записи (8.8.8.0/24 и 9.9.9.128/25 из прошлого сбора)
+	// должны уйти: в новом наборе их нет. Раньше covered пропускал diff и
+	// оставлял их на роутере навсегда (баг, исправлен осознанно).
 	fr.takeOps()
 	src.set([]string{"5.5.5.0/24"}, nil)
 	res2, err2 := s.SyncService(context.Background(), "demo", false, false)
 	if err2 != nil || !res2.Success {
-		t.Fatalf("full overlap must be a no-op success: err=%v res=%+v", err2, res2)
+		t.Fatalf("full overlap must succeed: err=%v res=%+v", err2, res2)
 	}
-	if res2.Added != 0 || res2.Removed != 0 {
-		t.Fatalf("full overlap must apply no changes: %+v", res2)
+	if res2.Added != 0 || res2.Removed != 2 {
+		t.Fatalf("covered sync must remove only stale managed entries: %+v", res2)
 	}
-	if ops := fr.takeOps(); len(ops) != 0 {
-		t.Fatalf("no-op sync must not mutate router: %v", ops)
+	if res2.Suppressed != 1 {
+		t.Fatalf("suppressed prefixes must be reported: %+v", res2)
 	}
-	if fr.count() != 4 {
-		t.Fatalf("existing entries must survive, got %d", fr.count())
+	if ops := fr.takeOps(); len(ops) != 2 {
+		t.Fatalf("expected two removals, got %v", ops)
+	}
+	if fr.count() != 2 {
+		t.Fatalf("manual entries must survive (2 distinct manual addresses), got %d", fr.count())
+	}
+	if e, ok := fr.find("5.5.5.0/24"); !ok || e.Comment != "Manual" {
+		t.Fatalf("foreign entry must survive untouched: ok=%v e=%+v", ok, e)
+	}
+	if e, ok := fr.find("9.9.9.0/25"); !ok || e.Comment != "Manual" {
+		t.Fatalf("foreign /25 must survive untouched: ok=%v e=%+v", ok, e)
 	}
 }
 

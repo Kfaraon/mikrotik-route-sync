@@ -39,6 +39,11 @@ import (
 // записи в конфиге (сироты в address-list).
 var ErrServiceNotFound = errors.New("service not found")
 
+// ErrSyncBusy — сервис занят другим запуском: синк/удаление не выполняется.
+// Отдельная ошибка, чтобы вызывающие отличали «занято» (повторяемо, HTTP 409)
+// от реального провала и не писали это в историю.
+var ErrSyncBusy = errors.New("service is busy")
+
 type Result struct {
 	Service   string `json:"service"`
 	List      string `json:"list"`
@@ -58,11 +63,22 @@ type Result struct {
 	Verification []*SNIVerdict   `json:"verification,omitempty"`
 	// Rejected — сколько префиксов валидатор отбросил и по каким причинам
 	// (ставится, только если отсев был).
-	Rejected   *validator.RejectStats `json:"rejected,omitempty"`
-	StartedAt  time.Time              `json:"started_at"`
-	FinishedAt time.Time              `json:"finished_at"`
-	Duration   string                 `json:"duration"`
-	Version    string                 `json:"version,omitempty"`
+	Rejected *validator.RejectStats `json:"rejected,omitempty"`
+	// Method — фактически применённые методы сбора ("static_url", "preset+asn").
+	Method string `json:"method,omitempty"`
+	// Collected — сколько префиксов вернули источники (до валидации).
+	Collected int `json:"collected,omitempty"`
+	// Aggregated — размер набора после агрегации.
+	Aggregated int `json:"aggregated,omitempty"`
+	// Suppressed — сколько желаемых префиксов вычтено чужими записями
+	// address-list (ручные/другие сервисы). Большое значение означает, что
+	// сервис фактически почти не управляется — UI показывает предупреждение.
+	Suppressed int `json:"suppressed,omitempty"`
+
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
+	Duration   string    `json:"duration"`
+	Version    string    `json:"version,omitempty"`
 }
 
 type Syncer struct {
@@ -411,7 +427,78 @@ func (s *Syncer) PingMikroTik(ctx context.Context) error {
 // Основная логика синхронизации
 // ============================================================================
 
+// SyncService выполняет синхронизацию сервиса и всегда фиксирует попытку в
+// истории — и успех, и провал. Раньше запись создавалась только на успешном
+// пути: сервис, падавший днями, показывал в UI устаревший «успех», а health-
+// логика не видела проблему.
 func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) (Result, error) {
+	res, err := s.syncService(ctx, name, dry, force)
+	// «Сервиса нет» и «занят другим запуском» — не попытка синхронизации:
+	// в истории им делать нечего (иначе каждый повторный клик плодит
+	// failed-записи и шумит в health).
+	if errors.Is(err, ErrServiceNotFound) || errors.Is(err, ErrSyncBusy) {
+		return res, err
+	}
+	s.recordSync(res, err)
+	return res, err
+}
+
+// recordSync — единственная точка записи истории синхронизации. Обёртка над
+// syncService гарантирует, что новый error-путь не забудут охватить.
+func (s *Syncer) recordSync(res Result, err error) {
+	// Тестовые запуски в историю не пишем: иначе «последняя синхронизация»
+	// показывала бы dry-run, а health-статус — его фиктивный результат.
+	if res.DryRun {
+		return
+	}
+	status := "success"
+	errText := ""
+	switch {
+	case err != nil:
+		status = "failed"
+		errText = logging.RedactString(err.Error())
+	case !res.Success:
+		status = "failed"
+		errText = logging.RedactString(res.Error)
+	}
+
+	elapsed := res.FinishedAt.Sub(res.StartedAt)
+	if res.FinishedAt.IsZero() {
+		// Ранние error-выходы не выставляют FinishedAt — считаем по факту.
+		res.FinishedAt = time.Now()
+		elapsed = res.FinishedAt.Sub(res.StartedAt)
+	}
+
+	rec := history.Record{
+		Time:       res.FinishedAt,
+		Service:    res.Service,
+		ServiceID:  s.ServiceID(res.Service),
+		Method:     res.Method,
+		Status:     status,
+		Error:      errText,
+		Collected:  res.Collected,
+		Aggregated: res.Aggregated,
+		Added:      res.Added,
+		Removed:    res.Removed,
+		Unchanged:  res.Unchanged,
+		DurationMS: elapsed.Milliseconds(),
+	}
+	// Сводка качества для UI-health (персист; старые записи без неё).
+	if res.Coverage != nil {
+		rec.CovChecked = res.Coverage.Checked
+		rec.CovCovered = res.Coverage.Covered
+	}
+	if len(primarySNIFailed(res.Verification)) > 0 {
+		rec.SNIPrimaryFailed = true
+	}
+	if res.Rejected != nil {
+		rec.RejectedTotal = res.Rejected.Total()
+	}
+	rec.Suppressed = res.Suppressed
+	s.history.Add(rec)
+}
+
+func (s *Syncer) syncService(ctx context.Context, name string, dry, force bool) (Result, error) {
 	start := time.Now()
 
 	// Снапшот конфига: дальше тело работает с локальными копиями —
@@ -463,14 +550,10 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	if !s.acquire(name) {
 		msg := fmt.Sprintf("Синхронизация %s пропущена: предыдущий запуск ещё выполняется", name)
 		s.logFor(name).Warn(msg)
-		s.emit("skipped", map[string]any{"service": name, "reason": "already running"})
-		if !dry {
-			_ = s.getNotify().SyncStart(ctx, []string{name}, "вручную", "пропущено: уже выполняется")
-		}
 		res.Error = msg
 		res.FinishedAt = time.Now()
 		res.Duration = res.FinishedAt.Sub(start).String()
-		return res, fmt.Errorf("%s", msg)
+		return res, fmt.Errorf("%w: %s", ErrSyncBusy, msg)
 	}
 	defer s.release(name)
 
@@ -516,6 +599,8 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		return res, fmt.Errorf("collect: %w", err)
 	}
 	log.Info("собраны исходные префиксы", "count", len(raw), "method", method)
+	res.Method = method
+	res.Collected = len(raw)
 
 	s.setProgress(name, "валидация адресов", 40, dry)
 
@@ -551,6 +636,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		agg = prefixes
 	}
 	log.Info("префиксы агрегированы", "count", len(agg))
+	res.Aggregated = len(agg)
 
 	// 4a. Контроль покрытия: текущие A-записи доменов должны входить в набор,
 	// иначе сервис через VPN работать не будет. Проверка best-effort —
@@ -614,16 +700,20 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	// из желаемого набора — дубликаты и перекрытия чужих адресов не создаются.
 	s.setProgress(name, "исключение пересечений", 55, dry)
 	preExclusion := len(desired)
-	desired = applyForeignExclusions(desired, foreign, log)
+	var suppressed int
+	desired, suppressed = applyForeignExclusions(desired, foreign, log)
+	// Сколько желаемых префиксов «съели» чужие записи — для UI/Telegram:
+	// сервис может быть покрыт ручными записями и фактически не управляться.
+	res.Suppressed = suppressed
 
-	// Весь желаемый набор уже покрыт записями списка (ручные записи, другие
-	// сервисы, dynamic): сеть находится в нужном состоянии. Чужие записи из-за
-	// изоляции (PROMPT II.1) не переиспользуются и не дублируются — это не
-	// ошибка, а «уже покрыто»: фиксируем успех с нулём изменений.
+	// Весь желаемый набор уже покрыт чужими записями (ручные записи, другие
+	// сервисы, dynamic): добавлять нечего. Это не ошибка, но и не «изменений
+	// не требуется»: собственные устаревшие managed-записи сервиса всё равно
+	// должны быть удалены — иначе они висят месяцами и искажают health.
 	covered := len(desired) == 0 && preExclusion > 0
 	if covered {
-		log.Info("желаемый набор полностью покрыт существующими записями, изменений не нужно",
-			"foreign", len(foreign), "managed", len(existing))
+		log.Info("желаемый набор полностью покрыт существующими записями",
+			"foreign", len(foreign), "managed", len(existing), "suppressed", suppressed)
 	}
 	if len(desired) == 0 && !covered {
 		res.Error = "all desired prefixes overlap existing MikroTik entries, aborting sync (fail-closed)"
@@ -635,23 +725,20 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 
 	s.setProgress(name, "сравнение списков", 60, dry)
 
-	// 5. Diff по нормализованному address.
-	var diff *addresslist.Diff
-	if covered {
-		res.Unchanged = len(existing)
-	} else {
-		d, derr := addresslist.ComputeDiff(name, list, comment, desired, existing)
-		if derr != nil {
-			res.Error = fmt.Sprintf("compute diff: %v", derr)
-			log.Error("не удалось вычислить diff", "err", derr)
-			s.notifyError(ctx, name, derr)
-			return res, fmt.Errorf("compute diff: %w", derr)
-		}
-		diff = d
-		res.Added = len(diff.Add)
-		res.Removed = len(diff.Remove)
-		res.Unchanged = len(diff.Unchanged)
+	// 5. Diff по нормализованному address. Считается всегда, включая covered:
+	// устаревшие managed-записи сервиса должны уходить, а не «считаться
+	// неизменными» (раньше covered пропускал diff целиком).
+	d, derr := addresslist.ComputeDiff(name, list, comment, desired, existing)
+	if derr != nil {
+		res.Error = fmt.Sprintf("compute diff: %v", derr)
+		log.Error("не удалось вычислить diff", "err", derr)
+		s.notifyError(ctx, name, derr)
+		return res, fmt.Errorf("compute diff: %w", derr)
 	}
+	diff := d
+	res.Added = len(diff.Add)
+	res.Removed = len(diff.Remove)
+	res.Unchanged = len(diff.Unchanged)
 
 	s.setProgress(name, "план обновлений", 65, dry)
 
@@ -670,7 +757,8 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		toUpdate = nil
 	}
 	if covered {
-		log.Info("изменений нет: желаемый набор покрыт существующими записями")
+		log.Info("добавлять нечего: желаемый набор покрыт чужими записями",
+			"removable_managed", len(diff.Remove))
 	} else {
 		log.Info("вычислен diff",
 			"add", res.Added, "remove", res.Removed, "unchanged", res.Unchanged, "update", res.Updated)
@@ -678,12 +766,19 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 
 	s.setProgress(name, "проверка безопасности", 70, dry)
 
-	// 7. SAFE-DIFF.
-	if !covered && len(existing) > 0 && !force {
+	// 7. SAFE-DIFF. Проверяется и covered-случай: diff теперь считается всегда,
+	// и «усохший» набор не должен массово сносить управляемые записи без force.
+	//
+	// Особый случай — covered (набор целиком покрыт чужими записями). Удаление
+	// ВСЕХ своих записей здесь не оголяет трафик: диапазон уже закрыт чужими
+	// включёнными записями, поэтому правило «новый набор пуст» неприменимо —
+	// оно про сбойный сбор, когда покрытия нет. Остальные пороги (доля,
+	// абсолютное число) действуют и здесь.
+	if len(existing) > 0 && !force {
 		if err := addresslist.CheckDeletion(len(existing), len(diff.Remove), addresslist.SafetyParams{
 			MaxDeleteRatio:          maxDeleteRatio,
 			RequireConfirmationOver: requireConfirmationOver,
-		}); err != nil {
+		}); err != nil && (!covered || len(diff.Remove) < len(existing)) {
 			res.Error = err.Error()
 			log.Error("проверка безопасности заблокировала синхронизацию", "err", err)
 			s.notifyError(ctx, name, err)
@@ -691,15 +786,15 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		}
 	}
 
-	var toRemove []addresslist.Entry
-	var toAdd []addresslist.Entry
-	if !covered {
-		toRemove = addresslist.RemovalPlan(desired, existing)
-		toAdd = make([]addresslist.Entry, 0, len(diff.Add))
-		for _, a := range diff.Add {
-			toAdd = append(toAdd, addresslist.Entry{Address: a})
-		}
+	toRemove := addresslist.RemovalPlan(desired, existing)
+	toAdd := make([]addresslist.Entry, 0, len(diff.Add))
+	for _, a := range diff.Add {
+		toAdd = append(toAdd, addresslist.Entry{Address: a})
 	}
+	// Отчёт должен совпадать с планом: при safety-блокировке удалений нет,
+	// хотя diff их насчитал.
+	res.Added = len(toAdd)
+	res.Removed = len(toRemove)
 
 	s.setProgress(name, "подготовка применений", 75, dry)
 
@@ -713,7 +808,7 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	}
 
 	snapshotID := ""
-	if !covered {
+	if len(toAdd) > 0 || len(toRemove) > 0 || len(toUpdate) > 0 {
 		s.setProgress(name, "создание снапшота", 80, dry)
 
 		// 9. Снапшот перед применением (PROMPT II.5, IV.5).
@@ -747,7 +842,8 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 			return res, fmt.Errorf("transaction: %w", err)
 		}
 	} else {
-		log.Info("применять нечего: желаемый набор покрыт существующими записями")
+		log.Info("применять нечего: набор уже в нужном состоянии",
+			"suppressed", suppressed)
 	}
 
 	s.setProgress(name, "завершение", 95, dry)
@@ -776,10 +872,17 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 	logging.LogSyncResult(log, logRes, elapsed)
 
 	var msg string
-	if covered {
-		msg = fmt.Sprintf("✅ %s (список %s): все адреса уже покрыты записями списка — изменений не требуется",
+	switch {
+	case covered && res.Suppressed > 0:
+		// Честный текст: набор покрыт чужими записями, сервис фактически не
+		// управляется. Победное «изменений не требуется» здесь вводило в
+		// заблуждение (реальный кейс с ручными wide-записями в TO-VPN).
+		msg = fmt.Sprintf("⚠️ %s (список %s): все адреса уже покрыты чужими записями — собственных маршрутов не добавлено",
 			name, list)
-	} else {
+	case covered:
+		msg = fmt.Sprintf("✅ %s (список %s): всё уже в нужном состоянии, изменений не требуется",
+			name, list)
+	default:
 		msg = fmt.Sprintf("✅ %s (список %s): +%d добавлено, −%d удалено, %d без изменений",
 			name, list, res.Added, res.Removed, res.Unchanged)
 		if res.Updated > 0 {
@@ -797,33 +900,10 @@ func (s *Syncer) SyncService(ctx context.Context, name string, dry, force bool) 
 		"updated": res.Updated,
 	})
 
-	// Финализация: rec собирается без блокировок, запись истории (bbolt I/O
-	// под своим мьютексом) — ВНЕ serviceMu, иначе каждый синк держит все
-	// операции с сервисами. lastSync под serviceMu — коротко.
-	rec := history.Record{
-		Service:    name,
-		ServiceID:  s.ServiceID(name),
-		Method:     method,
-		Status:     "success",
-		Collected:  len(raw),
-		Aggregated: len(agg),
-		Added:      res.Added,
-		Removed:    res.Removed,
-		Unchanged:  res.Unchanged,
-		DurationMS: elapsed.Milliseconds(),
-	}
-	// Сводка качества для UI-health (персист; старые записи без неё).
-	if res.Coverage != nil {
-		rec.CovChecked = res.Coverage.Checked
-		rec.CovCovered = res.Coverage.Covered
-	}
-	if len(primarySNIFailed(res.Verification)) > 0 {
-		rec.SNIPrimaryFailed = true
-	}
-	if res.Rejected != nil {
-		rec.RejectedTotal = res.Rejected.Total()
-	}
-	s.history.Add(rec)
+	// Финализация: rec собирается в recordSync (единая точка истории).
+	// lastSync под serviceMu — коротко.
+	res.FinishedAt = time.Now()
+	res.Duration = res.FinishedAt.Sub(start).String()
 	s.serviceMu.Lock()
 	s.lastSync = time.Now()
 	s.serviceMu.Unlock()

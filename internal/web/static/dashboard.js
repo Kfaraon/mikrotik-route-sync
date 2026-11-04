@@ -8,37 +8,12 @@
     return document.getElementById(id);
   }
 
-  function esc(value) {
-    return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
-      return {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        "\"": "&quot;",
-        "'": "&#39;"
-      }[ch];
-    });
-  }
-
-  function text(value) {
-    if (value === null || value === undefined) return "";
-    if (typeof value === "object") {
-      try {
-        return JSON.stringify(value);
-      } catch (e) {
-        return String(value);
-      }
-    }
-    return String(value);
-  }
-
-  function trim(value) {
-    return text(value).trim();
-  }
-
-  function lower(value) {
-    return trim(value).toLowerCase();
-  }
+  // Общие утилиты — из common.js (единая реализация для всех страниц).
+  var util = window.mrsUtil || {};
+  var esc = util.esc;
+  var text = util.text;
+  var trim = util.trim;
+  var lower = util.lower;
 
   function pad(n) {
     return n < 10 ? "0" + n : String(n);

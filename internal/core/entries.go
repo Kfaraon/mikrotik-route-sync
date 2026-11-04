@@ -64,12 +64,10 @@ func (s *Syncer) DiffService(ctx context.Context, name string) (*addresslist.Dif
 	for _, p := range agg {
 		desired = append(desired, p.String())
 	}
-	desired = applyForeignExclusions(desired, foreign, s.log)
-	if len(desired) == 0 {
-		// Весь набор уже покрыт записями списка — изменений нет
-		// (та же семантика, что и в SyncService: «уже покрыто», не ошибка).
-		return &addresslist.Diff{}, nil
-	}
+	desired, _ = applyForeignExclusions(desired, foreign, s.log)
+	// Diff считается всегда, в том числе когда набор полностью покрыт чужими
+	// записями: собственные устаревшие managed-записи должны быть видны как
+	// кандидаты на удаление (иначе UI показывал «изменений нет» при мусоре).
 	return addresslist.ComputeDiff(name, list, comment, desired, existing)
 }
 
@@ -77,21 +75,24 @@ func (s *Syncer) DiffService(ctx context.Context, name string) (*addresslist.Dif
 // записи списка (manual, другие сервисы, dynamic), чтобы не создавать
 // пересекающиеся адреса, и ре-агрегирует результат. Без чужих записей или
 // пересечений возвращает набор без изменений.
-
-func applyForeignExclusions(desired []string, foreign []addresslist.Entry, log *slog.Logger) []string {
+//
+// Возвращает число желаемых префиксов, столкнувшихся с чужими записями:
+// вызывающий показывает его как «подавлено», чтобы полное перекрытие не
+// выглядело победой.
+func applyForeignExclusions(desired []string, foreign []addresslist.Entry, log *slog.Logger) ([]string, int) {
 	if len(desired) == 0 || len(foreign) == 0 {
-		return desired
+		return desired, 0
 	}
 
 	out, hits := addresslist.SubtractForeign(desired, foreign)
 	if hits == 0 {
-		return desired
+		return desired, 0
 	}
 	log.Info("исключены пересечения с существующими записями MikroTik",
 		"overlapped", hits, "before", len(desired), "after", len(out))
 	// Аннигиляция: чужие (ручные/другие сервисы) записи закрыли почти весь
 	// желаемый набор. Синк отработает «успешно» с нулём изменений, но сервис
-	// фактически не управляется — это нужно видеть в логе.
+	// фактически не управляется — это видно в логе и в Result.Suppressed.
 	if len(out)*2 < len(desired) {
 		log.Warn("чужие записи MikroTik покрывают большую часть желаемого набора, сервис почти не управляется",
 			"before", len(desired), "after", len(out), "foreign", len(foreign))
@@ -105,13 +106,13 @@ func applyForeignExclusions(desired []string, foreign []addresslist.Entry, log *
 	}
 	merged, err := aggregator.Aggregate(parsed)
 	if err != nil {
-		return out
+		return out, hits
 	}
 	re := make([]string, 0, len(merged))
 	for _, p := range merged {
 		re = append(re, p.String())
 	}
-	return re
+	return re, hits
 }
 
 func (s *Syncer) ListGlobalEntries(ctx context.Context) ([]addresslist.Entry, error) {

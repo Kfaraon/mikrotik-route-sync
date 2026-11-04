@@ -49,9 +49,9 @@
     if (el) el.textContent = String(value);
   }
 
+  // CSRF-токен: единая реализация в common.js (подключён раньше).
   function csrf() {
-    var m = document.querySelector('meta[name="csrf-token"]');
-    return m ? m.content : "";
+    return (window.mrsUtil && window.mrsUtil.csrf) ? window.mrsUtil.csrf() : "";
   }
 
   function normalizeSpec(v) {

@@ -1,4 +1,4 @@
-// Package web — встроенный Web UI + REST API + WebSocket (PROMPT VI, VII).
+// Package web — встроенный Web UI + REST API (PROMPT VI, VII).
 //
 // Безопасность:
 //   - Basic Auth + session cookie + CSRF-токен для изменяющих запросов
@@ -42,7 +42,6 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/gorilla/websocket"
 	"golang.org/x/time/rate"
 	"gopkg.in/yaml.v3"
 )
@@ -51,134 +50,12 @@ import (
 var webFS embed.FS
 
 // ============================================================================
-// WebSocket Hub
+// sameOrigin
 // ============================================================================
 
-type wsClient struct {
-	conn *websocket.Conn
-	send chan []byte
-}
-
-func (c *wsClient) writeLoop(done chan struct{}) {
-	for {
-		select {
-		case msg, ok := <-c.send:
-			if !ok {
-				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-			_ = c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-				return
-			}
-		case <-done:
-			return
-		}
-	}
-}
-
-type Hub struct {
-	mu         sync.RWMutex
-	clients    map[*wsClient]bool
-	reaperDone chan struct{}
-	closed     bool
-	stopOnce   sync.Once
-}
-
-func NewHub() *Hub {
-	h := &Hub{clients: map[*wsClient]bool{}, reaperDone: make(chan struct{})}
-	go h.reaperLoop()
-	return h
-}
-
-// Stop останавливает репер и закрывает всех клиентов: иначе после остановки
-// сервера горутины writeLoop/readLoop живут до таймаута соединения, а
-// handleWS висит на <-done, удерживая соединения и память.
-func (h *Hub) Stop() {
-	h.stopOnce.Do(func() {
-		close(h.reaperDone)
-		h.mu.Lock()
-		h.closed = true
-		for c := range h.clients {
-			delete(h.clients, c)
-			close(c.send)
-			_ = c.conn.Close()
-		}
-		h.mu.Unlock()
-	})
-}
-
-// reaperLoop периодически чистит мёртвых клиентов: тех, у кого send канал
-// забит (backpressure) или соединение закрыто. Запускается каждые 30 сек.
-func (h *Hub) reaperLoop() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-h.reaperDone:
-			return
-		case <-ticker.C:
-			h.mu.Lock()
-			if h.closed {
-				h.mu.Unlock()
-				return
-			}
-			for c := range h.clients {
-				// Канал забит под завязку — клиент не успевает читать,
-				// удаляем. Проверяем длину, ничего не пишем: лишние
-				// фреймы живым клиентам не нужны.
-				if len(c.send) == cap(c.send) {
-					delete(h.clients, c)
-					close(c.send)
-					_ = c.conn.Close()
-				}
-			}
-			h.mu.Unlock()
-		}
-	}
-}
-
-func (h *Hub) Broadcast(event string, data any) {
-	payload, err := json.Marshal(map[string]any{"event": event, "data": data, "time": time.Now().Format(time.RFC3339)})
-	if err != nil {
-		return
-	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for c := range h.clients {
-		select {
-		case c.send <- payload:
-		default:
-			// Клиент не успевает читать — помечаем на удаление репером.
-			// Не удаляем здесь под RLock, чтобы не удерживать блокировку.
-		}
-	}
-}
-
-var wsUpgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return checkOriginHost(r, r.Header.Get("Origin"))
-	},
-}
-
-// checkOriginHost строго сравнивает Origin с Host (без префиксных
-// совпадений вида http://host.evil.com). Пустой Origin — не браузер.
-// Схему здесь не смотрим: её проверяет Server.handleWS до апгрейда.
-func checkOriginHost(r *http.Request, origin string) bool {
-	if origin == "" {
-		return true
-	}
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	return strings.EqualFold(u.Host, r.Host)
-}
-
-// sameOrigin — то же плюс сверка схемы (за TLS-терминирующим прокси
-// смотрим X-Forwarded-Proto от доверенного).
+// sameOrigin — сверка Origin с Host и схемой (за TLS-терминирующим прокси
+// смотрим X-Forwarded-Proto от доверенного). Используется CSRF-защитой
+// Basic-auth запросов.
 func (s *Server) sameOrigin(r *http.Request, origin string) bool {
 	if origin == "" {
 		return true
@@ -198,56 +75,6 @@ func (s *Server) sameOrigin(r *http.Request, origin string) bool {
 		return false
 	}
 	return true
-}
-
-// handleWS — апгрейд с проверкой Origin (включая схему), затем хаб.
-func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	if !s.sameOrigin(r, r.Header.Get("Origin")) {
-		http.Error(w, "cross-origin websocket rejected", http.StatusForbidden)
-		return
-	}
-	s.hub.handleWS(w, r)
-}
-
-func (h *Hub) handleWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	client := &wsClient{conn: conn, send: make(chan []byte, 64)}
-	done := make(chan struct{})
-
-	welcome, _ := json.Marshal(map[string]any{"event": "welcome", "time": time.Now()})
-
-	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
-		_ = conn.Close()
-		return
-	}
-	h.clients[client] = true
-	// welcome отправляем под блокировкой: Stop может закрыть send сразу
-	// после регистрации — запись в закрытый канал паникует.
-	client.send <- welcome
-	h.mu.Unlock()
-
-	go client.writeLoop(done)
-
-	go func() {
-		defer close(done)
-		conn.SetReadLimit(4096)
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				break
-			}
-		}
-	}()
-
-	<-done
-	h.mu.Lock()
-	delete(h.clients, client)
-	h.mu.Unlock()
-	_ = conn.Close()
 }
 
 // ============================================================================
@@ -576,7 +403,6 @@ type Server struct {
 	cfg      *config.Config
 	syncer   *core.Syncer
 	log      *slog.Logger
-	hub      *Hub
 	tmpl     *template.Template
 	ips      *ipChecker
 	limiter  *ipLimiter
@@ -636,7 +462,6 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		cfg:      cfg,
 		syncer:   syncer,
 		log:      log,
-		hub:      NewHub(),
 		tmpl:     tmpl,
 		ips:      ips,
 		limiter:  newIPLimiter(50),
@@ -653,15 +478,14 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		}
 	}
 
-	syncer.SetEventHook(func(event string, data any) {
-		s.hub.Broadcast(event, data)
-	})
+	// Хук событий больше не подключается: WS-транспорта нет, прогресс UI
+	// получает поллингом /api/v1/progress. SetEventHook остаётся для тестов
+	// и внешних интеграций.
 
 	router := chi.NewRouter()
 	router.Use(middleware.Recoverer)
-	// БЕЗ глобального Compress: /ws апгрейд под gzip держится на
-	// недокументированном совпадении (см. handleWS). Сжатие — точечно
-	// на страницах, API и статике ниже.
+	// БЕЗ глобального Compress: точечное сжатие на страницах, API и статике
+	// (глобальная обёртка мешает длинным ответам и буферизует поток).
 	router.Use(s.securityHeaders)
 	router.Use(s.cidrMiddleware)
 	router.Use(s.rateLimitMiddleware)
@@ -711,7 +535,6 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 		r.Get("/history", s.apiHistory)
 		r.Get("/address-list", s.apiAddressList)
 		r.Get("/address-list/{service}", s.apiServiceAddressList)
-		// /ws — отдельно вне Compress (см. ниже).
 	})
 
 	pages := router.With(s.authMiddleware, middleware.Compress(5), noCache)
@@ -737,10 +560,6 @@ func NewServer(cfg *config.Config, syncer *core.Syncer, log *slog.Logger) (*Serv
 
 	static, _ := fs.Sub(webFS, "static")
 	router.With(middleware.Compress(5)).Handle("/static/*", noCache(http.StripPrefix("/static/", http.FileServer(http.FS(static)))))
-
-	// WebSocket отдельно от сжатия: gzip-обёртка и Hijack сочетаются лишь
-	// случайно (chi#compress). Auth сохранён, Origin проверяет handleWS.
-	router.With(s.authMiddleware).Get("/api/v1/ws", s.handleWS)
 
 	s.httpSrv = &http.Server{
 		Addr:              cfg.Web.Listen,
@@ -1016,6 +835,20 @@ func noCache(next http.Handler) http.Handler {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, apiEnvelope{OK: false, Error: msg})
+}
+
+// writeSyncError переводит ошибку синхронизации в HTTP-статус: нет сервиса —
+// 404, сервис занят другим запуском/удалением — 409 (повторяемо, не сбой),
+// остальное — 500 с телом Result для диагностики.
+func writeSyncError(w http.ResponseWriter, res core.Result, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, core.ErrServiceNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, core.ErrSyncBusy):
+		status = http.StatusConflict
+	}
+	writeJSON(w, status, apiEnvelope{OK: false, Data: res, Error: err.Error()})
 }
 
 // ============================================================================
@@ -2176,6 +2009,10 @@ func (s *Server) apiDeleteService(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
+		if errors.Is(err, core.ErrSyncBusy) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -2238,11 +2075,7 @@ func (s *Server) apiSyncOne(w http.ResponseWriter, r *http.Request) {
 	// висящий роутер (как у планировщика/бота/веера).
 	res, err := s.syncer.SyncService(tctx, name, req.DryRun, req.Force)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, core.ErrServiceNotFound) {
-			status = http.StatusNotFound
-		}
-		writeJSON(w, status, apiEnvelope{OK: false, Data: res, Error: err.Error()})
+		writeSyncError(w, res, err)
 		return
 	}
 	writeOK(w, res)
@@ -2256,11 +2089,7 @@ func (s *Server) apiDryRun(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	res, err := s.syncer.SyncService(dctx, name, true, false)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, core.ErrServiceNotFound) {
-			status = http.StatusNotFound
-		}
-		writeJSON(w, status, apiEnvelope{OK: false, Data: res, Error: err.Error()})
+		writeSyncError(w, res, err)
 		return
 	}
 	writeOK(w, res)
@@ -2636,6 +2465,11 @@ func (s *Server) enqueueBulkSync(services []string, dry, force bool) bool {
 
 // runBulkQueue последовательно выполняет задания очереди. Контекст — от
 // lifeCtx (отменяется при Stop), с общим пределом на одно задание.
+//
+// recover обязателен: это фоновая горутина вне middleware.Recoverer, и паника
+// в SyncMany (до/после веера сервисов) уронила бы весь процесс. Снимаем её и
+// продолжаем очередь — иначе bulkRunning остался бы true и все последующие
+// массовые синки молча вставали в очередь навсегда.
 func (s *Server) runBulkQueue() {
 	for {
 		s.bulkMu.Lock()
@@ -2648,9 +2482,17 @@ func (s *Server) runBulkQueue() {
 		s.bulkQueue = s.bulkQueue[1:]
 		s.bulkMu.Unlock()
 
-		ctx, cancel := context.WithTimeout(s.baseCtx(), 30*time.Minute)
-		_ = s.syncer.SyncMany(ctx, req.services, req.dry, req.force)
-		cancel()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					s.log.Error("паника в обработчике очереди массовых синков",
+						"panic", fmt.Sprintf("%v", r), "services", len(req.services))
+				}
+			}()
+			ctx, cancel := context.WithTimeout(s.baseCtx(), 30*time.Minute)
+			defer cancel()
+			_ = s.syncer.SyncMany(ctx, req.services, req.dry, req.force)
+		}()
 	}
 }
 
@@ -2712,6 +2554,10 @@ func (s *Server) actionDeleteService(w http.ResponseWriter, r *http.Request) {
 	if err := s.syncer.RemoveService(dctx, name, purge); err != nil {
 		if errors.Is(err, core.ErrServiceNotFound) {
 			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, core.ErrSyncBusy) {
+			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -3022,7 +2868,6 @@ func (s *Server) Start(ctx context.Context) error {
 	case <-ctx.Done():
 		s.log.Info("остановка веб-сервера")
 		s.lifeCancel()
-		s.hub.Stop()
 		s.limiter.StopEvictTicker()
 		s.sessions.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -3030,7 +2875,6 @@ func (s *Server) Start(ctx context.Context) error {
 		return s.httpSrv.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		s.lifeCancel()
-		s.hub.Stop()
 		s.limiter.StopEvictTicker()
 		s.sessions.Stop()
 		return err

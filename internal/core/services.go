@@ -249,8 +249,13 @@ func (s *Syncer) RemoveService(ctx context.Context, name string, purgeRoutes boo
 
 	// Фаза 1: purge записей на роутере — БЕЗ блокировок (сеть на минуты
 	// вешала всё управление). При ошибке сервис НЕ удаляется (как раньше).
-	// Гоночное окно: синк, стартовавший во время purge, может вернуть записи
-	// обратно — они останутся сиротами (управляемость уже снята).
+	// Гоночное окно: синк, стартовавший во время purge, возвращал записи
+	// обратно — они оставались сиротами без управляемости. Захватываем тот
+	// же per-service лок, что и SyncService: занятый сервис — честный отказ.
+	if !s.acquire(name) {
+		return fmt.Errorf("%w: service %s is being synchronized, retry after it finishes", ErrSyncBusy, name)
+	}
+	defer s.release(name)
 	if purgeRoutes {
 		n, err := s.RemoveServiceEntries(ctx, name)
 		if err != nil {
@@ -616,10 +621,16 @@ func (s *Syncer) Backup(ctx context.Context, name string) (*BackupFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list entries: %w", err)
 	}
+	// Снапшот под RLock: прямое чтение полей конфига гоняло с сохранением
+	// настроек через web (остальные пути давно читают так же).
+	s.cfg.RLock()
+	list := s.cfg.Firewall.AddressList
+	prefix := s.cfg.Firewall.CommentPrefix
+	s.cfg.RUnlock()
 	return &BackupFile{
 		Service:   name,
-		List:      s.cfg.Firewall.AddressList,
-		Comment:   addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name),
+		List:      list,
+		Comment:   addresslist.CommentFor(prefix, name),
 		CreatedAt: time.Now().UTC(),
 		Entries:   entries,
 	}, nil
@@ -637,8 +648,12 @@ func (s *Syncer) Restore(ctx context.Context, name string, entries []addresslist
 		}
 	}
 
+	// Снапшот под RLock (см. Backup): оба поля читаются согласованно.
+	s.cfg.RLock()
 	list := s.cfg.Firewall.AddressList
-	comment := addresslist.CommentFor(s.cfg.Firewall.CommentPrefix, name)
+	prefix := s.cfg.Firewall.CommentPrefix
+	s.cfg.RUnlock()
+	comment := addresslist.CommentFor(prefix, name)
 
 	restored, skipped, failures := 0, 0, 0
 	for _, e := range entries {

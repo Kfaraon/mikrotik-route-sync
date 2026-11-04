@@ -808,7 +808,7 @@ telegram:
 - `html/template` + `//go:embed`;
 - CSS-переменные;
 - HTMX + vanilla JS;
-- WebSocket-эндпоинт через `github.com/gorilla/websocket` (события синхронизации);
+- Прогресс синхронизаций через `GET /api/v1/progress` (WebSocket удалён как неиспользуемый);
 - Basic Auth + session cookie + CSRF;
 - ограничение по `allowed_cidrs`;
 - security headers;
@@ -928,7 +928,6 @@ Endpoints:
 | PUT | `/api/v1/schedules/{service}` | изменить расписание |
 | GET | `/api/v1/logs` | логи |
 | GET | `/api/v1/history` | история синхронизаций |
-| WS | `/api/v1/ws` | live-обновления |
 
 Изменяющие запросы требуют аутентификацию и CSRF, если используется cookie-сессия.
 
@@ -1544,7 +1543,6 @@ Go:
 ```text
 github.com/go-chi/chi/v5 v5.2.3
 github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-github.com/gorilla/websocket v1.5.3
 github.com/hashicorp/go-retryablehttp v0.7.8
 github.com/robfig/cron/v3 v3.0.1
 github.com/sony/gobreaker v1.0.0
@@ -1801,7 +1799,7 @@ app restore <service> --from-snapshot <id> --force
 14. Telegram bot (`bot/bot.go` + auth + rate limit).
 15. Notifier (`notifier/notifier.go` + templates).
 16. History (`history/history.go` — bbolt bucket).
-17. Web UI (`web/server.go` + `secret.go` + templates + static + WebSocket + auth + CSRF + headers).
+17. Web UI (`web/server.go` + `secret.go` + templates + static + auth + CSRF + headers).
 18. CLI (`cmd/app/main.go` + cobra + все команды через withSyncer).
 19. Health checks (`/healthz`, `/readyz`).
 20. Docker + compose + LXC.

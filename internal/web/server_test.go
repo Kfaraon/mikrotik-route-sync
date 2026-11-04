@@ -30,7 +30,6 @@ import (
 	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
 	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
 	"github.com/go-chi/chi/v5"
-	"github.com/gorilla/websocket"
 )
 
 func newTestServer(t *testing.T) (*Server, *config.Config) {
@@ -1256,16 +1255,17 @@ func TestPageAddressListDown(t *testing.T) {
 	}
 }
 
-// TestWSNeedsUpgrade — обычный GET на /api/v1/ws: 400, а не апгрейд.
-func TestWSNeedsUpgrade(t *testing.T) {
+// TestWSRemoved — транспорта WS больше нет: /api/v1/ws отвечает 404, канал
+// прогресса один — поллинг /api/v1/progress.
+func TestWSRemoved(t *testing.T) {
 	srv, _ := newTestServer(t)
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
 	client := &http.Client{Jar: newJar(t)}
 	resp, _ := doAuth(client, ts.URL, "GET", "/api/v1/ws", "", nil)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("want 400, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", resp.StatusCode)
 	}
 }
 
@@ -1496,17 +1496,20 @@ func TestCSRFBasicauthOrigin(t *testing.T) {
 }
 
 // TestSameOrigin — строгая сверка Origin с Host (без префиксов).
+// Проверяет s.sameOrigin (checkOriginHost существовал только для WS и удалён
+// вместе с транспортом).
 func TestSameOrigin(t *testing.T) {
 	srv, _ := newTestServer(t)
 	req, _ := http.NewRequest("GET", "http://mrs.local/", nil)
 	req.Host = "mrs.local"
-	for _, ok := range []string{"", "http://mrs.local", "https://mrs.local", "HTTP://MRS.LOCAL"} {
-		if !checkOriginHost(req, ok) {
+	for _, ok := range []string{"", "http://mrs.local", "HTTP://MRS.LOCAL"} {
+		if !srv.sameOrigin(req, ok) {
 			t.Fatalf("must accept %q", ok)
 		}
 	}
-	for _, bad := range []string{"http://mrs.local.evil.com", "http://evil.com", "http://mrs.local:9999", "://", "http://"} {
-		if checkOriginHost(req, bad) {
+	// https-Origin при http-запросе отклоняется (схема обязана совпадать).
+	for _, bad := range []string{"http://mrs.local.evil.com", "http://evil.com", "http://mrs.local:9999", "://", "http://", "https://mrs.local"} {
+		if srv.sameOrigin(req, bad) {
 			t.Fatalf("must reject %q", bad)
 		}
 	}
@@ -2369,54 +2372,115 @@ func TestBulkSyncQueueCapacity(t *testing.T) {
 	}
 }
 
-// TestHubStopClosesClients — Stop закрывает соединения и не оставляет
-// клиентов: иначе горутины WS живут до таймаута после остановки сервера.
-func TestHubStopClosesClients(t *testing.T) {
-	h := NewHub()
-	ts := httptest.NewServer(http.HandlerFunc(h.handleWS))
-	defer ts.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+// TestCommonJSLoadedBeforePageScripts — общие утилиты (esc/text/csrf) живут
+// в common.js; страничные скрипты используют window.mrsUtil, а не свои копии.
+// Порядок подключения важен: common.js обязан идти раньше страничных скриптов.
+func TestCommonJSLoadedBeforePageScripts(t *testing.T) {
+	common, err := os.ReadFile("static/common.js")
 	if err != nil {
-		t.Fatalf("dial: %v", err)
+		t.Fatalf("read common.js: %v", err)
 	}
-	defer func() { _ = conn.Close() }()
+	if !strings.Contains(string(common), "window.mrsUtil") {
+		t.Fatal("common.js must export window.mrsUtil")
+	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		h.mu.RLock()
-		n := len(h.clients)
-		h.mu.RUnlock()
-		if n == 1 {
-			break
+	pages := []string{"services.html", "dashboard.html", "settings.html", "logs.html", "schedules.html", "addresslist.html"}
+	for _, page := range pages {
+		raw, err := os.ReadFile(filepath.Join("templates", page))
+		if err != nil {
+			t.Fatalf("read %s: %v", page, err)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("client not registered")
+		s := string(raw)
+		ci := strings.Index(s, "/static/common.js")
+		if ci < 0 {
+			t.Fatalf("%s must include common.js", page)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	h.Stop()
-
-	h.mu.RLock()
-	remaining := len(h.clients)
-	h.mu.RUnlock()
-	if remaining != 0 {
-		t.Fatalf("clients remain after Stop: %d", remaining)
-	}
-
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	closed := false
-	for i := 0; i < 10; i++ {
-		if _, _, err := conn.ReadMessage(); err != nil {
-			closed = true
-			break
+		// Ни один другой скрипт не должен подключаться раньше common.js.
+		for _, other := range []string{"/static/services.js", "/static/dashboard.js", "/static/schedule.js", "/static/app.js", "/static/addresslist.js"} {
+			if oi := strings.Index(s, other); oi >= 0 && oi < ci {
+				t.Fatalf("%s loads %s before common.js", page, other)
+			}
 		}
 	}
-	if !closed {
-		t.Fatal("connection must be closed after Stop")
-	}
+}
 
-	h.Stop() // повторный вызов идемпотентен
+// TestPageScriptsDoNotDuplicateUtils — копии esc/text/csrf в страничных
+// скриптах не должны вернуться (они уже расходились по поведению).
+func TestPageScriptsDoNotDuplicateUtils(t *testing.T) {
+	for _, f := range []string{"services.js", "dashboard.js", "schedule.js", "app.js"} {
+		raw, err := os.ReadFile(filepath.Join("static", f))
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		js := string(raw)
+		for _, bad := range []string{
+			"function esc(value)",
+			"function text(value)",
+			`querySelector('meta[name="csrf-token"]')`,
+		} {
+			if strings.Contains(js, bad) {
+				t.Fatalf("%s must use window.mrsUtil instead of duplicating %q", f, bad)
+			}
+		}
+	}
+}
+
+// TestServicesJSPausesPollingWhenHidden — фоновая вкладка не должна поллить
+// /api/v1/progress и перезагружать таблицу (нагрузка на бэкенд и роутер).
+func TestServicesJSPausesPollingWhenHidden(t *testing.T) {
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+	if !strings.Contains(js, "document.hidden") {
+		t.Fatal("polling must respect document.hidden")
+	}
+	if !strings.Contains(js, "visibilitychange") {
+		t.Fatal("polling must resume on visibilitychange")
+	}
+}
+
+// TestServicesJSShowsSuppressed — подавленные чужими записями префиксы
+// выводятся в health-бейдже (реальный кейс: ручные wide-записи в TO-VPN).
+func TestServicesJSShowsSuppressed(t *testing.T) {
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+	start := strings.Index(js, "function qualityProblem")
+	if start < 0 {
+		t.Fatal("qualityProblem not found")
+	}
+	block := js[start : start+1200]
+	if !strings.Contains(block, `"suppressed"`) {
+		t.Fatalf("qualityProblem must read suppressed: %s", block)
+	}
+}
+
+// TestSyncErrorStatusMapping — маппинг ошибок синка в HTTP-статусы:
+// неизвестный сервис — 404, занятый — 409 (повторяемо), прочее — 500.
+func TestSyncErrorStatusMapping(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"not found", fmt.Errorf("%w: x", core.ErrServiceNotFound), http.StatusNotFound},
+		{"busy", fmt.Errorf("%w: x", core.ErrSyncBusy), http.StatusConflict},
+		{"failure", errors.New("collect: boom"), http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			writeSyncError(rec, core.Result{Service: "x"}, tc.err)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.want)
+			}
+			if !strings.Contains(rec.Body.String(), `"ok":false`) {
+				t.Fatalf("body must be an error envelope: %s", rec.Body.String())
+			}
+		})
+	}
 }

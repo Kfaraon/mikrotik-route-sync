@@ -172,9 +172,20 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body any) ([]by
 		}
 		defer func() { _ = resp.Body.Close() }()
 
-		b, e := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		// Лимит тела ответа: 4 МиБ. RouterOS отдаёт весь address-list одним
+		// JSON — на десятках тысяч записей ответ может не влезть, и раньше
+		// он молча обрезался (json.Unmarshal падал «unexpected end» без
+		// причины). Читаем на байт больше лимита, чтобы отличить «ровно
+		// столько» от «обрезано», и возвращаем понятную ошибку.
+		const maxResponse = 4 << 20
+		b, e := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 		if e != nil {
 			return nil, e
+		}
+		if len(b) > maxResponse {
+			return nil, fmt.Errorf(
+				"routeros %s %s: response exceeds %d MiB limit (address-list too large; reduce managed entries or raise the limit in code)",
+				method, path, maxResponse>>20)
 		}
 
 		if resp.StatusCode/100 != 2 {

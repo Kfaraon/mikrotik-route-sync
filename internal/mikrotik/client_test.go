@@ -588,3 +588,23 @@ func TestRetryCheckRetryPolicyGatesByMethod(t *testing.T) {
 		t.Fatal("GET 5xx must be retried")
 	}
 }
+
+// TestResponseLimitIsDiagnosable — ответ больше лимита не должен молча
+// обрезаться (раньше json.Unmarshal падал «unexpected end of JSON input»):
+// возвращаем ошибку с понятной причиной.
+func TestResponseLimitIsDiagnosable(t *testing.T) {
+	big := strings.Repeat("x", (4<<20)+16)
+	c, srv := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`["` + big + `"]`))
+	})
+	defer srv.Close()
+
+	_, err := c.ListEntries(context.Background(), "TO-VPN")
+	if err == nil {
+		t.Fatal("expected response size error")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("error must explain the size limit: %v", err)
+	}
+}

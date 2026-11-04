@@ -23,43 +23,14 @@
     }
   }
 
-  function esc(value) {
-    return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
-      return {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        "\"": "&quot;",
-        "'": "&#39;"
-      }[ch];
-    });
-  }
-
-  function text(value) {
-    if (value === null || value === undefined) return "";
-    if (typeof value === "object") {
-      try {
-        return JSON.stringify(value);
-      } catch (e) {
-        return String(value);
-      }
-    }
-    return String(value);
-  }
-
-  function trim(value) {
-    return text(value).trim();
-  }
-
-  function lower(value) {
-    return trim(value).toLowerCase();
-  }
-
-  // Флаги MikroTik приходят строками "true"/"false" (а не булевыми):
-  // только явное "true"/true считается включённым.
-  function flag(value) {
-    return value === true || lower(value) === "true";
-  }
+  // Общие утилиты — из common.js (единая реализация для всех страниц).
+  var util = window.mrsUtil || {};
+  var esc = util.esc;
+  var text = util.text;
+  var trim = util.trim;
+  var lower = util.lower;
+  var flag = util.flag;
+  var csrf = util.csrf;
 
   function pluralRu(n, one, few, many) {
     var abs = Math.abs(n) % 100;
@@ -78,11 +49,6 @@
     var s = text(value);
     if (s.length <= max) return s;
     return s.slice(0, max - 1) + "…";
-  }
-
-  function csrf() {
-    var m = qs('meta[name="csrf-token"]');
-    return m ? m.content : "";
   }
 
   function closest(el, selector) {
@@ -750,6 +716,14 @@
     if (rec.sni_primary_failed) return "SNI-провал";
     var rej = numField(rec, ["rejected_total"]);
     if (rej > 0) return "отброшено " + rej;
+    // Подавленные чужими записями префиксы: сервис может быть почти не
+    // управляемым (ручные wide-записи в address-list). Показываем, только
+    // когда подавлено всё или почти всё, чтобы не шуметь на частичных
+    // пересечениях (у CDN/ASN они обычны).
+    var suppressed = numField(rec, ["suppressed"]);
+    if (suppressed > 0 && numField(rec, ["added"]) === 0) {
+      return "перекрыто чужими (" + suppressed + ")";
+    }
     return "";
   }
 
@@ -1201,6 +1175,9 @@
   }
 
   function pollProgressOnce() {
+    // Скрытая вкладка не должна дёргать бэкенд каждые 900 мс: прогресс всё
+    // равно перерисуется при возврате (visibilitychange вызывает его сразу).
+    if (document.hidden) return Promise.resolve();
     return api("/api/v1/progress").then(function (map) {
       var active = map && typeof map === "object" ? map : {};
 
@@ -1347,6 +1324,11 @@
 
   function loadAll(force) {
     if (state.loading && !force) {
+      return Promise.resolve();
+    }
+    // Скрытая вкладка: полную перезагрузку (5 запросов, включая MikroTik)
+    // не делаем — данные подтянутся при возврате через visibilitychange.
+    if (!force && document.hidden) {
       return Promise.resolve();
     }
 
@@ -3230,6 +3212,15 @@
     bindEvents();
     loadAll(true);
     loadPresets();
+
+    // Возврат на вкладку — сразу подтянуть прогресс и состояние таблицы,
+    // не дожидаясь следующего тика интервала.
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) {
+        pollProgressOnce();
+        loadAll(false);
+      }
+    });
   }
 
   init();

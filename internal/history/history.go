@@ -32,6 +32,9 @@ type Record struct {
 	CovCovered       int  `json:"cov_covered,omitempty"`
 	SNIPrimaryFailed bool `json:"sni_primary_failed,omitempty"`
 	RejectedTotal    int  `json:"rejected_total,omitempty"`
+	// Suppressed — префиксы, вычтенные чужими записями address-list.
+	// Большое значение = сервис фактически не управляется (ручные wide-записи).
+	Suppressed int `json:"suppressed,omitempty"`
 }
 
 // Store — минимальный интерфейс персистентности (реализует storage.Cache).

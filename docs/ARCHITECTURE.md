@@ -91,7 +91,7 @@ MikroTik Route Sync — это приложение на Go для автома�
       storage/          — bbolt cache (кэш, история, bucket address_list_snapshots)
       validator/        — фильтрация сетей (RFC, ASN-проверка)
       version/          — версия приложения
-      web/              — Web UI / REST API / WebSocket
+      web/              — Web UI / REST API
     docs/
       openapi.yaml      — OpenAPI 3.1 спецификация
       ARCHITECTURE.md   — описание архитектуры
@@ -244,7 +244,7 @@ REST API клиент `/rest/ip/firewall/address-list`:
 - Шаблоны: html/template + go:embed
 - CSS: app.css, services.css, schedule.css, dashboard.css
 - JS: HTMX + vanilla JS
-- Live-индикатор состояния роутера — REST `/api/v1/status` (каждые 15 с); WebSocket `/api/v1/ws` — события синхронизации (для интеграций)
+- Live-индикатор состояния роутера — REST `/api/v1/status` (каждые 15 с); прогресс синков — поллинг `GET /api/v1/progress`
 - Basic Auth + session cookie + CSRF
 
 ## Безопасность
@@ -382,10 +382,10 @@ REST API клиент `/rest/ip/firewall/address-list`:
 - `/healthz` — процесс жив (без авторизации, используется в Docker HEALTHCHECK)
 - `/readyz` — RouterOS REST API доступен и bbolt-кэш открыт; 503 при недоступности MikroTik
 
-### Live-события
+### Живые обновления
 
-- WebSocket `/api/v1/ws` — события sync_start / sync_progress / sync_done / sync_error / skipped / service_added
-- Прогресс текущих синхронизаций — `GET /api/v1/progress` (карта «сервис → фаза + процент», in-memory)
+- Прогресс текущих синхронизаций — `GET /api/v1/progress` (карта «сервис → фаза + процент», in-memory); UI поллит его раз в ~0.9 с, на скрытой вкладке — пауза
+- WebSocket-эндпоинт удалён: события уходили в канал, к которому не подключался ни один клиент; один транспорт (поллинг) проще и достаточно дешёв
 - Структурированные поля логов: `service`, `method`, `duration_ms`, `added`, `removed`, `unchanged`, `error`
 
 ## Масштабирование
@@ -443,7 +443,6 @@ REST API клиент `/rest/ip/firewall/address-list`:
 - `github.com/robfig/cron/v3` — планировщик
 - `go.etcd.io/bbolt` — кэш/хранилище
 - `github.com/go-telegram-bot-api/telegram-bot-api/v5` — Telegram
-- `github.com/gorilla/websocket` — WebSocket
 - `github.com/go-chi/chi/v5` — роутинг
 - `gopkg.in/natefinch/lumberjack.v2` — ротация логов
 - `github.com/sony/gobreaker` — Circuit Breaker
