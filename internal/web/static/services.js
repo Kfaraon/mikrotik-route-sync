@@ -1536,6 +1536,19 @@
   // полного зеркала v2fly). Тихо: нет совпадений — нет подсказки.
   var presetHintSeq = 0;
 
+  // presetAutoApplied — пресет выставлен кнопкой подсказки, а не выбран
+  // вручную. При смене имени такой пресет нужно снять: иначе сервис с новым
+  // именем добавится по чужому пресету (footgun).
+  var presetAutoApplied = false;
+
+  // dropPresetHint — немедленно убрать подсказку и отменить отрисовку всех
+  // летящих ответов. Вызывается на каждый ввод: кнопки относятся к прежнему
+  // имени и не должны висеть, пока идёт дебаунс и сетевой запрос.
+  function dropPresetHint() {
+    presetHintSeq++;
+    clearPresetHint();
+  }
+
   function suggestPreset() {
     var hint = byId("svc-preset-hint");
     if (!hint || !els.addInput || !els.addPreset) return;
@@ -1588,6 +1601,7 @@
             els.addPreset.appendChild(opt);
           }
           els.addPreset.value = vendored.slug;
+          presetAutoApplied = true;
           syncAddMethodWithPreset();
           hint.textContent = "";
           els.addPreset.focus();
@@ -1623,6 +1637,7 @@
                   els.addPreset.appendChild(opt);
                 }
                 els.addPreset.value = resp.slug;
+                presetAutoApplied = true;
                 syncAddMethodWithPreset();
                 hint.textContent = "";
               });
@@ -2988,12 +3003,25 @@
       var presetHintTimer = null;
       els.addInput.addEventListener("input", function () {
         if (presetHintTimer) clearTimeout(presetHintTimer);
+        // Синхронно: подсказка и авто-выбранный пресет принадлежат прежнему
+        // имени. Ждать дебаунса нельзя — пользователь видит кнопки, которых
+        // для нового имени нет.
+        dropPresetHint();
+        if (presetAutoApplied) {
+          presetAutoApplied = false;
+          if (els.addPreset) els.addPreset.value = "";
+          syncAddMethodWithPreset();
+        }
         presetHintTimer = setTimeout(suggestPreset, 400);
       });
     }
 
     if (els.addPreset) {
-      els.addPreset.addEventListener("change", syncAddMethodWithPreset);
+      els.addPreset.addEventListener("change", function () {
+        // Ручной выбор пресета — не авто: при смене имени его не снимаем.
+        presetAutoApplied = false;
+        syncAddMethodWithPreset();
+      });
     }
 
     if (els.addForm) {
@@ -3012,6 +3040,7 @@
             if (els.addInput) els.addInput.value = "";
             if (els.addPreset) els.addPreset.value = "";
             if (els.addMethod) els.addMethod.value = "";
+            presetAutoApplied = false;
             syncAddMethodWithPreset();
             clearPresetHint();
           });

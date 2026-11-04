@@ -1453,9 +1453,55 @@ func TestServicesJSClearsPresetHintOnAdd(t *testing.T) {
 	if start < 0 {
 		t.Fatal("submit completion block not found in services.js")
 	}
-	block := js[start : start+300]
+	block := js[start : start+520]
 	if !strings.Contains(block, "clearPresetHint()") {
 		t.Fatalf("hint must be cleared after add: %s", block)
+	}
+}
+
+// TestServicesJSPresetHintDropsImmediatelyOnInput — подсказка обязана
+// исчезать в момент ввода, а не через 400 мс дебаунса: иначе пользователь
+// видит кнопки прежнего имени и не понимает, почему они «не меняются».
+// Авто-выбранный пресет при смене имени снимается (иначе чужой пресет
+// применится к новому сервису).
+func TestServicesJSPresetHintDropsImmediatelyOnInput(t *testing.T) {
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+
+	start := strings.Index(js, `els.addInput.addEventListener("input"`)
+	if start < 0 {
+		t.Fatal("input handler not found")
+	}
+	block := js[start : start+800]
+
+	if !strings.Contains(block, "dropPresetHint()") {
+		t.Fatalf("input handler must clear the hint synchronously: %s", block)
+	}
+	// Очистка должна идти до setTimeout(suggestPreset, ...), иначе дебаунс
+	// оставляет кнопки висеть.
+	drop := strings.Index(block, "dropPresetHint()")
+	timer := strings.Index(block, "setTimeout(suggestPreset")
+	if drop < 0 || timer < 0 || drop > timer {
+		t.Fatalf("hint must be dropped before the debounce timer")
+	}
+
+	// Авто-выбранный пресет снимается при вводе, ручной — нет.
+	if !strings.Contains(block, "presetAutoApplied") {
+		t.Fatal("auto-applied preset must be reset on input")
+	}
+	if !strings.Contains(js, "function dropPresetHint") {
+		t.Fatal("dropPresetHint helper missing")
+	}
+	// Ручной выбор пресета не должен помечаться как авто.
+	presetChange := strings.Index(js, `els.addPreset.addEventListener("change"`)
+	if presetChange < 0 {
+		t.Fatal("preset change handler not found")
+	}
+	if !strings.Contains(js[presetChange:presetChange+400], "presetAutoApplied = false") {
+		t.Fatal("manual preset selection must not be treated as auto-applied")
 	}
 }
 
@@ -2558,5 +2604,42 @@ func TestSyncErrorStatusMapping(t *testing.T) {
 				t.Fatalf("body must be an error envelope: %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+// TestNavOrderAddressListBeforeServices — в навигации «Списки адресов» идёт
+// сразу после «Дашборда», «Сервисы» — вторым. Порядок проверяется во всех
+// шаблонах, чтобы страницы не разъезжались.
+func TestNavOrderAddressListBeforeServices(t *testing.T) {
+	pages := []string{"dashboard.html", "services.html", "addresslist.html", "schedules.html", "settings.html", "logs.html"}
+	for _, page := range pages {
+		raw, err := os.ReadFile(filepath.Join("templates", page))
+		if err != nil {
+			t.Fatalf("read %s: %v", page, err)
+		}
+		s := string(raw)
+		navStart := strings.Index(s, `<nav class="bar">`)
+		if navStart < 0 {
+			t.Fatalf("%s: nav not found", page)
+		}
+		navEnd := strings.Index(s[navStart:], "</nav>")
+		if navEnd < 0 {
+			t.Fatalf("%s: nav end not found", page)
+		}
+		nav := s[navStart : navStart+navEnd]
+
+		addr := strings.Index(nav, `href="/address-list"`)
+		svc := strings.Index(nav, `href="/services"`)
+		if addr < 0 || svc < 0 {
+			t.Fatalf("%s: nav links missing (address=%d services=%d)", page, addr, svc)
+		}
+		if addr > svc {
+			t.Fatalf("%s: «Списки адресов» must come before «Сервисы»", page)
+		}
+		// И сразу после «Дашборда»: между ними не должно быть других ссылок.
+		dash := strings.Index(nav, `href="/"`)
+		if dash < 0 || dash > addr {
+			t.Fatalf("%s: dashboard link must precede address-list", page)
+		}
 	}
 }
