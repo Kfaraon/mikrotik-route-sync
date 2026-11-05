@@ -326,7 +326,8 @@
         html += "</div>";
       }
 
-      html += '<button type="button" class="log-copy" title="Копировать JSON" aria-label="Копировать JSON">📋</button>';
+      html += '<button type="button" class="log-copy" title="Копировать JSON" aria-label="Копировать JSON">' +
+        '<svg class="px px-sm" aria-hidden="true" focusable="false"><use href="#px-copy"></use></svg></button>';
       html += "</div>";
 
       return html;
@@ -367,10 +368,10 @@
       try {
         document.execCommand("copy");
         if (btn) {
-          var orig = btn.textContent;
-          btn.textContent = "✓";
+          var orig = btn.innerHTML;
+          btn.textContent = "Скопировано";
           setTimeout(function () {
-            btn.textContent = orig;
+            btn.innerHTML = orig;
           }, 1500);
         }
       } catch (e) {
@@ -384,10 +385,10 @@
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(function () {
           if (btn) {
-            var orig = btn.textContent;
-            btn.textContent = "✓";
+            var orig = btn.innerHTML;
+            btn.textContent = "Скопировано";
             setTimeout(function () {
-              btn.textContent = orig;
+              btn.innerHTML = orig;
             }, 1500);
           }
         }).catch(function () {
@@ -417,7 +418,7 @@
         })
         .then(function (j) {
           if (!j.ok) {
-            logOutput.innerHTML = '<div class="log-error-msg">⚠ Ошибка: ' +
+            logOutput.innerHTML = '<div class="log-error-msg" role="alert">Ошибка: ' +
               escapeHtml(j.error || "неизвестная ошибка") +
               "</div>";
             resetStats();
@@ -460,7 +461,7 @@
           setRefreshing(false);
         })
         .catch(function (e) {
-          logOutput.innerHTML = '<div class="log-error-msg">⚠ Ошибка загрузки: ' +
+          logOutput.innerHTML = '<div class="log-error-msg" role="alert">Ошибка загрузки: ' +
             escapeHtml(safeString(e)) +
             "</div>";
           resetStats();

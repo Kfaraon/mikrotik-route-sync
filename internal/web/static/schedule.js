@@ -493,11 +493,21 @@
     });
   }
 
+  // saveSeq — номер последнего сохранения для строки. Двойной Enter или
+  // «выбрал в селекте + нажал Сохранить» отправляли два PUT; ответы приходили
+  // в произвольном порядке, и старый мог перезаписать новое значение в DOM.
   function saveSchedule(row, value) {
     var service = normalizeSpec(row.getAttribute("data-service"));
     var spec = normalizeSpec(value);
 
     if (!service) return;
+
+    // Пока строка сохраняется, повторный клик игнорируем: два PUT одного
+    // поля всё равно бессмысленны.
+    if (row.classList.contains("saving")) return;
+
+    var seq = (row._saveSeq || 0) + 1;
+    row._saveSeq = seq;
 
     setStatus(row, "Сохранение…", "muted");
     row.classList.add("saving");
@@ -521,6 +531,8 @@
         });
       })
       .then(function (result) {
+        // Ответ устарел (пользователь уже сохранил другое значение).
+        if (row._saveSeq !== seq) return;
         row.classList.remove("saving");
 
         if (!result.ok) {
@@ -550,6 +562,7 @@
         showToast("Расписание " + service + " обновлено");
       })
       .catch(function (err) {
+        if (row._saveSeq !== seq) return;
         row.classList.remove("saving");
 
         var msg = err && err.message ? err.message : String(err);

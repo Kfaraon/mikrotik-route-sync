@@ -14,7 +14,7 @@
 .svc-filter-disclosure {
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e0e0e0);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   margin-bottom: 1.5rem;
   overflow: hidden;
 }
@@ -47,7 +47,7 @@
 .svc-toolbar {
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e0e0e0);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   padding: 1rem;
   margin-bottom: 1.5rem;
   box-shadow: 0 1px 3px var(--shadow, rgba(0,0,0,0.05));
@@ -67,7 +67,7 @@
 .svc-add-card {
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e0e0e0);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   padding: 1.5rem;
   margin-bottom: 1.5rem;
 }
@@ -80,6 +80,14 @@
 
 .svc-add-form input { flex: 1; min-width: 200px; }
 
+/* Поле URL для static_url: длинный список, нужна вся доступная ширина. */
+.svc-add-url {
+  flex: 1 1 100%;
+}
+.svc-add-url[hidden] {
+  display: none;
+}
+
 /* Статус добавления сервиса: подшаги автоопределения CDN (POST висит). */
 .svc-add-status {
   margin-top: 0.6rem;
@@ -91,7 +99,7 @@
 .svc-table-wrap {
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e0e0e0);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   overflow-x: auto; /* вместо hidden: колонка «Действия» не обрезается */
   box-shadow: 0 1px 3px var(--shadow, rgba(0,0,0,0.05));
   margin-bottom: 1.5rem;
@@ -166,7 +174,7 @@
 
 /* Подсказка о длительности удаления: заметнее обычного muted-текста. */
 .svc-delete-hint {
-  color: var(--warn, #b45309);
+  color: var(--warning);
   font-weight: 600;
   margin: 0.75rem 0 0 0;
 }
@@ -348,7 +356,7 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
   min-width: 200px;
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e0e0e0);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   padding: 0.25rem;
 }
@@ -392,7 +400,7 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
 .svc-detail-item {
   padding: 1rem;
   background: var(--bg-alt, #f8f9fa);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   border-left: 4px solid var(--border, #e0e0e0);
 }
 .svc-detail-item.ok { border-left-color: var(--success, #28a745); }
@@ -411,7 +419,7 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
   gap: 1rem;
   padding: 1rem;
   background: var(--bg-alt, #f8f9fa);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   align-items: center;
 }
 .svc-time { font-family: var(--font-mono); font-size: 0.875rem; color: var(--muted, #666); min-width: 140px; }
@@ -437,11 +445,15 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
 .svc-modal-panel {
   position: relative;
   background: var(--bg, #fff);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   padding: 2rem;
   max-width: 500px;
   width: 100%;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  /* На ландшафтном телефоне панель выше экрана — кнопки «Удалить/Отмена»
+     оказывались вне досягаемости. */
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  box-shadow: 0 8px 24px var(--shadow);
 }
 .svc-modal-panel.svc-modal-wide { max-width: 800px; }
 .svc-modal-panel h3 { margin: 0 0 1rem 0; }
@@ -463,11 +475,19 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
 .svc-diff-list {
   max-height: 60vh;
   overflow-y: auto;
+  /* Префиксы (до 18 символов IPv4 CIDR) в моно шире прежнего Courier:
+     без горизонтального скролла строка распирала модалку на телефоне. */
+  overflow-x: auto;
   font-family: var(--font-mono);
   font-size: 0.9rem;
   margin-top: 1rem;
 }
-.svc-diff-row { padding: 0.5rem; border-bottom: 1px solid var(--border, #e0e0e0); white-space: nowrap; }
+.svc-diff-row {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border, #e0e0e0);
+  white-space: nowrap;
+  min-width: max-content;
+}
 .svc-diff-add { background: var(--diff-add-bg); color: var(--diff-add-text); font-weight: 600; }
 .svc-diff-del { background: var(--diff-del-bg); color: var(--diff-del-text); font-weight: 600; }
 .svc-diff-same { background: var(--diff-same-bg); color: var(--diff-same-text); }
@@ -499,9 +519,10 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
 /* В drawer список короче модального: не занимает весь экран */
 .svc-plan-list {
   max-height: 40vh;
+  overflow-x: auto;
   margin-top: 0.25rem;
   border: 1px solid var(--border, #e0e0e0);
-  border-radius: 4px;
+  border-radius: var(--radius);
 }
 
 /* Вкладка «Записи» в drawer */
@@ -519,6 +540,12 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
 }
 .svc-routes-search { flex: 1 1 200px; margin-bottom: 0; }
 .svc-routes-search input { width: 100%; }
+
+.svc-route-row > span {
+  /* Длинный IPv6/лог в моно не переносился и выдавливал кнопку «Копировать». */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
 .svc-route-row {
   display: flex;
@@ -542,7 +569,7 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
 /* Alert */
 .svc-alert {
   padding: 1rem;
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   margin-bottom: 1.5rem;
   border-left: 4px solid;
 }
@@ -567,7 +594,12 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
   /* Карточки таблицы — общий паттерн .mrs-cards из app.css;
      здесь только своё: крупный чекбокс и кнопки в один ряд */
   .svc-table td.mrs-corner input[type="checkbox"] { width: 22px; height: 22px; }
-  .svc-actions { justify-content: flex-start; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; }
+  .svc-actions {
+    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.4rem;
+  }
   .svc-actions button { min-width: 0; min-height: 44px; padding: 0.4rem 0.2rem; font-size: 0.8rem; }
   .svc-tabs {
     overflow-x: auto;
@@ -614,7 +646,7 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
   color: inherit;
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e0e0e0);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   resize: none;
   overflow: hidden;
   line-height: 1.4;
@@ -629,7 +661,7 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
   color: var(--muted, #666);
   background: var(--bg-alt, #f8f9fa);
   border: 1px solid var(--border, #e0e0e0);
-  border-radius: var(--radius, 8px);
+  border-radius: var(--radius);
   word-break: break-word;
 }
 .svc-row { display: flex; gap: 8px; flex-wrap: wrap; }

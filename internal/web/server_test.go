@@ -1065,7 +1065,7 @@ func TestPageSchedulesNoGroups(t *testing.T) {
 		}
 	}
 	// Ровно три колонки: Сервис · Расписание · Изменить.
-	if n := strings.Count(page, "<th>"); n != 3 {
+	if n := strings.Count(page, `<th scope="col">`); n != 3 {
 		t.Fatalf("want 3 columns, got %d <th>", n)
 	}
 }
@@ -2842,5 +2842,140 @@ func TestOnAccentTextColors(t *testing.T) {
 				t.Fatalf("%s: block uses hardcoded white on accent background:\n%s", f, block)
 			}
 		}
+	}
+}
+
+// TestA11yDialogsAndLabels — модалки/drawer объявлены диалогами, у полей
+// настроек есть доступные имена, активный пункт меню помечен aria-current.
+// Без этого скринридер не сообщает об открытии панели, а 69 полей конфига
+// остаются безымянными.
+func TestA11yDialogsAndLabels(t *testing.T) {
+	svc, err := os.ReadFile(filepath.Join("templates", "services.html"))
+	if err != nil {
+		t.Fatalf("read services.html: %v", err)
+	}
+	page := string(svc)
+	for _, want := range []string{
+		`id="svc-drawer" class="svc-drawer" hidden aria-hidden="true"`,
+		`role="dialog" aria-modal="true" aria-labelledby="svc-drawer-title"`,
+		`role="alertdialog" aria-modal="true" aria-labelledby="svc-delete-title"`,
+		`role="tablist"`,
+		`aria-selected="true"`,
+		`aria-live="polite"`,
+		`class="sr-only"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("services.html missing %q", want)
+		}
+	}
+	if n := strings.Count(page, `aria-current="page"`); n != 1 {
+		t.Fatalf("want exactly one aria-current link, got %d", n)
+	}
+
+	// Все страницы: активный пункт помечен, у main есть tabindex для skip-link.
+	pages := []string{"dashboard.html", "services.html", "addresslist.html", "schedules.html", "settings.html", "logs.html"}
+	for _, name := range pages {
+		raw, err := os.ReadFile(filepath.Join("templates", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		s := string(raw)
+		if !strings.Contains(s, `aria-current="page"`) {
+			t.Fatalf("%s: active nav item must have aria-current", name)
+		}
+		if !strings.Contains(s, `tabindex="-1"`) {
+			t.Fatalf("%s: main needs tabindex=-1 for skip-link focus", name)
+		}
+		if !strings.Contains(s, "<main") {
+			t.Fatalf("%s: content must be inside <main>", name)
+		}
+	}
+}
+
+// TestServicesJSButtonIconSurvives — withButton не должен затирать SVG-иконку
+// через textContent: иконочная кнопка в drawer теряла её навсегда после клика.
+func TestServicesJSButtonIconSurvives(t *testing.T) {
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+	start := strings.Index(js, "function withButton")
+	if start < 0 {
+		t.Fatal("withButton not found")
+	}
+	block := js[start : start+1600]
+	if !strings.Contains(block, `querySelector("svg")`) {
+		t.Fatal("withButton must detect icon-only buttons instead of overwriting textContent")
+	}
+	if !strings.Contains(block, "btn-label") {
+		t.Fatal("withButton must use a dedicated .btn-label span")
+	}
+}
+
+// TestServicesJSRaceGuards — у загрузок есть счётчик запросов, иначе при
+// force=true два цикла шли одновременно и старый ответ затирал свежие данные.
+func TestServicesJSRaceGuards(t *testing.T) {
+	cases := []struct {
+		file string
+		mark string
+	}{
+		{"static/services.js", "var loadSeq = 0;"},
+		{"static/dashboard.js", "var loadSeq = 0;"},
+		{"static/schedule.js", "_saveSeq"},
+	}
+	for _, c := range cases {
+		raw, err := os.ReadFile(filepath.FromSlash(c.file))
+		if err != nil {
+			t.Fatalf("read %s: %v", c.file, err)
+		}
+		if !strings.Contains(string(raw), c.mark) {
+			t.Fatalf("%s must guard stale responses (%q)", c.file, c.mark)
+		}
+	}
+}
+
+// TestSettingsFieldsHaveLabels — каждое поле конфига связано с заголовком
+// карточки через aria-labelledby, иначе скринридер читает «поле ввода» без имени.
+func TestSettingsFieldsHaveLabels(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("templates", "settings.html"))
+	if err != nil {
+		t.Fatalf("read settings.html: %v", err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `id="set-{{ $row.Key }}"`) {
+		t.Fatal("setting title must expose an id")
+	}
+	if n := strings.Count(s, `aria-labelledby="set-{{ $row.Key }}"`); n < 8 {
+		// Шаблон описывает 9 типов контролов внутри range по 69 полям;
+		// проверяем, что метка проставлена у каждого типа, а не у одного.
+		t.Fatalf("too few labelled controls: %d", n)
+	}
+	// Таблица CDN использует другой тип строки — там имена задаются aria-label.
+	if !strings.Contains(s, `aria-label="Сервис (алиас)"`) {
+		t.Fatal("CDN table inputs need aria-label (cdnSourceRow has no Key)")
+	}
+}
+
+// TestServicesJSStaticURLEditable — метод static_url доступен из формы:
+// раньше его можно было выбрать, но URL ввести было негде.
+func TestServicesJSStaticURLEditable(t *testing.T) {
+	tpl, err := os.ReadFile(filepath.Join("templates", "services.html"))
+	if err != nil {
+		t.Fatalf("read services.html: %v", err)
+	}
+	if !strings.Contains(string(tpl), `id="svc-add-url"`) {
+		t.Fatal("services.html must contain the static_url input")
+	}
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+	if !strings.Contains(js, "syncAddURLVisibility") {
+		t.Fatal("URL field visibility must follow the selected method")
+	}
+	if !strings.Contains(js, "body.static_url") {
+		t.Fatal("addService must send static_url")
 	}
 }

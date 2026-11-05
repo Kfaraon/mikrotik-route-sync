@@ -21,7 +21,7 @@
     <a href="/"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-dashboard"></use></svg><span class="bar-label">Дашборд</span></a>
     <a href="/address-list"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-list"></use></svg><span class="bar-label">Списки адресов</span></a>
     <a href="/services"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
-    <a href="/schedules" class="active"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-clock"></use></svg><span class="bar-label">Расписания</span></a>
+    <a href="/schedules" class="active" aria-current="page"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-clock"></use></svg><span class="bar-label">Расписания</span></a>
     <a href="/settings"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-settings"></use></svg><span class="bar-label">Настройки</span></a>
     <a href="/logs"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-logs"></use></svg><span class="bar-label">Логи</span></a>
     <span class="bar-right">
@@ -30,7 +30,7 @@
     </span>
   </nav>
 
-  <main class="wrap schedule-page" id="schedule-page" data-global="{{ .Global }}">
+  <main class="wrap schedule-page" id="schedule-page" tabindex="-1" data-global="{{ .Global }}">
     <!-- Чипы-фильтры: клик применяет фильтр, повторный — сбрасывает на «Все». -->
     <section class="sched-chips" id="sched-chips" aria-label="Фильтр по состоянию расписания">
       <button type="button" class="sched-chip active" data-filter="all" aria-pressed="true">
@@ -80,9 +80,9 @@
       <table class="sched-table mrs-cards">
         <thead>
           <tr>
-            <th>Сервис</th>
-            <th>Расписание</th>
-            <th>Изменить</th>
+            <th scope="col">Сервис</th>
+            <th scope="col">Расписание</th>
+            <th scope="col">Изменить</th>
           </tr>
         </thead>
         <tbody id="sched-body">

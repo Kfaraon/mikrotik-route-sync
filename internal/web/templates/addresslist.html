@@ -19,7 +19,7 @@
     <nav class="bar">
         <span class="brand">MikroTik Route Sync</span>
         <a href="/"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-dashboard"></use></svg><span class="bar-label">Дашборд</span></a>
-        <a href="/address-list" class="active"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-list"></use></svg><span class="bar-label">Списки адресов</span></a>
+        <a href="/address-list" class="active" aria-current="page"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-list"></use></svg><span class="bar-label">Списки адресов</span></a>
         <a href="/services"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
         <a href="/schedules"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-clock"></use></svg><span class="bar-label">Расписания</span></a>
         <a href="/settings"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-settings"></use></svg><span class="bar-label">Настройки</span></a>
@@ -30,7 +30,8 @@
         </span>
     </nav>
 
-    <div id="addresslist-page" class="container">
+    <main id="addresslist-page" class="container" tabindex="-1">
+        <h1 class="sr-only">Списки адресов</h1>
         {{ if .Error }}
         <div class="alert alert-error">{{ .Error }}</div>
         {{ else }}
@@ -40,19 +41,19 @@
             <summary>Фильтры</summary>
         <div class="filter-bar">
             <div class="filter-group">
-                <label>Адрес</label>
+                <label for="filterAddress">Адрес</label>
                 <input type="text" class="filter-input" id="filterAddress" placeholder="192.168.1.0/24">
             </div>
             <div class="filter-group">
-                <label>Комментарий</label>
+                <label for="filterComment">Комментарий</label>
                 <input type="text" class="filter-input" id="filterComment" placeholder="AUTO:...">
             </div>
             <div class="filter-group">
-                <label>Сервис</label>
+                <label for="filterService">Сервис</label>
                 <input type="text" class="filter-input" id="filterService" placeholder="rutor.org">
             </div>
             <div class="filter-group">
-                <label>Управляемая</label>
+                <label for="filterManaged">Управляемая</label>
                 <select class="filter-input" id="filterManaged">
                     <option value="">Все</option>
                     <option value="yes">Да</option>
@@ -60,7 +61,7 @@
                 </select>
             </div>
             <div class="filter-group">
-                <label>Отключено</label>
+                <label for="filterDisabled">Отключено</label>
                 <select class="filter-input" id="filterDisabled">
                     <option value="">Все</option>
                     <option value="yes">Да</option>
@@ -68,24 +69,24 @@
                 </select>
             </div>
             <div class="filter-group filter-group-end">
-                <button class="btn btn-secondary" id="btnClearFilters">Сбросить</button>
+                <button type="button" class="btn btn-secondary" id="btnClearFilters">Сбросить</button>
             </div>
         </div>
         </details>
 
         <!-- Счётчик результатов -->
-        <div class="results-count" id="resultsCount"></div>
+        <div class="results-count" id="resultsCount" role="status" aria-live="polite"></div>
 
         <!-- Таблица -->
         <div class="address-table-container">
             <table class="address-table mrs-cards" id="addressTable">
                 <thead>
                     <tr>
-                        <th>Адрес</th>
-                        <th>Комментарий</th>
-                        <th>Сервис</th>
-                        <th>Управляемая</th>
-                        <th>Отключено</th>
+                        <th scope="col">Адрес</th>
+                        <th scope="col">Комментарий</th>
+                        <th scope="col">Сервис</th>
+                        <th scope="col">Управляемая</th>
+                        <th scope="col">Отключено</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -129,7 +130,8 @@
     </div>
 
     <!-- Контейнер для уведомлений -->
-    <div id="mrs-toast" class="toast"></div>
+    </main>
+        <div id="mrs-toast" class="toast" role="status" aria-live="polite"></div>
 
     <!-- Скрипты -->
     <script src="/static/addresslist.js"></script>

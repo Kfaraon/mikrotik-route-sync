@@ -756,6 +756,11 @@
       mikrotikValue = "Нет данных";
       mikrotikNote = "статус недоступен";
       mikrotikCls = "muted";
+    } else if (state.status.mikrotik_known === false) {
+      // Ещё ни одной успешной проверки — это не авария.
+      mikrotikValue = "Проверяется";
+      mikrotikNote = "статус ещё не получен";
+      mikrotikCls = "muted";
     } else if (state.status.mikrotik_ok === false) {
       mikrotikValue = "Недоступен";
       mikrotikNote = "проверьте REST API и сеть";
@@ -886,9 +891,15 @@
     els.next.innerHTML = html;
   }
 
+  // loadSeq отбрасывает ответы устаревших загрузок: интервал и Ctrl+R
+  // вызывают loadAll(true) в обход guard'а, и старый ответ мог перезаписать
+  // свежие данные, а setRefreshing(false) — завершить чужую загрузку.
+  var loadSeq = 0;
+
   function loadAll(force) {
     if (state.loading && !force) return Promise.resolve();
 
+    var seq = ++loadSeq;
     setRefreshing(true);
 
     return Promise.allSettled([
@@ -898,6 +909,7 @@
       api("/api/v1/history?limit=120"),
       api("/api/v1/logs?limit=250")
     ]).then(function (results) {
+      if (seq !== loadSeq) return;
       var labels = {
         status: "статус",
         services: "сервисы",

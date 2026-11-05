@@ -21,7 +21,7 @@
     <a href="/address-list"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-list"></use></svg><span class="bar-label">Списки адресов</span></a>
     <a href="/services"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
     <a href="/schedules"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-clock"></use></svg><span class="bar-label">Расписания</span></a>
-    <a href="/settings" class="active"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-settings"></use></svg><span class="bar-label">Настройки</span></a>
+    <a href="/settings" class="active" aria-current="page"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-settings"></use></svg><span class="bar-label">Настройки</span></a>
     <a href="/logs"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-logs"></use></svg><span class="bar-label">Логи</span></a>
     <span class="bar-right">
       <span id="live-dot" class="{{ .DotClass }}" title="{{ .DotTitle }}"></span>
@@ -29,7 +29,7 @@
     </span>
   </nav>
 
-  <main class="wrap" id="settings-page">
+  <main class="wrap" id="settings-page" tabindex="-1">
     <form hx-post="/actions/settings" hx-target="#settings-result" hx-swap="innerHTML">
       <input type="hidden" name="csrf_token" value="{{ .CSRF }}">
 
@@ -49,43 +49,43 @@
         <div class="settings-grid">
           {{ range $row := $group.Rows }}
           <div class="setting-card">
-            <b class="setting-title">{{ $row.Title }}</b>
+            <b class="setting-title" id="set-{{ $row.Key }}">{{ $row.Title }}</b>
             <code class="key">{{ $row.Key }}</code>
             {{ if eq $row.Type "bool" }}
-              <select name="{{ $row.Key }}">
+              <select aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" name="{{ $row.Key }}">
                 <option value="true"{{ if eq $row.Value "true" }} selected{{ end }}>Да</option>
                 <option value="false"{{ if eq $row.Value "false" }} selected{{ end }}>Нет</option>
               </select>
             {{ else if eq $row.Type "level" }}
-              <select name="{{ $row.Key }}">
+              <select aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" name="{{ $row.Key }}">
                 {{ range $opt := $row.Options }}
                 <option value="{{ $opt }}"{{ if eq $opt $row.Value }} selected{{ end }}>{{ $opt }}</option>
                 {{ end }}
               </select>
             {{ else if eq $row.Type "mode" }}
-              <select name="{{ $row.Key }}">
+              <select aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" name="{{ $row.Key }}">
                 {{ range $opt := $row.Options }}
                 <option value="{{ $opt }}"{{ if eq $opt $row.Value }} selected{{ end }}>{{ $opt }}</option>
                 {{ end }}
               </select>
             {{ else if eq $row.Type "secret" }}
               <span class="secret-field">
-                <input type="password" name="{{ $row.Key }}" value="{{ $row.Value }}" autocomplete="off">
-                <button type="button" class="btn btn-outline" title="Показать на 10 секунд">👁</button>
+                <input aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" type="password" name="{{ $row.Key }}" value="{{ $row.Value }}" autocomplete="off">
+                <button type="button" class="btn btn-outline" title="Показать на 10 секунд" aria-label="Показать значение на 10 секунд"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-eye"></use></svg></button>
               </span>
               <label class="clear-secret"><input type="checkbox" name="clear:{{ $row.Key }}" value="1"> очистить</label>
             {{ else if eq $row.Type "number" }}
-              <input class="is-narrow" type="number" name="{{ $row.Key }}" value="{{ $row.Value }}" step="1">
+              <input aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" class="is-narrow" type="number" name="{{ $row.Key }}" value="{{ $row.Value }}" step="1">
             {{ else if eq $row.Type "float" }}
-              <input class="is-narrow" type="number" name="{{ $row.Key }}" value="{{ $row.Value }}" step="0.05">
+              <input aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" class="is-narrow" type="number" name="{{ $row.Key }}" value="{{ $row.Value }}" step="0.05">
             {{ else if eq $row.Type "duration" }}
-              <input class="is-narrow" type="text" name="{{ $row.Key }}" value="{{ $row.Value }}" placeholder="30s, 1m">
+              <input aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" class="is-narrow" type="text" name="{{ $row.Key }}" value="{{ $row.Value }}" placeholder="30s, 1m">
             {{ else if eq $row.Type "list" }}
-              <input type="text" name="{{ $row.Key }}" value="{{ $row.Value }}" placeholder="через запятую">
+              <input aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" type="text" name="{{ $row.Key }}" value="{{ $row.Value }}" placeholder="через запятую">
             {{ else }}
-              <input type="text" name="{{ $row.Key }}" value="{{ $row.Value }}">
+              <input aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" type="text" name="{{ $row.Key }}" value="{{ $row.Value }}">
             {{ end }}
-            <p class="setting-help">{{ $row.Help }}</p>
+            <p class="setting-help" id="help-{{ $row.Key }}">{{ $row.Help }}</p>
           </div>
           {{ end }}
         </div>
@@ -128,7 +128,7 @@
       {{ end }}
 
       <div class="row settings-savebar">
-        <button type="submit" class="btn btn-primary">💾 Сохранить и применить</button>
+        <button type="submit" class="btn btn-primary"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-save"></use></svg> Сохранить и применить</button>
         <span id="settings-result" class="muted"></span>
       </div>
     </form>
@@ -149,24 +149,24 @@
           <table class="cdn-table">
             <thead>
               <tr>
-                <th>service</th><th>Имя</th><th>asn</th><th>url</th><th>parser</th><th></th>
+                <th scope="col">service</th><th scope="col">Имя</th><th scope="col">asn</th><th scope="col">url</th><th scope="col">parser</th><th scope="col"><span class="sr-only">Удалить</span></th>
               </tr>
             </thead>
             <tbody id="cdn-sources-body">
               {{ range $row := .CDNSources }}
               <tr>
-                <td><input type="text" name="cdn_service" value="{{ $row.Service }}" placeholder="cloudflare"></td>
-                <td><input type="text" name="cdn_name" value="{{ $row.Name }}" placeholder="Cloudflare"></td>
-                <td><input class="is-narrow" type="number" name="cdn_asn" value="{{ $row.ASN }}" step="1" min="1"></td>
-                <td><input type="text" name="cdn_url" value="{{ $row.URL }}" placeholder="https://..."></td>
+                <td><input aria-label="Сервис (алиас)" type="text" name="cdn_service" value="{{ $row.Service }}" placeholder="cloudflare"></td>
+                <td><input aria-label="Название CDN" type="text" name="cdn_name" value="{{ $row.Name }}" placeholder="Cloudflare"></td>
+                <td><input aria-label="ASN" class="is-narrow" type="number" name="cdn_asn" value="{{ $row.ASN }}" step="1" min="1"></td>
+                <td><input aria-label="URL официального списка" type="text" name="cdn_url" value="{{ $row.URL }}" placeholder="https://..."></td>
                 <td>
-                  <select name="cdn_parser">
+                  <select aria-label="Парсер ответа" name="cdn_parser">
                     {{ range $p := $.CDNParsers }}
                     <option value="{{ $p }}"{{ if eq $p $row.Parser }} selected{{ end }}>{{ $p }}</option>
                     {{ end }}
                   </select>
                 </td>
-                <td><button type="button" class="btn btn-outline cdn-row-remove" title="Удалить строку">✕</button></td>
+                <td><button type="button" class="btn btn-outline cdn-row-remove" title="Удалить строку" aria-label="Удалить строку"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-close"></use></svg></button></td>
               </tr>
               {{ end }}
             </tbody>
@@ -174,7 +174,7 @@
         </div>
         <div class="row settings-savebar">
           <button type="button" class="btn btn-outline" id="cdn-sources-add">Добавить источник</button>
-          <button type="submit" class="btn btn-primary">💾 Сохранить источники</button>
+          <button type="submit" class="btn btn-primary"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-save"></use></svg> Сохранить источники</button>
           <span id="cdn-sources-result" class="muted"></span>
         </div>
       </article>

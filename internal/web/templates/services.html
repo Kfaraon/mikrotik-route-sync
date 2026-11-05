@@ -20,7 +20,7 @@
         <span class="brand">MikroTik Route Sync</span>
         <a href="/"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-dashboard"></use></svg><span class="bar-label">Дашборд</span></a>
         <a href="/address-list"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-list"></use></svg><span class="bar-label">Списки адресов</span></a>
-        <a href="/services" class="active"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
+        <a href="/services" class="active" aria-current="page"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
         <a href="/schedules"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-clock"></use></svg><span class="bar-label">Расписания</span></a>
         <a href="/settings"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-settings"></use></svg><span class="bar-label">Настройки</span></a>
         <a href="/logs"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-logs"></use></svg><span class="bar-label">Логи</span></a>
@@ -30,7 +30,8 @@
         </span>
     </nav>
 
-    <div id="services-page" class="container services-page">
+    <main id="services-page" class="container services-page" tabindex="-1">
+        <h1 class="sr-only">Сервисы</h1>
         <div id="svc-alert" class="svc-alert" hidden></div>
 
         <!-- Форма добавления -->
@@ -38,14 +39,15 @@
             <form id="svc-add-form" class="svc-add-form">
                 <input type="text" id="svc-add-name" placeholder="Имя сервиса, домен, IP или ASN (например: cloudflare или 1.1.1.1)" required>
                 <select id="svc-add-method" aria-label="Метод сбора">
-                    <option value="">Метод: авто</option>
-                    <option value="cdn">cdn</option>
-                    <option value="asn">asn</option>
-                    <option value="dynamic">dynamic</option>
-                    <option value="whois">whois</option>
-                    <option value="static_url">static_url</option>
-                    <option value="preset">preset (по пресету)</option>
+                    <option value="">Метод: автоопределение</option>
+                    <option value="cdn">Официальный список CDN</option>
+                    <option value="asn">По ASN (объявленные сети)</option>
+                    <option value="dynamic">По DNS (ad-hoc домены)</option>
+                    <option value="whois">Whois (DNS → ASN)</option>
+                    <option value="static_url">Свой список по URL</option>
+                    <option value="preset">По пресету доменов</option>
                 </select>
+                <input type="url" id="svc-add-url" class="svc-add-url" placeholder="URL списка префиксов (для static_url)" aria-label="URL списка префиксов" hidden>
                 <select id="svc-add-preset" aria-label="Пресет доменов">
                     <option value="">Пресет: нет</option>
                 </select>
@@ -95,13 +97,13 @@
             <table class="svc-table mrs-cards">
                 <thead>
                     <tr>
-                        <th class="svc-col-check"></th>
-                        <th>Сервис</th>
-                        <th>Состояние</th>
-                        <th>Расписание</th>
-                        <th>Записей</th>
-                        <th>Последняя синхр.</th>
-                        <th>Действия</th>
+                        <th class="svc-col-check" scope="col"><span class="sr-only">Выбор</span></th>
+                        <th scope="col">Сервис</th>
+                        <th scope="col">Состояние</th>
+                        <th scope="col">Расписание</th>
+                        <th scope="col">Записей</th>
+                        <th scope="col">Последняя синхр.</th>
+                        <th scope="col">Действия</th>
                     </tr>
                 </thead>
                 <tbody id="services-body">
@@ -113,7 +115,8 @@
     </div>
 
     <!-- Drawer (выезжающая панель) деталей -->
-    <div id="svc-drawer" class="svc-drawer" hidden aria-hidden="true">
+    <div id="svc-drawer" class="svc-drawer" hidden aria-hidden="true"
+         role="dialog" aria-modal="true" aria-labelledby="svc-drawer-title">
         <div class="svc-drawer-backdrop" data-svc-close></div>
         <div class="svc-drawer-panel">
             <div class="svc-drawer-header">
@@ -133,24 +136,25 @@
                     <button type="button" class="svc-icon-btn" data-svc-close aria-label="Закрыть"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-close"></use></svg></button>
                 </div>
             </div>
-            <div class="svc-tabs">
-                <button type="button" class="svc-tab active" data-svc-tab="overview">Обзор</button>
-                <button type="button" class="svc-tab" data-svc-tab="source">Источник</button>
-                <button type="button" class="svc-tab" data-svc-tab="routes">Записи</button>
-                <button type="button" class="svc-tab" data-svc-tab="history">История</button>
-                <button type="button" class="svc-tab" data-svc-tab="logs">Логи</button>
+            <div class="svc-tabs" role="tablist" aria-label="Разделы сервиса">
+                <button type="button" class="svc-tab active" data-svc-tab="overview" role="tab" aria-selected="true" aria-controls="svc-drawer-body">Обзор</button>
+                <button type="button" class="svc-tab" data-svc-tab="source" role="tab" aria-selected="false" aria-controls="svc-drawer-body">Источник</button>
+                <button type="button" class="svc-tab" data-svc-tab="routes" role="tab" aria-selected="false" aria-controls="svc-drawer-body">Записи</button>
+                <button type="button" class="svc-tab" data-svc-tab="history" role="tab" aria-selected="false" aria-controls="svc-drawer-body">История</button>
+                <button type="button" class="svc-tab" data-svc-tab="logs" role="tab" aria-selected="false" aria-controls="svc-drawer-body">Логи</button>
             </div>
-            <div id="svc-drawer-body" class="svc-drawer-body">
+            <div id="svc-drawer-body" class="svc-drawer-body" role="tabpanel" tabindex="0">
                 <div class="svc-empty">Загрузка деталей…</div>
             </div>
         </div>
     </div>
 
     <!-- Модальное окно подтверждения удаления -->
-    <div id="svc-delete-modal" class="svc-modal" hidden>
+    <div id="svc-delete-modal" class="svc-modal" hidden
+         role="alertdialog" aria-modal="true" aria-labelledby="svc-delete-title">
         <div class="svc-modal-backdrop" data-svc-delete-cancel></div>
         <div class="svc-modal-panel">
-            <h3>Удалить сервис <span id="svc-delete-name" class="text-danger"></span>?</h3>
+            <h3 id="svc-delete-title">Удалить сервис <span id="svc-delete-name" class="text-danger"></span>?</h3>
             <p class="svc-muted">Это действие повлияет только на управляемые записи этого сервиса.</p>
             <p class="svc-delete-hint" id="svc-delete-hint" hidden>Удаление… подождите. Для больших сервисов это может занять несколько минут.</p>
             <div class="svc-modal-actions">
@@ -162,12 +166,13 @@
     </div>
 
     <!-- Модальное окно изменений (diff записей) -->
-    <div id="svc-diff-modal" class="svc-modal" hidden>
+    <div id="svc-diff-modal" class="svc-modal" hidden
+         role="dialog" aria-modal="true" aria-labelledby="svc-diff-title">
         <div class="svc-modal-backdrop" data-diff-close></div>
         <div class="svc-modal-panel svc-modal-wide">
             <div class="svc-drawer-header">
                 <div class="svc-drawer-title-wrap">
-                    <h2>Изменения записей</h2>
+                    <h2 id="svc-diff-title">Изменения записей</h2>
                     <span id="svc-diff-subtitle" class="svc-muted svc-small"></span>
                 </div>
                 <button type="button" class="svc-icon-btn" id="svc-diff-close" data-diff-close aria-label="Закрыть"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-close"></use></svg></button>
@@ -186,7 +191,8 @@
     </div>
 
     <!-- Контейнер для уведомлений -->
-    <div id="mrs-toast" class="toast"></div>
+</main>
+        <div id="mrs-toast" class="toast" role="status" aria-live="polite" aria-atomic="false"></div>
 
     <!-- Скрипты -->
     <script src="/static/services.js"></script>

@@ -106,6 +106,7 @@
     addInput: byId("svc-add-name"),
     addMethod: byId("svc-add-method"),
     addPreset: byId("svc-add-preset"),
+    addURL: byId("svc-add-url"),
     addBtn: byId("svc-add-btn"),
     addStatus: byId("svc-add-status"),
     body: byId("services-body"),
@@ -154,6 +155,10 @@
     progress: {},
     loading: false,
     booted: false,
+    // stale — последняя загрузка частично не удалась; данные на экране от
+    // предыдущего успешного запроса (не обнуляем их, см. loadAll).
+    stale: false,
+    presets: undefined,
     collapsed: {},
     lastDiff: {},
     lastResult: {},
@@ -584,7 +589,8 @@
 
   function sourceFor(name) {
     var override = normalizeSpec(getScheduleOverrideSpec(name));
-    if (override) return "service";
+    // "inherit" — не переопределение: эффективное расписание глобальное.
+    if (override && lower(override) !== "inherit") return "service";
 
     return "global";
   }
@@ -1138,9 +1144,15 @@
   var progressPoll = { timer: null, empty: 0, sawActive: false };
 
   function startProgressPoll() {
+    // Второй синк при уже идущем поллинге не должен сбрасывать детектор
+    // завершения: иначе поллинг жил до 12 пустых тиков вместо 2.
+    if (progressPoll.timer) {
+      progressPoll.empty = 0;
+      progressPoll.sawActive = true;
+      return;
+    }
     progressPoll.empty = 0;
     progressPoll.sawActive = false;
-    if (progressPoll.timer) return;
     progressPoll.timer = setInterval(pollProgressOnce, 900);
     pollProgressOnce();
   }
@@ -1299,19 +1311,41 @@
   function withButton(btn, fn, busyLabel) {
     if (!btn) return Promise.resolve(fn());
 
-    var old = btn.textContent;
+    // textContent уничтожал SVG-иконку в кнопке (drawer «Синхронизировать»):
+    // после первого клика иконка исчезала навсегда, потому что old === "".
+    // Меняем только подпись-текст, не трогая иконку.
+    var label = btn.querySelector(".btn-label");
+    var hadLabel = Boolean(label);
+    var oldLabel = hadLabel ? label.textContent : "";
+    var oldText = hadLabel ? null : btn.textContent;
+
     btn.disabled = true;
-    btn.textContent = busyLabel || "…";
+    if (hadLabel) {
+      label.textContent = busyLabel || "…";
+    } else if (!btn.querySelector("svg")) {
+      btn.textContent = busyLabel || "…";
+    } else {
+      // Иконочная кнопка: подпись менять некуда — только крутим иконку.
+      btn.classList.add("is-syncing");
+    }
+
+    function restore() {
+      btn.disabled = false;
+      if (hadLabel) {
+        label.textContent = oldLabel;
+      } else if (oldText !== null) {
+        btn.textContent = oldText;
+      }
+      btn.classList.remove("is-syncing");
+    }
 
     return Promise.resolve()
       .then(fn)
       .then(function (value) {
-        btn.disabled = false;
-        btn.textContent = old;
+        restore();
         return value;
       }, function (err) {
-        btn.disabled = false;
-        btn.textContent = old;
+        restore();
         throw err;
       });
   }
@@ -1324,6 +1358,11 @@
     }
   }
 
+  // loadSeq — монотонный номер загрузки. force=true обходит защиту от
+  // повторного запуска, поэтому два цикла могли идти одновременно, и более
+  // старый ответ перезаписывал свежие данные (таблица мигала старым составом).
+  var loadSeq = 0;
+
   function loadAll(force) {
     if (state.loading && !force) {
       return Promise.resolve();
@@ -1334,6 +1373,7 @@
       return Promise.resolve();
     }
 
+    var seq = ++loadSeq;
     setRefreshing(true);
 
     // Первая загрузка: skeleton вместо пустой таблицы.
@@ -1349,6 +1389,8 @@
       api("/api/v1/history?limit=120"),
       api("/api/v1/logs?limit=250")
     ]).then(function (results) {
+      // Пока шли запросы, стартовала более новая загрузка — её данные и нужны.
+      if (seq !== loadSeq) return;
       var errors = [];
 
       if (results[0].status === "fulfilled") {
@@ -1362,39 +1404,43 @@
         var servicesData = results[1].value;
         state.services = servicesData && Array.isArray(servicesData.services) ? servicesData.services : [];
       } else {
-        state.services = [];
-        errors.push("services");
+        // НЕ обнуляем: пустой список выглядел как «все сервисы удалены».
+        // Оставляем последний успешный снимок и помечаем его устаревшим.
+        state.stale = true;
+        errors.push("сервисы");
       }
 
       if (results[2].status === "fulfilled") {
         state.schedules = results[2].value || { global: "", services: {}, effective: {} };
       } else {
-        state.schedules = { global: "", services: {}, effective: {} };
-        errors.push("schedules");
+        errors.push("расписания");
       }
 
       if (results[3].status === "fulfilled") {
         var historyData = results[3].value;
         state.history = Array.isArray(historyData) ? historyData : [];
       } else {
-        state.history = [];
-        errors.push("history");
+        errors.push("история");
       }
 
       if (results[4].status === "fulfilled") {
         var logsData = results[4].value;
         state.logs = Array.isArray(logsData) ? logsData : [];
       } else {
-        state.logs = [];
-        errors.push("logs");
+        errors.push("логи");
       }
 
       if (errors.length) {
+        // Человеческие названия вместо имён эндпоинтов; при частичном сбое
+        // данные показываются, но помечаются как неполные.
         setAlert(
           errors.length >= 4 ? "error" : "warn",
-          "Не удалось загрузить: " + errors.join(", ")
+          "Не удалось обновить: " + errors.join(", ") +
+            ". Показаны последние успешные данные."
         );
+        state.stale = true;
       } else {
+        state.stale = false;
         setAlert("", "");
       }
 
@@ -1433,6 +1479,9 @@
   function addService(name, method, preset) {
     var body = { name: name };
     if (method) body.method = method;
+    if (method === "static_url" && els.addURL) {
+      body.static_url = trim(els.addURL.value);
+    }
     if (preset) body.preset = preset;
 
     // Пока идёт автоопределение CDN (может занять секунды), показываем
@@ -1511,6 +1560,16 @@
   // При выборе пресета метод предопределён: подставляем его и блокируем
   // селект, чтобы выбор в форме не вводил в заблуждение (сервер всё равно
   // применяет метод пресета). Без пресета — селект снова свободен.
+  // syncAddURLVisibility — поле URL нужно только методу static_url.
+  // Раньше метод выбирался, но URL ввести было негде: сервис гарантированно
+  // падал при первом сборе.
+  function syncAddURLVisibility() {
+    if (!els.addURL || !els.addMethod) return;
+    var need = lower(els.addMethod.value) === "static_url";
+    els.addURL.hidden = !need;
+    if (!need) els.addURL.value = "";
+  }
+
   function syncAddMethodWithPreset() {
     if (!els.addMethod || !els.addPreset) return;
     var m = presetMethodFor(trim(els.addPreset.value));
@@ -1522,6 +1581,7 @@
       els.addMethod.disabled = false;
       els.addMethod.title = "";
     }
+    syncAddURLVisibility();
   }
 
   // clearPresetHint убирает автоподсказку пресета (кнопки «применить»/
@@ -1621,7 +1681,7 @@
               method: "POST",
               body: JSON.stringify({ slug: nonVendoredFirst.slug })
             }).then(function (resp) {
-              var warn = resp.warning ? " ⚠ " + resp.warning : "";
+              var warn = resp.warning ? " Внимание: " + resp.warning : "";
               showToast("Пресет создан: " + resp.title + " (" + resp.domains + " доменов)" + warn);
               // Перезагружаем список пресетов и ставим только что созданный.
               state.presets = undefined;
@@ -1674,7 +1734,9 @@
       els.addPreset.innerHTML = html;
       syncAddMethodWithPreset();
     }).catch(function () {
-      state.presets = null;
+      // undefined, а не null: `null !== undefined` навсегда блокировал retry,
+      // и список пресетов оставался пустым до перезагрузки вкладки.
+      state.presets = undefined;
     });
   }
 
@@ -1693,12 +1755,20 @@
     });
   }
 
-  function syncOne(name, dry, btn) {
+  // isSafetyBlock — сервер заблокировал массовое удаление. Раньше UI
+  // советовал «--force», которого в интерфейсе не было: сценарий обрывался.
+  function isSafetyBlock(err) {
+    var m = lower(err && err.message);
+    return m.indexOf("use --force") !== -1 ||
+      m.indexOf("blocked") !== -1 && m.indexOf("managed entries") !== -1;
+  }
+
+  function syncOne(name, dry, btn, force) {
     var path = dry
       ? "/api/v1/services/" + encodeURIComponent(name) + "/dry-run"
       : "/api/v1/services/" + encodeURIComponent(name) + "/sync";
 
-    var body = dry ? "{}" : JSON.stringify({ dry_run: false, force: false });
+    var body = dry ? "{}" : JSON.stringify({ dry_run: false, force: Boolean(force) });
 
     return withButton(btn, function () {
       startProgressPoll();
@@ -1729,10 +1799,10 @@
           var msg = (dry ? "Тестовый запуск " : "Синхронизация ") + name;
           if (parts.length) msg += ": " + parts.join(" ");
           var flags = qualityFlags(data);
-          if (flags.length) msg += " · ⚠ " + flags.join(", ");
+          if (flags.length) msg += " · Внимание: " + flags.join(", ");
           // Fail-open dry-run: роутер был недоступен, цифры условные.
           if (dry && data && data.mikrotik_down) {
-            msg += " · ⚠ MikroTik недоступен, результат условный";
+            msg += " · Внимание: MikroTik недоступен, результат условный";
           }
 
           showToast(msg);
@@ -1760,6 +1830,18 @@
           setTimeout(function () {
             loadAll(true);
           }, 1000);
+        }, function (err) {
+          // Safety-блок: даём осознанный выбор вместо тупика с CLI-флагом.
+          if (!dry && !force && isSafetyBlock(err)) {
+            var ok = window.confirm(
+              "Сервер заблокировал массовое удаление записей (защита safe-diff).\n\n" +
+              "Принудительно применить? Будут удалены записи, которые сервер считает опасными для удаления."
+            );
+            if (ok) {
+              return syncOne(name, false, btn, true);
+            }
+          }
+          throw err;
         });
       });
     });
@@ -1838,7 +1920,12 @@
   }
 
   // ---------- Diff ----------
+  // diffOpener объявлен здесь: openDiff/closeDiff живут выше блока Drawer,
+  // и var-подъёма из нижней области не хватало для присваивания.
+  var diffOpener = null;
+
   function openDiff(diff) {
+    diffOpener = document.activeElement;
     state.diff = diff;
     if (!els.diffModal) return;
 
@@ -1851,10 +1938,15 @@
     els.diffModal.hidden = false;
     document.body.classList.add("svc-no-scroll");
     renderDiff();
+    focusFirst(els.diffModal);
   }
 
   function closeDiff() {
     if (els.diffModal) els.diffModal.hidden = true;
+    if (diffOpener && diffOpener.focus && document.contains(diffOpener)) {
+      diffOpener.focus();
+    }
+    diffOpener = null;
     if (!isDrawerOpen() && !state.delete.open) {
       document.body.classList.remove("svc-no-scroll");
     }
@@ -1894,8 +1986,36 @@
     els.diffList.innerHTML = html;
   }
 
+  // ---------- Фокус в слоях (drawer / модалки) ----------
+  // Модалки удаления и diff — сиблинги drawer. Ловушка фокуса строится по
+  // «верхнему слою», иначе Tab оставался в drawer и до кнопок подтверждения
+  // удаления было не добраться с клавиатуры вообще.
+  function topLayer() {
+    if (els.deleteModal && !els.deleteModal.hidden) return els.deleteModal;
+    if (els.diffModal && !els.diffModal.hidden) return els.diffModal;
+    if (els.drawer && !els.drawer.hidden) return els.drawer;
+    return null;
+  }
+
+  function focusFirst(layer) {
+    if (!layer) return;
+    var target = layer.querySelector(
+      "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+    );
+    if (target) {
+      target.focus();
+      return;
+    }
+    var title = layer.querySelector("h2, h3");
+    if (title) {
+      title.setAttribute("tabindex", "-1");
+      title.focus();
+    }
+  }
+
   // ---------- Drawer ----------
   var drawerOpener = null;
+  var deleteOpener = null;
 
   function openDrawer(name) {
     if (document.activeElement && document.activeElement !== document.body) {
@@ -1922,6 +2042,8 @@
     document.body.classList.add("svc-no-scroll");
     renderDetails();
     loadDetails();
+    // Фокус внутрь панели: иначе Tab шёл по странице за затемнением.
+    focusFirst(els.drawer);
   }
 
   function closeDrawer() {
@@ -1950,6 +2072,7 @@
   function openDelete(name) {
     if (state.delete.busy) return;
 
+    deleteOpener = document.activeElement;
     state.delete.name = name;
     state.delete.open = true;
 
@@ -1959,6 +2082,7 @@
 
     if (els.deleteModal) {
       els.deleteModal.hidden = false;
+      focusFirst(els.deleteModal);
     }
 
     document.body.classList.add("svc-no-scroll");
@@ -1975,6 +2099,11 @@
     if (els.deleteModal) {
       els.deleteModal.hidden = true;
     }
+
+    if (deleteOpener && deleteOpener.focus && document.contains(deleteOpener)) {
+      deleteOpener.focus();
+    }
+    deleteOpener = null;
 
     if (!isDrawerOpen() && !(els.diffModal && !els.diffModal.hidden)) {
       document.body.classList.remove("svc-no-scroll");
@@ -2821,9 +2950,11 @@
     }
 
     each(qsa(".svc-tab"), function (tab) {
-      if (tab.classList) {
-        tab.classList.toggle("active", tab.getAttribute("data-svc-tab") === state.details.tab);
-      }
+      if (!tab.classList) return;
+      var on = tab.getAttribute("data-svc-tab") === state.details.tab;
+      tab.classList.toggle("active", on);
+      // Скринридер должен знать, какая вкладка выбрана (role=tab в шаблоне).
+      tab.setAttribute("aria-selected", on ? "true" : "false");
     });
 
     if (state.details.loading) {
@@ -3016,6 +3147,10 @@
       });
     }
 
+    if (els.addMethod) {
+      els.addMethod.addEventListener("change", syncAddURLVisibility);
+    }
+
     if (els.addPreset) {
       els.addPreset.addEventListener("change", function () {
         // Ручной выбор пресета — не авто: при смене имени его не снимаем.
@@ -3035,11 +3170,17 @@
 
         var method = els.addMethod ? trim(els.addMethod.value) : "";
         var preset = els.addPreset ? trim(els.addPreset.value) : "";
+        if (method === "static_url" && els.addURL && !trim(els.addURL.value)) {
+          showToast("Для метода static_url укажите URL списка префиксов", true);
+          els.addURL.focus();
+          return;
+        }
         handlePromise(withButton(els.addBtn, function () {
           return addService(name, method, preset).then(function () {
             if (els.addInput) els.addInput.value = "";
             if (els.addPreset) els.addPreset.value = "";
             if (els.addMethod) els.addMethod.value = "";
+            if (els.addURL) els.addURL.value = "";
             presetAutoApplied = false;
             syncAddMethodWithPreset();
             clearPresetHint();
@@ -3326,10 +3467,12 @@
         }
       }
 
-      // Ловушка фокуса в drawer: Tab циклируется внутри панели,
-      // наружу (за затемнение) не уходит.
-      if (e.key === "Tab" && isDrawerOpen() && els.drawer) {
-        var focusables = els.drawer.querySelectorAll(
+      // Ловушка фокуса по ВЕРХНЕМУ слою: если открыта модалка удаления или
+      // diff (они сиблинги drawer), Tab должен циклироваться в ней — иначе
+      // до кнопки подтверждения удаления нельзя добраться с клавиатуры.
+      var layer = (e.key === "Tab") ? topLayer() : null;
+      if (layer) {
+        var focusables = layer.querySelectorAll(
           'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'
         );
         var list = [];
@@ -3342,7 +3485,7 @@
           var first = list[0];
           var last = list[list.length - 1];
           var active = document.activeElement;
-          if (e.shiftKey && (active === first || active === document.body || !els.drawer.contains(active))) {
+          if (e.shiftKey && (active === first || active === document.body || !layer.contains(active))) {
             e.preventDefault();
             last.focus();
           } else if (!e.shiftKey && active === last) {
@@ -3362,10 +3505,17 @@
     // Возврат на вкладку — сразу подтянуть прогресс и состояние таблицы,
     // не дожидаясь следующего тика интервала.
     document.addEventListener("visibilitychange", function () {
-      if (!document.hidden) {
-        pollProgressOnce();
-        loadAll(false);
+      if (document.hidden) {
+        // Таймер 900 мс больше не крутится вхолостую в фоне.
+        if (progressPoll.timer) {
+          clearInterval(progressPoll.timer);
+          progressPoll.timer = null;
+        }
+        return;
       }
+      resumeProgressPoll();
+      pollProgressOnce();
+      loadAll(false);
     });
   }
 

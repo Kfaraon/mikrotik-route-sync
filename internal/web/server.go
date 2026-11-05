@@ -1469,9 +1469,12 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		"uptime":      time.Since(s.syncer.StartTime()).String(),
 		"last_sync":   s.syncer.LastSync(),
 		"mikrotik_ok": mtKnown && mtOK,
-		"services":    append([]string(nil), s.cfg.Services...),
-		"degraded":    s.syncer.DegradedServices(),
-		"schedules":   s.cfg.Schedules,
+		// mikrotik_known отличает «проверяли и недоступен» от «ещё не
+		// проверяли»: иначе холодный старт рисовал ложную аварию.
+		"mikrotik_known": mtKnown,
+		"services":       append([]string(nil), s.cfg.Services...),
+		"degraded":       s.syncer.DegradedServices(),
+		"schedules":      s.cfg.Schedules,
 	}})
 	s.cfg.RUnlock()
 	if err != nil {

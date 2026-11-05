@@ -22,14 +22,14 @@
     <a href="/services"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
     <a href="/schedules"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-clock"></use></svg><span class="bar-label">Расписания</span></a>
     <a href="/settings"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-settings"></use></svg><span class="bar-label">Настройки</span></a>
-    <a href="/logs" class="active"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-logs"></use></svg><span class="bar-label">Логи</span></a>
+    <a href="/logs" class="active" aria-current="page"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-logs"></use></svg><span class="bar-label">Логи</span></a>
     <span class="bar-right">
       <span id="live-dot" class="{{ .DotClass }}" title="{{ .DotTitle }}"></span>
       <button type="button" class="theme-toggle" aria-label="Переключить тему"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-moon"></use></svg></button>
     </span>
   </nav>
 
-  <main class="wrap" id="logs-page">
+  <main class="wrap" id="logs-page" tabindex="-1">
     <div class="log-stats" id="log-stats">
       <span class="stat-item">Всего: <strong id="stat-total">0</strong></span>
       <span class="stat-item debug">DEBUG: <strong id="stat-debug">0</strong></span>
@@ -73,14 +73,14 @@
       </div>
 
       <div class="log-actions">
-        <button type="button" id="log-refresh" class="btn btn-primary log-refresh"><span class="btn-ico" aria-hidden="true">⟳</span> Обновить</button>
+        <button type="button" id="log-refresh" class="btn btn-primary log-refresh"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-sync"></use></svg> Обновить</button>
         <button type="button" id="log-pause" class="btn btn-secondary log-pause"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-pause"></use></svg><span class="log-pause-label">Пауза</span></button>
-        <button type="button" id="log-download" class="btn btn-outline">⬇ Скачать</button>
+        <button type="button" id="log-download" class="btn btn-outline"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-download"></use></svg> Скачать</button>
         <button type="button" class="btn btn-secondary" id="log-clear"
                 hx-post="/actions/logs-clear"
                 hx-swap="none"
                 hx-confirm="Очистить лог-файл?">
-          🗑 Очистить
+          <svg class="px" aria-hidden="true" focusable="false"><use href="#px-trash"></use></svg> Очистить
         </button>
       </div>
     </div>
