@@ -2754,6 +2754,40 @@ func TestNoEmojiIconsInUI(t *testing.T) {
 	}
 }
 
+// TestThemeReappliedAfterDOM — иконка темы не должна «слетать» на #px-moon
+// при F5 в тёмной теме. applyTheme() в <head> выполняется раньше, чем в DOM
+// появляются кнопки .theme-toggle, поэтому тему нужно применить повторно
+// после DOMContentLoaded.
+func TestThemeReappliedAfterDOM(t *testing.T) {
+	raw, err := os.ReadFile("static/theme.js")
+	if err != nil {
+		t.Fatalf("read theme.js: %v", err)
+	}
+	s := string(raw)
+
+	// Кнопки навешиваются и тема переприменяется одной функцией initTheme.
+	i := strings.Index(s, "function initTheme(")
+	if i < 0 {
+		t.Fatal("theme.js must define initTheme()")
+	}
+	j := strings.Index(s[i:], "\n  }")
+	if j < 0 {
+		t.Fatal("theme.js: initTheme body not terminated")
+	}
+	body := s[i : i+j]
+	if !strings.Contains(body, "applyTheme(getPreferredTheme())") {
+		t.Fatal("initTheme must re-apply the stored theme (icon otherwise stays #px-moon)")
+	}
+	if !strings.Contains(body, "initThemeButtons()") {
+		t.Fatal("initTheme must attach the click handlers")
+	}
+	// Именно initTheme должен висеть на DOMContentLoaded, а не initThemeButtons.
+	if !strings.Contains(s, `document.addEventListener("DOMContentLoaded", initTheme)`) &&
+		!strings.Contains(s, `document.addEventListener("DOMContentLoaded", initTheme);`) {
+		t.Fatal("DOMContentLoaded must call initTheme (re-apply theme after DOM)")
+	}
+}
+
 // TestOpencodePalette — палитра берётся из темы opencode: primary тёмной
 // темы #fab283, фон #0a0a0a. Проверяем, что цвета не «съехали» обратно
 // к прежнему синему при будущих правках.

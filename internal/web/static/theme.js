@@ -66,10 +66,19 @@
     }
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initThemeButtons);
-  } else {
+  // applyTheme(getPreferredTheme()) выше выполняется в <head>, когда кнопок
+  // .theme-toggle ещё нет в DOM: класс темы ставится, но иконка не успевает.
+  // Поэтому после построения DOM применяем тему ещё раз — иначе при F5 в
+  // тёмной теме остаётся захардкоженный в шаблоне #px-moon.
+  function initTheme() {
+    applyTheme(getPreferredTheme());
     initThemeButtons();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initTheme);
+  } else {
+    initTheme();
   }
 
   // ---------- Live-индикатор MikroTik + бейдж проблем ----------
