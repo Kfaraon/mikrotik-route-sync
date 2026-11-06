@@ -3,7 +3,7 @@ package addresslist
 import (
 	"net/netip"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/aggregator"
 )
 
 // ForeignEntries — записи списка, НЕ принадлежащие сервису: ручные записи,

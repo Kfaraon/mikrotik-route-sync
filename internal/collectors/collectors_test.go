@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 )
 
 func TestFilterPrefixes(t *testing.T) {

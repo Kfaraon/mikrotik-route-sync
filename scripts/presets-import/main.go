@@ -31,7 +31,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/presets"
 )
 
 const (
@@ -55,7 +55,7 @@ var (
 	rublock   = flag.Bool("rublock", true, "скачивать antifilter.download и собирать пресет rublock")
 	rublockM  = flag.Int("rublock-max", 0, "кап для rublock (0 = без капа, полный список)")
 	timeout   = flag.Duration("timeout", 10*time.Minute, "таймаут скачивания")
-	userAgent = flag.String("user-agent", "mikrotik-route-sync/presets-import", "User-Agent для запросов")
+	userAgent = flag.String("user-agent", "mikrotik-list-sync/presets-import", "User-Agent для запросов")
 )
 
 func main() {

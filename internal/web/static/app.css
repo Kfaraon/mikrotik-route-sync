@@ -695,9 +695,9 @@ code {
   font-weight: 600;
 }
 
-/* Toast уведомления: стек пузырей (window.mrsToast из app.js).
+/* Toast уведомления: стек пузырей (window.mlsToast из app.js).
    Контейнер — прозрачная обёртка, фон несут пузыри. */
-#mrs-toast {
+#mls-toast {
   position: fixed;
   bottom: 2rem;
   right: 2rem;
@@ -715,7 +715,7 @@ code {
   transform: none;
 }
 
-.mrs-toast-msg {
+.mls-toast-msg {
   background: var(--text);
   color: var(--bg);
   padding: 1rem 1.5rem;
@@ -724,14 +724,14 @@ code {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  animation: mrs-toast-in 0.25s ease;
+  animation: mls-toast-in 0.25s ease;
 }
 
-.mrs-toast-msg span { flex: 1; }
-.mrs-toast-ok { background: var(--fill-success); color: var(--on-success); }
-.mrs-toast-err { background: var(--fill-danger); color: var(--on-danger); }
+.mls-toast-msg span { flex: 1; }
+.mls-toast-ok { background: var(--fill-success); color: var(--on-success); }
+.mls-toast-err { background: var(--fill-danger); color: var(--on-danger); }
 
-.mrs-toast-x {
+.mls-toast-x {
   background: transparent;
   border: none;
   color: inherit;
@@ -742,7 +742,7 @@ code {
   min-height: 44px;
 }
 
-@keyframes mrs-toast-in {
+@keyframes mls-toast-in {
   from { opacity: 0; transform: translateY(0.5rem); }
   to { opacity: 1; transform: translateY(0); }
 }
@@ -778,7 +778,7 @@ code {
 }
 
 /* Skip-ссылка: скрыта, показывается только фокусом с клавиатуры */
-.mrs-skip {
+.mls-skip {
   position: fixed;
   top: -100px;
   left: 1rem;
@@ -795,7 +795,7 @@ code {
   align-items: center;
 }
 
-.mrs-skip:focus-visible {
+.mls-skip:focus-visible {
   top: 1rem;
 }
 
@@ -811,12 +811,12 @@ summary:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mrs-toast-msg { animation: none; }
+  .mls-toast-msg { animation: none; }
   .skel { animation: none; }
 }
 
 @media (max-width: 768px) {
-  #mrs-toast {
+  #mls-toast {
     bottom: 1rem;
     right: 1rem;
     left: 1rem;
@@ -943,7 +943,7 @@ summary:focus-visible {
 
   /* На узком экране карточки не должны отнимать ширину у значений:
      подпись короче стандартных 7rem. */
-  .mrs-cards td[data-label]:before {
+  .mls-cards td[data-label]:before {
     width: 5.5rem;
   }
 }
@@ -1735,10 +1735,10 @@ button.btn.btn-secondary.log-pause.paused:hover:not(:disabled) {
 }
 
 .btn-loading .btn-ico {
-  animation: mrs-spin 0.9s linear infinite;
+  animation: mls-spin 0.9s linear infinite;
 }
 
-@keyframes mrs-spin {
+@keyframes mls-spin {
   to { transform: rotate(360deg); }
 }
 
@@ -1758,24 +1758,24 @@ button.btn.btn-secondary.log-pause.paused:hover:not(:disabled) {
 }
 
 /* Мобильные карточки из таблицы — единый паттерн.
-   Таблица с классом .mrs-cards на ≤768px: шапка прячется, строка —
+   Таблица с классом .mls-cards на ≤768px: шапка прячется, строка —
    карточка, подпись (data-label) слева, значение справа.
-   Модификаторы ячеек: .mrs-title (заголовок во всю ширину),
-   .mrs-flat (без подписи), .mrs-corner (плашка в углу карточки). */
+   Модификаторы ячеек: .mls-title (заголовок во всю ширину),
+   .mls-flat (без подписи), .mls-corner (плашка в углу карточки). */
 @media (max-width: 768px) {
-  .mrs-cards thead { display: none; }
+  .mls-cards thead { display: none; }
 
-  .mrs-cards,
-  .mrs-cards tbody,
-  .mrs-cards tr,
-  .mrs-cards td {
+  .mls-cards,
+  .mls-cards tbody,
+  .mls-cards tr,
+  .mls-cards td {
     display: block;
     width: 100%;
   }
 
   /* table. — вес выше правил страниц (`.address-table tbody tr`), иначе
      фиксированная высота десктопных строк схлопывает карточки */
-  table.mrs-cards tbody tr {
+  table.mls-cards tbody tr {
     position: relative;
     height: auto;
     margin-bottom: 0.75rem;
@@ -1785,7 +1785,7 @@ button.btn.btn-secondary.log-pause.paused:hover:not(:disabled) {
     background: var(--bg);
   }
 
-  .mrs-cards td[data-label] {
+  .mls-cards td[data-label] {
     display: flex;
     gap: 0.5rem;
     align-items: baseline;
@@ -1796,7 +1796,7 @@ button.btn.btn-secondary.log-pause.paused:hover:not(:disabled) {
     overflow-wrap: anywhere;
   }
 
-  .mrs-cards td[data-label]:before {
+  .mls-cards td[data-label]:before {
     content: attr(data-label);
     flex: none;
     width: 7rem;
@@ -1805,35 +1805,35 @@ button.btn.btn-secondary.log-pause.paused:hover:not(:disabled) {
     font-size: 0.75rem;
   }
 
-  .mrs-cards td[data-label] > * {
+  .mls-cards td[data-label] > * {
     flex: 1;
     min-width: 0;
   }
 
-  .mrs-cards td[data-label] > .badge {
+  .mls-cards td[data-label] > .badge {
     flex: none;
     max-width: 100%;
   }
 
-  .mrs-cards td.mrs-title {
+  .mls-cards td.mls-title {
     display: block;
     padding: 0.3rem 2.5rem 0.3rem 0;
     font-size: 1.05rem;
   }
 
-  .mrs-cards td.mrs-title:before,
-  .mrs-cards td.mrs-flat:before,
-  .mrs-cards td.mrs-corner:before {
+  .mls-cards td.mls-title:before,
+  .mls-cards td.mls-flat:before,
+  .mls-cards td.mls-corner:before {
     content: none;
   }
 
-  .mrs-cards td.mrs-flat {
+  .mls-cards td.mls-flat {
     display: block;
     border: none;
     padding: 0.4rem 0 0.2rem;
   }
 
-  .mrs-cards td.mrs-corner {
+  .mls-cards td.mls-corner {
     position: absolute;
     top: 0.25rem;
     right: 0.25rem;

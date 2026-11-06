@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/history"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/history"
 )
 
 // TestServiceRowsCarryGUIDAndFilterHistory — /api/v1/services отдаёт GUID

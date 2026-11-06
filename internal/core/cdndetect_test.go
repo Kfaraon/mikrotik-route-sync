@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/classifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/resolver"
 )
 
 // captureNotifier — захватывает отправленные уведомления.

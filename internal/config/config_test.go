@@ -87,13 +87,39 @@ schedules: {global: "every 6h"}
 
 func TestENVOverride(t *testing.T) {
 	path := writeTempConfig(t, minimalYAML)
-	t.Setenv("MRS_MIKROTIK_PASSWORD", "from-env")
+	t.Setenv("MLS_MIKROTIK_PASSWORD", "from-env")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if cfg.MikroTik.Password != "from-env" {
 		t.Fatalf("ENV must override config, got %q", cfg.MikroTik.Password)
+	}
+}
+
+func TestLegacyENVOverride(t *testing.T) {
+	// Совместимость после переименования: старый MRS_* работает, пока не задан MLS_*.
+	path := writeTempConfig(t, minimalYAML)
+	t.Setenv("MRS_MIKROTIK_PASSWORD", "from-legacy")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MikroTik.Password != "from-legacy" {
+		t.Fatalf("legacy ENV must override config, got %q", cfg.MikroTik.Password)
+	}
+}
+
+func TestNewENVWinsOverLegacy(t *testing.T) {
+	path := writeTempConfig(t, minimalYAML)
+	t.Setenv("MRS_MIKROTIK_PASSWORD", "legacy")
+	t.Setenv("MLS_MIKROTIK_PASSWORD", "new")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MikroTik.Password != "new" {
+		t.Fatalf("MLS_* must win over MRS_*, got %q", cfg.MikroTik.Password)
 	}
 }
 
@@ -214,7 +240,7 @@ func TestSetGetSnakeCaseKeys(t *testing.T) {
 func TestFilePermissionsRejected(t *testing.T) {
 	path := writeTempConfig(t, minimalYAML)
 	_ = os.Chmod(path, 0o644)
-	t.Setenv("MRS_REQUIRE_FILE_PERMS", "1")
+	t.Setenv("MLS_REQUIRE_FILE_PERMS", "1")
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected 0600 permission enforcement")
 	}

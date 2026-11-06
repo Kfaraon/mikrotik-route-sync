@@ -1,8 +1,8 @@
-# Архитектура MikroTik Route Sync
+# Архитектура MikroTik List Sync
 
 ## Обзор
 
-MikroTik Route Sync — это приложение на Go для автоматического управления **Firewall Address List** (`/ip/firewall/address-list`) на MikroTik RouterOS v7. Система собирает IPv4-диапазоны сервисов из различных источников, валидирует их, агрегирует и синхронизирует с роутером через REST API в один глобальный address-list (`firewall.address_list`, например `TO-VPN`). Проект работает только с IPv4 и намеренно не использует IPv6.
+MikroTik List Sync — это приложение на Go для автоматического управления **Firewall Address List** (`/ip/firewall/address-list`) на MikroTik RouterOS v7. Система собирает IPv4-диапазоны сервисов из различных источников, валидирует их, агрегирует и синхронизирует с роутером через REST API в один глобальный address-list (`firewall.address_list`, например `TO-VPN`). Проект работает только с IPv4 и намеренно не использует IPv6.
 
 ## Архитектурные принципы
 
@@ -461,10 +461,10 @@ REST API клиент `/rest/ip/firewall/address-list`:
 
     # Статический бинарник
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w \
-      -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Version=1.0.0 \
-      -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Commit=$(git rev-parse --short HEAD) \
-      -X github.com/Kfaraon/mikrotik-route-sync/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      -o mikrotik-route-sync ./cmd/app
+      -X github.com/Kfaraon/mikrotik-list-sync/internal/version.Version=1.0.0 \
+      -X github.com/Kfaraon/mikrotik-list-sync/internal/version.Commit=$(git rev-parse --short HEAD) \
+      -X github.com/Kfaraon/mikrotik-list-sync/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      -o mikrotik-list-sync ./cmd/app
 
 ### Docker
 
@@ -482,8 +482,11 @@ Multi-stage (`Dockerfile` в корне): builder `golang:1.27.1-alpine` → run
 
 ### Docker Compose (`docker-compose.yml`)
 
+    name: mikrotik-list-sync
+
     services:
-      mrs:
+      mls:
+        image: mikrotik-list-sync:local
         build: .
         restart: unless-stopped
         read_only: true
@@ -493,14 +496,14 @@ Multi-stage (`Dockerfile` в корне): builder `golang:1.27.1-alpine` → run
         mem_limit: 128m
         cpus: 1.0
         environment:
-          - MRS_REQUIRE_FILE_PERMS=0        # bind-mount с Windows показывает 0777
-          - MRS_MIKROTIK_PASSWORD=${MRS_MIKROTIK_PASSWORD:-}
-          - MRS_TELEGRAM_BOT_TOKEN=${MRS_TELEGRAM_BOT_TOKEN:-}
-          - MRS_WEB_PASSWORD=${MRS_WEB_PASSWORD:-}
+          - MLS_REQUIRE_FILE_PERMS=0        # bind-mount с Windows показывает 0777
+          - MLS_MIKROTIK_PASSWORD=${MLS_MIKROTIK_PASSWORD:-}
+          - MLS_TELEGRAM_BOT_TOKEN=${MLS_TELEGRAM_BOT_TOKEN:-}
+          - MLS_WEB_PASSWORD=${MLS_WEB_PASSWORD:-}
         volumes:
           - ./config.yaml:/data/config.yaml
           - ./data:/data
-          - ./logs:/var/log/mikrotik-route-sync
+          - ./logs:/var/log/mikrotik-list-sync
         ports:
           - "127.0.0.1:8080:8080"
 
@@ -512,7 +515,7 @@ Multi-stage (`Dockerfile` в корне): builder `golang:1.27.1-alpine` → run
     .PHONY: build lint test docker release
 
     build:
-        CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/mikrotik-route-sync ./cmd/app
+        CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/mikrotik-list-sync ./cmd/app
 
     lint:
         golangci-lint run
@@ -522,7 +525,7 @@ Multi-stage (`Dockerfile` в корне): builder `golang:1.27.1-alpine` → run
         go test -v -race -coverprofile=coverage.out ./...
 
     docker:
-        docker build -t mikrotik-route-sync:latest .
+        docker build -t mikrotik-list-sync:latest .
 
     release:
         @echo "Building release..."

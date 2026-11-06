@@ -5,8 +5,8 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/aggregator"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 )
 
 type Validator struct {

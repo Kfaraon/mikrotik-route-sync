@@ -1,6 +1,6 @@
 # === Бинарные файлы и артефакты сборки ===
 # Слэш в начале: только корневой бинарник, иначе паттерн «app» глушит каталог cmd/app/.
-/mikrotik-route-sync
+/mikrotik-list-sync
 /app
 bin/
 *.exe
@@ -30,7 +30,7 @@ cache.db
 # === Логи ===
 *.log
 logs/
-/var/log/mikrotik-route-sync/
+/var/log/mikrotik-list-sync/
 
 # === Тесты и покрытие ===
 coverage.out

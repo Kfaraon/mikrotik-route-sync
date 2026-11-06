@@ -24,7 +24,7 @@
   }
 
   // Общие утилиты — из common.js (единая реализация для всех страниц).
-  var util = window.mrsUtil || {};
+  var util = window.mlsUtil || {};
   var esc = util.esc;
   var text = util.text;
   var trim = util.trim;
@@ -55,10 +55,10 @@
     return el && el.closest ? el.closest(selector) : null;
   }
 
-  // Единый стек уведомлений (реализация в app.js: window.mrsToast).
+  // Единый стек уведомлений (реализация в app.js: window.mlsToast).
   function showToast(message, isError) {
-    if (window.mrsToast) {
-      window.mrsToast(message, isError);
+    if (window.mlsToast) {
+      window.mlsToast(message, isError);
     }
   }
 
@@ -1016,8 +1016,8 @@
       : '<span class="svc-muted">—</span>';
 
     return '<tr class="' + selectedClass + '" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '">' +
-      '<td data-label="Выбор" class="mrs-corner"><input type="checkbox" class="svc-row-check" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '"' + checked + "></td>" +
-      '<td data-label="Сервис" class="mrs-title">' +
+      '<td data-label="Выбор" class="mls-corner"><input type="checkbox" class="svc-row-check" data-key="' + esc(item.key) + '" data-service="' + esc(item.name) + '"' + checked + "></td>" +
+      '<td data-label="Сервис" class="mls-title">' +
         '<div class="svc-name"><strong>' + esc(item.name) + "</strong></div>" +
         '<div class="svc-progress" hidden>' +
           '<div class="svc-progress-track"><div class="svc-progress-fill"></div></div>' +
@@ -1031,7 +1031,7 @@
       "</td>" +
       '<td data-label="Записей">' + esc(item.routesKnown === false ? "—" : String(item.routes)) + "</td>" +
       '<td data-label="Последняя синхр.">' + lastHtml + "</td>" +
-      '<td data-label="Действия" class="mrs-flat">' +
+      '<td data-label="Действия" class="mls-flat">' +
         '<div class="svc-actions">' +
           '<button type="button" class="svc-outline" data-action="details" data-service="' + esc(item.name) + '">Детали</button>' +
           '<button type="button" data-action="dry" title="Тестовый запуск" data-service="' + esc(item.name) + '">Тест</button>' +

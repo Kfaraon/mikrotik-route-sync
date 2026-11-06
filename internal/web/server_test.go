@@ -25,11 +25,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/core"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/presets"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/storage"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -242,7 +242,7 @@ func TestAuthRequiredAndDashboardRenders(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("dashboard: %d body=%s", resp.StatusCode, page)
 	}
-	if !strings.Contains(page, "MikroTik Route Sync") {
+	if !strings.Contains(page, "MikroTik List Sync") {
 		t.Fatalf("dashboard content wrong: %s", page)
 	}
 	// Сервисы рендерит JS через /api/v1/services — проверяем API.
@@ -1623,27 +1623,27 @@ func TestCSRFBasicauthOrigin(t *testing.T) {
 // вместе с транспортом).
 func TestSameOrigin(t *testing.T) {
 	srv, _ := newTestServer(t)
-	req, _ := http.NewRequest("GET", "http://mrs.local/", nil)
-	req.Host = "mrs.local"
-	for _, ok := range []string{"", "http://mrs.local", "HTTP://MRS.LOCAL"} {
+	req, _ := http.NewRequest("GET", "http://mls.local/", nil)
+	req.Host = "mls.local"
+	for _, ok := range []string{"", "http://mls.local", "HTTP://MLS.LOCAL"} {
 		if !srv.sameOrigin(req, ok) {
 			t.Fatalf("must accept %q", ok)
 		}
 	}
 	// https-Origin при http-запросе отклоняется (схема обязана совпадать).
-	for _, bad := range []string{"http://mrs.local.evil.com", "http://evil.com", "http://mrs.local:9999", "://", "http://", "https://mrs.local"} {
+	for _, bad := range []string{"http://mls.local.evil.com", "http://evil.com", "http://mls.local:9999", "://", "http://", "https://mls.local"} {
 		if srv.sameOrigin(req, bad) {
 			t.Fatalf("must reject %q", bad)
 		}
 	}
 	// Схема: http-Origin при https-запросе (и наоборот) — отказ.
-	tlsReq, _ := http.NewRequest("GET", "https://mrs.local/", nil)
-	tlsReq.Host = "mrs.local"
+	tlsReq, _ := http.NewRequest("GET", "https://mls.local/", nil)
+	tlsReq.Host = "mls.local"
 	tlsReq.TLS = &tls.ConnectionState{}
-	if srv.sameOrigin(tlsReq, "http://mrs.local") {
+	if srv.sameOrigin(tlsReq, "http://mls.local") {
 		t.Fatal("http origin over https must be rejected")
 	}
-	if !srv.sameOrigin(tlsReq, "https://mrs.local") {
+	if !srv.sameOrigin(tlsReq, "https://mls.local") {
 		t.Fatal("https origin over https must pass")
 	}
 }
@@ -2496,15 +2496,15 @@ func TestBulkSyncQueueCapacity(t *testing.T) {
 }
 
 // TestCommonJSLoadedBeforePageScripts — общие утилиты (esc/text/csrf) живут
-// в common.js; страничные скрипты используют window.mrsUtil, а не свои копии.
+// в common.js; страничные скрипты используют window.mlsUtil, а не свои копии.
 // Порядок подключения важен: common.js обязан идти раньше страничных скриптов.
 func TestCommonJSLoadedBeforePageScripts(t *testing.T) {
 	common, err := os.ReadFile("static/common.js")
 	if err != nil {
 		t.Fatalf("read common.js: %v", err)
 	}
-	if !strings.Contains(string(common), "window.mrsUtil") {
-		t.Fatal("common.js must export window.mrsUtil")
+	if !strings.Contains(string(common), "window.mlsUtil") {
+		t.Fatal("common.js must export window.mlsUtil")
 	}
 
 	pages := []string{"services.html", "dashboard.html", "settings.html", "logs.html", "schedules.html", "addresslist.html"}
@@ -2542,7 +2542,7 @@ func TestPageScriptsDoNotDuplicateUtils(t *testing.T) {
 			`querySelector('meta[name="csrf-token"]')`,
 		} {
 			if strings.Contains(js, bad) {
-				t.Fatalf("%s must use window.mrsUtil instead of duplicating %q", f, bad)
+				t.Fatalf("%s must use window.mlsUtil instead of duplicating %q", f, bad)
 			}
 		}
 	}
@@ -2835,7 +2835,7 @@ func TestOnAccentTextColors(t *testing.T) {
 			if !strings.Contains(block, "background: var(--primary)") && !strings.Contains(block, "background: var(--danger)") {
 				continue
 			}
-			if !strings.Contains(block, "button") && !strings.Contains(block, ".tab-btn") && !strings.Contains(block, ".mrs-toast") {
+			if !strings.Contains(block, "button") && !strings.Contains(block, ".tab-btn") && !strings.Contains(block, ".mls-toast") {
 				continue
 			}
 			if strings.Contains(block, "color: white") || strings.Contains(block, "color: #fff") {

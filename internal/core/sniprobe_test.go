@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/notifier"
 )
 
 func testVerifier(t *testing.T, ts *httptest.Server) *SNIVerifier {

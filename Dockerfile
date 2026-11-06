@@ -33,10 +33,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build \
     -trimpath \
     -ldflags="-s -w \
-    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Version=${VERSION} \
-    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.Commit=${COMMIT} \
-    -X github.com/Kfaraon/mikrotik-route-sync/internal/version.BuildDate=${BUILD_DATE}" \
-    -o /bin/mikrotik-route-sync \
+    -X github.com/Kfaraon/mikrotik-list-sync/internal/version.Version=${VERSION} \
+    -X github.com/Kfaraon/mikrotik-list-sync/internal/version.Commit=${COMMIT} \
+    -X github.com/Kfaraon/mikrotik-list-sync/internal/version.BuildDate=${BUILD_DATE}" \
+    -o /bin/mikrotik-list-sync \
     ./cmd/app
 
 # ==============================================================================
@@ -48,11 +48,11 @@ FROM ${REGISTRY}/alpine:3.20 AS runtime
 # Отдельный пользователь не создаётся: в Alpine 3.20 UID/GID 65534 уже заняты
 # системным nobody:nobody — используем его (USER ниже).
 RUN apk add --no-cache ca-certificates tzdata && \
-    mkdir -p /data /var/log/mikrotik-route-sync && \
-    chown 65534:65534 /data /var/log/mikrotik-route-sync
+    mkdir -p /data /var/log/mikrotik-list-sync /var/log/mikrotik-route-sync && \
+    chown 65534:65534 /data /var/log/mikrotik-list-sync /var/log/mikrotik-route-sync
 
 # Копируем только скомпилированный бинарный файл из builder-стадии
-COPY --from=builder /bin/mikrotik-route-sync /usr/local/bin/mikrotik-route-sync
+COPY --from=builder /bin/mikrotik-list-sync /usr/local/bin/mikrotik-list-sync
 
 # Рабочая директория (совпадает с точкой монтирования volume для кэша/конфигов)
 WORKDIR /data
@@ -64,7 +64,7 @@ USER 65534:65534
 EXPOSE 8080
 
 # Тома для сохранения состояния между перезапусками контейнера
-VOLUME ["/data", "/var/log/mikrotik-route-sync"]
+VOLUME ["/data", "/var/log/mikrotik-list-sync", "/var/log/mikrotik-route-sync"]
 
 # Healthcheck: проверяет доступность встроенного веб-сервера через локальный wget
 # /healthz должен возвращать 200 OK без аутентификации (согласно промпту)
@@ -73,5 +73,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 # Точка входа и команда по умолчанию
 # "daemon" запускает всё: web, scheduler, bot (согласно разделу XIII промпта)
-ENTRYPOINT ["/usr/local/bin/mikrotik-route-sync"]
+ENTRYPOINT ["/usr/local/bin/mikrotik-list-sync"]
 CMD ["daemon", "--config", "/data/config.yaml"]

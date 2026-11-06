@@ -609,9 +609,9 @@ button.svc-danger:hover:not(:disabled) {
   .svc-add-form { flex-direction: column; }
   .svc-add-form input { width: 100%; }
   .svc-add-form select { width: 100%; min-width: 0; }
-  /* Карточки таблицы — общий паттерн .mrs-cards из app.css;
+  /* Карточки таблицы — общий паттерн .mls-cards из app.css;
      здесь только своё: крупный чекбокс и кнопки в один ряд */
-  .svc-table td.mrs-corner input[type="checkbox"] { width: 22px; height: 22px; }
+  .svc-table td.mls-corner input[type="checkbox"] { width: 22px; height: 22px; }
   .svc-actions {
     justify-content: flex-start;
     display: grid;
@@ -638,7 +638,7 @@ button.svc-danger:hover:not(:disabled) {
   .svc-right { text-align: left; }
 }
 
-/* Тосты — общие из app.css (.mrs-toast-msg через window.mrsToast). */
+/* Тосты — общие из app.css (.mls-toast-msg через window.mlsToast). */
 
 
 /* CDN-блок: подбор источника (проверка за Cloudflare/другим CDN) */

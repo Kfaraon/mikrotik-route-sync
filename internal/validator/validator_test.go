@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/aggregator"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 )
 
 func boolPtr(b bool) *bool { return &b }

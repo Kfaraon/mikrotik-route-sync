@@ -18,7 +18,7 @@ go run ./scripts/presets-import
 | `-rublock` | `true` | качать antifilter.download и собирать пресет `rublock` |
 | `-rublock-max` | `0` | кап для rublock; `0` = без капа (полный список) |
 | `-timeout` | `10m` | таймаут скачивания |
-| `-user-agent` | `mikrotik-route-sync/presets-import` | User-Agent |
+| `-user-agent` | `mikrotik-list-sync/presets-import` | User-Agent |
 
 Полезно при отладке и в CI:
 

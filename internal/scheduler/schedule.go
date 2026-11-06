@@ -3,7 +3,7 @@ package scheduler
 import (
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/schedule"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/schedule"
 )
 
 // Тонкие обёртки: единый парсер живёт в internal/schedule (его использует

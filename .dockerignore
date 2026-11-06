@@ -37,7 +37,7 @@ coverage.out
 coverage.html
 *.test
 /app
-/mikrotik-route-sync
+/mikrotik-list-sync
 
 # Редакторы/ОС.
 .idea/

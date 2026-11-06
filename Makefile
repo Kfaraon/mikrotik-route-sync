@@ -1,7 +1,7 @@
 # ==============================================================================
 # Переменные проекта
 # ==============================================================================
-APP_NAME := mikrotik-route-sync
+APP_NAME := mikrotik-list-sync
 CMD_PATH := ./cmd/app
 BIN_DIR := bin
 
@@ -11,7 +11,7 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 
 # Путь к пакету с версиями (должен совпадать с internal/version/version.go)
-VERSION_PKG := github.com/Kfaraon/mikrotik-route-sync/internal/version
+VERSION_PKG := github.com/Kfaraon/mikrotik-list-sync/internal/version
 
 # Флаги линковки
 LDFLAGS := -s -w \
@@ -116,7 +116,7 @@ docker-run: ## Запустить контейнер локально (с том
 	docker run --rm -it \
 		-p 8080:8080 \
 		-v $(PWD)/data:/data \
-		-v $(PWD)/logs:/var/log/mikrotik-route-sync \
+		-v $(PWD)/logs:/var/log/mikrotik-list-sync \
 		--name $(APP_NAME) \
 		$(DOCKER_IMAGE):latest
 

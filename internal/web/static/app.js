@@ -3,7 +3,7 @@
 
   // CSRF-токен: единая реализация в common.js (подключён раньше).
   function csrf() {
-    return (window.mrsUtil && window.mrsUtil.csrf) ? window.mrsUtil.csrf() : "";
+    return (window.mlsUtil && window.mlsUtil.csrf) ? window.mlsUtil.csrf() : "";
   }
 
   if (window.htmx) {
@@ -20,15 +20,15 @@
     });
   }
 
-  // Единый стек уведомлений для всех страниц (window.mrsToast).
-  // Пузыри несут свой фон; контейнер #mrs-toast — прозрачная обёртка.
+  // Единый стек уведомлений для всех страниц (window.mlsToast).
+  // Пузыри несут свой фон; контейнер #mls-toast — прозрачная обёртка.
   // Ошибки липкие с крестиком, обычные гаснут за 6с, в стеке не больше 3.
-  window.mrsToast = function (message, isError) {
-    var box = document.getElementById("mrs-toast");
+  window.mlsToast = function (message, isError) {
+    var box = document.getElementById("mls-toast");
     if (!box) return;
 
     var el = document.createElement("div");
-    el.className = "mrs-toast-msg" + (isError ? " mrs-toast-err" : " mrs-toast-ok");
+    el.className = "mls-toast-msg" + (isError ? " mls-toast-err" : " mls-toast-ok");
 
     var span = document.createElement("span");
     span.textContent = String(message);
@@ -37,7 +37,7 @@
     if (isError) {
       var x = document.createElement("button");
       x.type = "button";
-      x.className = "mrs-toast-x";
+      x.className = "mls-toast-x";
       x.setAttribute("aria-label", "Закрыть уведомление");
       x.textContent = "×";
       x.addEventListener("click", function () {
@@ -57,7 +57,7 @@
   };
 
   function showError(msg) {
-    window.mrsToast(msg, true);
+    window.mlsToast(msg, true);
   }
 
   var q = function (s) { return document.querySelector(s); };
@@ -521,7 +521,7 @@
       dlBtn.addEventListener("click", function () {
         var a = document.createElement("a");
         a.href = buildLogsUrl("10000");
-        a.download = "mrs-logs-" +
+        a.download = "mls-logs-" +
           new Date().toISOString().slice(0, 19).replace(/:/g, "-") +
           ".json";
 
@@ -613,7 +613,7 @@
   (function () {
     var nav = document.querySelector(".bar");
     if (!nav) return;
-    var KEY = "mrs-nav-scroll";
+    var KEY = "mls-nav-scroll";
     function save() {
       try { sessionStorage.setItem(KEY, String(nav.scrollLeft)); } catch (e) { /* приватный режим */ }
     }
@@ -825,7 +825,7 @@
         var parts = [];
         if (data.ru) parts.push("RU: " + data.ru.entries + " доменов");
         if (data.upstream) parts.push("v2fly: " + data.upstream.files + " файлов");
-        if (window.mrsToast) window.mrsToast("Зеркала обновлены. " + parts.join(", "));
+        if (window.mlsToast) window.mlsToast("Зеркала обновлены. " + parts.join(", "));
       }).catch(function (err) {
         failed = true;
         var msg = String((err && err.message) || err);
@@ -833,7 +833,7 @@
           msg = "Обновление уже выполняется, дождитесь завершения.";
         }
         if (result) result.textContent = "Не удалось обновить: " + msg;
-        if (window.mrsToast) window.mrsToast("Не удалось обновить зеркала: " + msg, true);
+        if (window.mlsToast) window.mlsToast("Не удалось обновить зеркала: " + msg, true);
       }).then(function () {
         // finally: снять busy в любом случае. Инлайн-статус ошибки сохраняем:
         // setBusy чистит result только при успехе/в процессе.

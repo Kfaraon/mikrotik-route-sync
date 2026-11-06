@@ -28,7 +28,11 @@
   function getPreferredTheme() {
     var saved = null;
     try {
-      saved = localStorage.getItem("mrs-theme");
+      saved = localStorage.getItem("mls-theme");
+      // Ключ до переименования: тема не сбрасывается у существующих пользователей.
+      if (saved === null) {
+        saved = localStorage.getItem("mrs-theme");
+      }
     } catch (e) {
       saved = null;
     }
@@ -54,7 +58,7 @@
           var current = document.documentElement.classList.contains("dark") ? "dark" : "light";
           var next = current === "dark" ? "light" : "dark";
           try {
-            localStorage.setItem("mrs-theme", next);
+            localStorage.setItem("mls-theme", next);
           } catch (e) {}
           applyTheme(next);
         });
@@ -82,13 +86,18 @@
 
   function saveMt(ok, problems) {
     try {
-      localStorage.setItem("mrs_mt", JSON.stringify({ ok: ok, problems: problems | 0, ts: Date.now() }));
+      localStorage.setItem("mls_mt", JSON.stringify({ ok: ok, problems: problems | 0, ts: Date.now() }));
     } catch (e) {}
   }
 
   function loadMt() {
     try {
-      var v = JSON.parse(localStorage.getItem("mrs_mt") || "null");
+      var raw = localStorage.getItem("mls_mt");
+      // Ключ до переименования: не теряем последний известный статус.
+      if (raw === null) {
+        raw = localStorage.getItem("mrs_mt");
+      }
+      var v = JSON.parse(raw || "null");
       return v && typeof v.ok === "boolean" ? v : null;
     } catch (e) {
       return null;

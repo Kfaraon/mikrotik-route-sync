@@ -112,20 +112,20 @@
         width: 100%;
     }
 
-    /* Карточки таблицы — общий паттерн .mrs-cards из app.css
+    /* Карточки таблицы — общий паттерн .mls-cards из app.css
        (старые компактные height/padding строк тут только мешали бы) */
 
     /* Свёрнутая карточка: видны только адрес и комментарий, остальное —
        по тапу (класс .open ставит JS). */
-    .address-table.mrs-cards tbody tr { cursor: pointer; }
+    .address-table.mls-cards tbody tr { cursor: pointer; }
 
-    .address-table.mrs-cards tbody tr:not(.open) td[data-label]:not([data-label="Адрес"]):not([data-label="Комментарий"]) {
+    .address-table.mls-cards tbody tr:not(.open) td[data-label]:not([data-label="Адрес"]):not([data-label="Комментарий"]) {
         display: none;
     }
 
-    .address-table.mrs-cards td[data-label="Адрес"] { padding-right: 2rem; }
+    .address-table.mls-cards td[data-label="Адрес"] { padding-right: 2rem; }
 
-    .address-table.mrs-cards tbody tr::after {
+    .address-table.mls-cards tbody tr::after {
         content: "›";
         position: absolute;
         right: 0.75rem;
@@ -137,7 +137,7 @@
         pointer-events: none;
     }
 
-    .address-table.mrs-cards tbody tr.open::after { transform: rotate(90deg); }
+    .address-table.mls-cards tbody tr.open::after { transform: rotate(90deg); }
 }
 
 /* Пустое состояние после фильтрации (класс svc-empty живёт в services.css) */

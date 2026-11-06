@@ -1,4 +1,4 @@
-# Политика безопасности MikroTik Route Sync
+# Политика безопасности MikroTik List Sync
 
 ## Поддерживаемые версии
 
@@ -48,19 +48,19 @@
 
 - Права файла `config.yaml` — строго `0600` (проверка при старте на POSIX)
 - Каталоги данных и логов создаются с правами `0700`; world/group-writable каталог логов — ошибка старта
-- На Windows проверка прав файла пропускается (NTFS не отображает unix-биты), форсируется через `MRS_REQUIRE_FILE_PERMS=1`
+- На Windows проверка прав файла пропускается (NTFS не отображает unix-биты), форсируется через `MLS_REQUIRE_FILE_PERMS=1`
 - Никогда не коммитьте `config.yaml` в git (уже в `.gitignore` и `.dockerignore`)
 
 ### Секреты
 
 - Пароли и токены хранятся в `config.yaml` в открытом виде — **защитите файл**
 - Секреты можно передавать через ENV (приоритет над `config.yaml`):
-  - `MRS_MIKROTIK_PASSWORD`
-  - `MRS_TELEGRAM_BOT_TOKEN`
-  - `MRS_WEB_PASSWORD`
-  - `MRS_BGP_TOOLS_CONTACT`
-  - `MRS_AKAMAI_API_KEY`
-- Служебная `MRS_REQUIRE_FILE_PERMS`: `1` — форсировать проверку прав 0600 на Windows,
+  - `MLS_MIKROTIK_PASSWORD`
+  - `MLS_TELEGRAM_BOT_TOKEN`
+  - `MLS_WEB_PASSWORD`
+  - `MLS_BGP_TOOLS_CONTACT`
+  - `MLS_AKAMAI_API_KEY`
+- Служебная `MLS_REQUIRE_FILE_PERMS`: `1` — форсировать проверку прав 0600 на Windows,
   `0` — отключить проверку (Docker Desktop на Windows: bind-mount всегда 0777)
 - Атомарная запись конфига выполняет `chmod 0600` (POSIX) после сохранения
 
@@ -161,7 +161,7 @@
 ## Контакты
 
 - Email: **security@kfaraon.dev**
-- GitHub Security Advisory: https://github.com/Kfaraon/mikrotik-route-sync/security/advisories/new
+- GitHub Security Advisory: https://github.com/Kfaraon/mikrotik-list-sync/security/advisories/new
 - PGP-ключ для шифрования отчётов: доступен по запросу
 
 ---

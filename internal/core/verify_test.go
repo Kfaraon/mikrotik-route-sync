@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/collectors"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/resolver"
 )
 
 func TestRdapVerifyStep(t *testing.T) {

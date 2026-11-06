@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 )
 
 func testLogger() *slog.Logger {

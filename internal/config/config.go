@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/schedule"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/schedule"
 	"gopkg.in/yaml.v3"
 )
 
@@ -312,6 +312,16 @@ type ServiceOverride struct {
 	RefreshInterval string   `yaml:"refresh_interval"`
 }
 
+// envValue читает ENV с новым префиксом MLS_*, откатываясь на старый MRS_*.
+// Нужно для бесшовного переименования: существующие .env и compose-файлы
+// продолжают работать, а новые используют MLS_*.
+func envValue(suffix string) string {
+	if v := os.Getenv("MLS_" + suffix); v != "" {
+		return v
+	}
+	return os.Getenv("MRS_" + suffix)
+}
+
 // Load читает YAML-файл, применяет ENV, устанавливает defaults, валидирует.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -326,29 +336,29 @@ func Load(path string) (*Config, error) {
 	c.path = path
 
 	// ENV overrides (приоритет выше config.yaml)
-	if p := os.Getenv("MRS_MIKROTIK_PASSWORD"); p != "" {
+	if p := envValue("MIKROTIK_PASSWORD"); p != "" {
 		c.MikroTik.Password = p
 	}
-	if t := os.Getenv("MRS_TELEGRAM_BOT_TOKEN"); t != "" {
+	if t := envValue("TELEGRAM_BOT_TOKEN"); t != "" {
 		c.Telegram.BotToken = t
 	}
-	if wp := os.Getenv("MRS_WEB_PASSWORD"); wp != "" {
+	if wp := envValue("WEB_PASSWORD"); wp != "" {
 		c.Web.Auth.Password = wp
 	}
-	if contact := os.Getenv("MRS_BGP_TOOLS_CONTACT"); contact != "" {
+	if contact := envValue("BGP_TOOLS_CONTACT"); contact != "" {
 		c.External.BGPToolsContact = contact
 	}
-	if ak := os.Getenv("MRS_AKAMAI_API_KEY"); ak != "" {
+	if ak := envValue("AKAMAI_API_KEY"); ak != "" {
 		c.External.AkamaiAPIKey = ak
 	}
-	if uk := os.Getenv("MRS_URLSCAN_API_KEY"); uk != "" {
+	if uk := envValue("URLSCAN_API_KEY"); uk != "" {
 		c.External.UrlscanAPIKey = uk
 	}
 
 	// Проверка прав файла (обязательно 0600).
 	// На Windows файловые права NTFS не отображаются в unix-бите,
 	// поэтому проверка выполняется только на POSIX-системах
-	// либо когда явная проверка включена через MRS_REQUIRE_FILE_PERMS=1.
+	// либо когда явная проверка включена через MLS_REQUIRE_FILE_PERMS=1.
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("stat config: %w", err)
 	}
@@ -366,11 +376,11 @@ func Load(path string) (*Config, error) {
 
 // checkFilePermissions требует права 0600 на POSIX-системах.
 // На Windows (где NTFS-права не отображаются в unix-бите) проверка
-// пропускается, если явно не включена через MRS_REQUIRE_FILE_PERMS=1.
-// MRS_REQUIRE_FILE_PERMS=0 отключает проверку принудительно (например,
+// пропускается, если явно не включена через MLS_REQUIRE_FILE_PERMS=1.
+// MLS_REQUIRE_FILE_PERMS=0 отключает проверку принудительно (например,
 // в Docker Desktop на Windows bind-mount всегда показывает 0777).
 func checkFilePermissions(path string) error {
-	switch os.Getenv("MRS_REQUIRE_FILE_PERMS") {
+	switch envValue("REQUIRE_FILE_PERMS") {
 	case "0":
 		return nil
 	case "1":
@@ -600,7 +610,7 @@ func (c *Config) Validate() error {
 	if !c.MikroTik.UseSSL && c.MikroTik.Port == 443 {
 		return fmt.Errorf("mikrotik: use_ssl=false with port=443 — http on an HTTPS port will not work (set use_ssl: true or port: 80)")
 	}
-	if c.Logging.File != "" && runtime.GOOS != "windows" && os.Getenv("MRS_REQUIRE_FILE_PERMS") != "0" {
+	if c.Logging.File != "" && runtime.GOOS != "windows" && envValue("REQUIRE_FILE_PERMS") != "0" {
 		dir := filepath.Dir(c.Logging.File)
 		if fi, err := os.Stat(dir); err == nil {
 			// «Слишком открыто» = запись для группы/окружающих (world/group writable)

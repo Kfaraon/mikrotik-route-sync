@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/storage"
 )
 
 func TestInMemoryRing(t *testing.T) {

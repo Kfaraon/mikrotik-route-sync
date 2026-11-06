@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/addresslist"
 )
 
 // addressListPath — endpoint Firewall Address List в RouterOS REST API.

@@ -9,7 +9,7 @@
   }
 
   // Общие утилиты — из common.js (единая реализация для всех страниц).
-  var util = window.mrsUtil || {};
+  var util = window.mlsUtil || {};
   var esc = util.esc;
   var text = util.text;
   var trim = util.trim;

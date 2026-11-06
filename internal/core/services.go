@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/validator"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/presets"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/validator"
 )
 
 // addDetectTimeout — предел на автоопределение CDN при добавлении сервиса.

@@ -3,7 +3,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>Расписания — MikroTik Route Sync</title>
+  <title>Расписания — MikroTik List Sync</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{ .CSRF }}">
   <link rel="stylesheet" href="/static/fonts.css">
@@ -15,9 +15,9 @@
 </head>
 <body>
 {{template "icons" .}}
-  <a class="mrs-skip" href="#schedule-page">Перейти к содержимому</a>
+  <a class="mls-skip" href="#schedule-page">Перейти к содержимому</a>
   <nav class="bar">
-    <span class="brand">MikroTik Route Sync</span>
+    <span class="brand">MikroTik List Sync</span>
     <a href="/"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-dashboard"></use></svg><span class="bar-label">Дашборд</span></a>
     <a href="/address-list"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-list"></use></svg><span class="bar-label">Списки адресов</span></a>
     <a href="/services"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
@@ -77,7 +77,7 @@
     </section>
 
     <article class="sched-table-wrap">
-      <table class="sched-table mrs-cards">
+      <table class="sched-table mls-cards">
         <thead>
           <tr>
             <th scope="col">Сервис</th>
@@ -154,7 +154,7 @@
   </main>
 
   <!-- Контейнер для уведомлений -->
-  <div id="mrs-toast" class="toast"></div>
+  <div id="mls-toast" class="toast"></div>
 
   <!-- Скрипты -->
   <script src="/static/schedule.js"></script>

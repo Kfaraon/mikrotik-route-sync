@@ -7,10 +7,10 @@ import (
 )
 
 // Переменные устанавливаются через ldflags при сборке:
-// go build -ldflags "-X github.com/Kfaraon/mikrotik-route-sync/internal/version.Version=1.0.0
+// go build -ldflags "-X github.com/Kfaraon/mikrotik-list-sync/internal/version.Version=1.0.0
 //
-//	-X github.com/Kfaraon/mikrotik-route-sync/internal/version.Commit=abc123
-//	-X github.com/Kfaraon/mikrotik-route-sync/internal/version.BuildDate=2024-01-01T00:00:00Z"
+//	-X github.com/Kfaraon/mikrotik-list-sync/internal/version.Commit=abc123
+//	-X github.com/Kfaraon/mikrotik-list-sync/internal/version.BuildDate=2024-01-01T00:00:00Z"
 var (
 	Version   = "dev"
 	Commit    = "unknown"

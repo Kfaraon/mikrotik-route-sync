@@ -9,10 +9,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/resolver"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/classifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/collectors"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/resolver"
 )
 
 func (s *Syncer) collectOrStub(ctx context.Context, name string, ov config.ServiceOverride, maxASN int, prog collectors.ProgressFunc) ([]netip.Prefix, string, error) {

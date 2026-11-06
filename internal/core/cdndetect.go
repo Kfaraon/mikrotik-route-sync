@@ -19,11 +19,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/validator"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/classifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/collectors"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/presets"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/validator"
 )
 
 // CDNAdvice — результат проверки сервиса на обслуживание за CDN.

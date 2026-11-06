@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ .CSRF }}">
-    <title>Сервисы — MikroTik Route Sync</title>
+    <title>Сервисы — MikroTik List Sync</title>
     <link rel="stylesheet" href="/static/fonts.css">
     <link rel="stylesheet" href="/static/app.css">
     <link rel="stylesheet" href="/static/icons.css">
@@ -15,9 +15,9 @@
 </head>
 <body>
 {{template "icons" .}}
-    <a class="mrs-skip" href="#services-page">Перейти к содержимому</a>
+    <a class="mls-skip" href="#services-page">Перейти к содержимому</a>
     <nav class="bar">
-        <span class="brand">MikroTik Route Sync</span>
+        <span class="brand">MikroTik List Sync</span>
         <a href="/"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-dashboard"></use></svg><span class="bar-label">Дашборд</span></a>
         <a href="/address-list"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-list"></use></svg><span class="bar-label">Списки адресов</span></a>
         <a href="/services" class="active" aria-current="page"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-services"></use></svg><span class="bar-label">Сервисы</span></a>
@@ -94,7 +94,7 @@
 
         <!-- Таблица сервисов -->
         <div class="svc-table-wrap">
-            <table class="svc-table mrs-cards">
+            <table class="svc-table mls-cards">
                 <thead>
                     <tr>
                         <th class="svc-col-check" scope="col"><span class="sr-only">Выбор</span></th>
@@ -192,7 +192,7 @@
 
     <!-- Контейнер для уведомлений -->
 </main>
-        <div id="mrs-toast" class="toast" role="status" aria-live="polite" aria-atomic="false"></div>
+        <div id="mls-toast" class="toast" role="status" aria-live="polite" aria-atomic="false"></div>
 
     <!-- Скрипты -->
     <script src="/static/services.js"></script>

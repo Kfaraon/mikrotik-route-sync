@@ -1,4 +1,4 @@
-# mikrotik-route-sync / Firewall Address List mode
+# mikrotik-list-sync / Firewall Address List mode
 
 > Лёгкий сервис на Go для автоматического управления **Firewall Address List** в **MikroTik RouterOS v7** через REST API.
 
@@ -136,8 +136,8 @@
 
 ### 1. Клонирование и конфигурация
 
-    git clone https://github.com/Kfaraon/mikrotik-route-sync.git
-    cd mikrotik-route-sync
+    git clone https://github.com/Kfaraon/mikrotik-list-sync.git
+    cd mikrotik-list-sync
 
     cp config.example.yaml config.yaml
     chmod 600 config.yaml
@@ -400,7 +400,7 @@ presets:
 
     logging:
       level: info
-      file: /var/log/mikrotik-route-sync/app.log
+      file: /var/log/mikrotik-list-sync/app.log
       max_size_mb: 10
       max_files: 5
       max_total_mb: 50
@@ -506,14 +506,21 @@ presets:
 
 ENV имеют приоритет над `config.yaml`:
 
-    MRS_MIKROTIK_PASSWORD
-    MRS_TELEGRAM_BOT_TOKEN
-    MRS_WEB_PASSWORD
-    MRS_BGP_TOOLS_CONTACT
-    MRS_AKAMAI_API_KEY
+    MLS_MIKROTIK_PASSWORD
+    MLS_TELEGRAM_BOT_TOKEN
+    MLS_WEB_PASSWORD
+    MLS_BGP_TOOLS_CONTACT
+    MLS_AKAMAI_API_KEY
+    MLS_URLSCAN_API_KEY
 
-Служебная (не секрет): `MRS_REQUIRE_FILE_PERMS` — `1` форсирует проверку прав `0600`
+Служебная (не секрет): `MLS_REQUIRE_FILE_PERMS` — `1` форсирует проверку прав `0600`
 даже на Windows, `0` отключает проверку (например, Docker Desktop с bind-mount).
+
+> Проект переименован из `mikrotik-route-sync` в `mikrotik-list-sync`: он управляет
+> address list, а не таблицей маршрутов. Старые ENV `MRS_*` продолжают работать
+> как fallback, cookie `mrs_session` и ключи `localStorage` (`mrs-theme`, `mrs_mt`)
+> поддерживаются, а compose монтирует и старый путь
+> `/var/log/mikrotik-route-sync` для существующих `config.yaml`.
 
 > `config.yaml` намеренно добавлен в `.gitignore` и должен иметь права **0600**.
 
@@ -746,7 +753,7 @@ Web UI использует **Basic Auth** и **CSRF** для изменяющи
 
     logging:
       level: info
-      file: /var/log/mikrotik-route-sync/app.log
+      file: /var/log/mikrotik-list-sync/app.log
       max_size_mb: 10
       max_files: 5
       max_total_mb: 50
@@ -777,7 +784,7 @@ ASN и сетевые данные кэшируются в `bbolt`, чтобы �
 
 Или собрать образ вручную:
 
-    docker build -t mikrotik-route-sync:latest .
+    docker build -t mikrotik-list-sync:latest .
 
 ### Особенности образа
 
@@ -797,12 +804,12 @@ ASN и сетевые данные кэшируются в `bbolt`, чтобы �
 Dockerfile по умолчанию тянет base-образы через зеркало и использует GOPROXY-зеркало:
 
     # сменить зеркало на прямое:
-    docker build --build-arg REGISTRY=docker.io/library -t mikrotik-route-sync .
+    docker build --build-arg REGISTRY=docker.io/library -t mikrotik-list-sync .
 
     # версия внедряется аргументами (git не требуется внутри образа):
     docker build --build-arg VERSION=1.0.0 --build-arg COMMIT=$(git rev-parse --short HEAD) .
 
-В `docker-compose.yml` устанавливается `MRS_REQUIRE_FILE_PERMS=0`: на Windows-хосте
+В `docker-compose.yml` устанавливается `MLS_REQUIRE_FILE_PERMS=0`: на Windows-хосте
 bind-mount всегда показывает права `0777` внутри контейнера, иначе приложение
 отказалось бы читать `config.yaml`. На чистом Linux-хосте проверку можно оставить включённой.
 
@@ -814,7 +821,7 @@ bind-mount всегда показывает права `0777` внутри ко
 | Путь | Назначение |
 |------|-----------|
 | `/data` | config.yaml, cache.db |
-| `/var/log/mikrotik-route-sync` | логи |
+| `/var/log/mikrotik-list-sync` | логи |
 
 ---
 
@@ -870,7 +877,7 @@ IPv6 отклоняются с ошибкой (иначе исключение �
 ### `locked by another process`
 
 CLI-команда не может открыть кэш: демон держит bbolt-лок. Остановите демон
-(`docker compose stop mrs`) или выполняйте операцию через Web API/UI.
+(`docker compose stop mls`) или выполняйте операцию через Web API/UI.
 
 ### CDN не детектится (`recommend` → Detected=false)
 
@@ -882,8 +889,8 @@ CLI-команда не может открыть кэш: демон держи�
 
 ## Разработка
 
-    git clone https://github.com/Kfaraon/mikrotik-route-sync.git
-    cd mikrotik-route-sync
+    git clone https://github.com/Kfaraon/mikrotik-list-sync.git
+    cd mikrotik-list-sync
 
     go mod tidy
     go test ./...

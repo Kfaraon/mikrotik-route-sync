@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/aggregator"
 )
 
 // bgpToolsTableURL — публичный дамп BGP-таблицы bgp.tools (формат: "CIDR ASN"

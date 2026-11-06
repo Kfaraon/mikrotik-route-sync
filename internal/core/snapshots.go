@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/addresslist"
 )
 
 type SnapshotInfo struct {

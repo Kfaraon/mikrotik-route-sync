@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 

@@ -241,7 +241,7 @@
 }
 
 @media (max-width: 768px) {
-  /* Карточки таблицы — общий паттерн .mrs-cards из app.css */
+  /* Карточки таблицы — общий паттерн .mls-cards из app.css */
   .edit-panel select,
   .edit-panel input {
     flex: 1 1 100%;

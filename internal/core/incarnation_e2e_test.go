@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 )
 
 // TestE2EIncarnationIsolation — полный сквозной сценарий на офлайн-синке:

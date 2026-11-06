@@ -32,14 +32,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/core"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/logging"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/presets"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/scheduler"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/version"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"golang.org/x/time/rate"
@@ -664,6 +664,15 @@ func (s *Server) maxBodyMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// sessionCookie читает новую cookie, откатываясь на старую mrs_session:
+// после переименования активные сессии не сбрасываются.
+func sessionCookie(r *http.Request) (*http.Cookie, error) {
+	if c, err := r.Cookie("mls_session"); err == nil {
+		return c, nil
+	}
+	return r.Cookie("mrs_session")
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.cfg.RLock()
@@ -676,7 +685,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if cookie, err := r.Cookie("mrs_session"); err == nil {
+		if cookie, err := sessionCookie(r); err == nil {
 			if sess, ok := s.sessions.get(cookie.Value); ok {
 				r = withSession(r, cookie.Value, sess)
 				next.ServeHTTP(w, r)
@@ -691,7 +700,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			if ok {
 				s.log.Warn("аутентификация в вебе не пройдена", "user", user, "remote", r.RemoteAddr)
 			}
-			w.Header().Set("WWW-Authenticate", `Basic realm="mikrotik-route-sync", charset="UTF-8"`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="mikrotik-list-sync", charset="UTF-8"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -778,7 +787,7 @@ func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		cookie, err := r.Cookie("mrs_session")
+		cookie, err := sessionCookie(r)
 		if err != nil {
 			http.Error(w, `{"ok":false,"error":"no session"}`, http.StatusUnauthorized)
 			return
@@ -1194,7 +1203,7 @@ var settingsSpec = []settingSpec{
 	{"MikroTik", "mikrotik.username", "API-пользователь", "text",
 		"Отдельный пользователь RouterOS с минимальными правами (read, write, api, rest-api, policy)."},
 	{"MikroTik", "mikrotik.password", "Пароль API", "secret",
-		"Хранится в config.yaml (0600). Альтернатива — ENV MRS_MIKROTIK_PASSWORD. Чтобы изменить, введите новый пароль целиком (замаскированное значение сохраняется как есть)."},
+		"Хранится в config.yaml (0600). Альтернатива — ENV MLS_MIKROTIK_PASSWORD. Чтобы изменить, введите новый пароль целиком (замаскированное значение сохраняется как есть)."},
 	{"MikroTik", "mikrotik.use_ssl", "HTTPS (SSL)", "bool",
 		"Подключаться к REST API по https вместо http. Применяется сразу."},
 	{"MikroTik", "mikrotik.verify_ssl", "Проверять TLS-сертификат", "bool",
@@ -1212,7 +1221,7 @@ var settingsSpec = []settingSpec{
 	{"Telegram", "telegram.enabled", "Включить Telegram", "bool",
 		"Уведомления и команды бота. Нотификатор и бот пересоздаются сразу."},
 	{"Telegram", "telegram.bot_token", "Токен бота", "secret",
-		"Выдаётся @BotFather. ENV MRS_TELEGRAM_BOT_TOKEN имеет приоритет."},
+		"Выдаётся @BotFather. ENV MLS_TELEGRAM_BOT_TOKEN имеет приоритет."},
 	{"Telegram", "telegram.chat_id", "Chat ID для уведомлений", "text",
 		"Сюда шлются отчёты. Узнать свой ID: напишите боту и посмотрите предупреждение в логе ('unauthorized telegram access')."},
 	{"Telegram", "telegram.authorized_chat_ids", "Авторизованные chat_id", "list",
@@ -1240,7 +1249,7 @@ var settingsSpec = []settingSpec{
 	{"Веб-интерфейс", "web.auth.username", "Логин", "text",
 		"Имя пользователя Web UI."},
 	{"Веб-интерфейс", "web.auth.password", "Пароль", "secret",
-		"ENV MRS_WEB_PASSWORD имеет приоритет. Чтобы заменить — введите новый пароль целиком."},
+		"ENV MLS_WEB_PASSWORD имеет приоритет. Чтобы заменить — введите новый пароль целиком."},
 	{"Веб-интерфейс", "web.session_timeout", "Время жизни сессии", "duration",
 		"Сколько живёт session cookie без повторного ввода пароля (24h)."},
 	{"Веб-интерфейс", "web.csrf_enabled", "Защита CSRF", "bool",
@@ -1260,13 +1269,13 @@ var settingsSpec = []settingSpec{
 	{"Планировщик", "schedules.global", "Глобальное расписание", "text",
 		"По умолчанию для сервисов без override: every 6h, daily at 03:00, cron '0 3 * * *', manual, disabled. По сервису — на странице «Расписания»."},
 	{"Безопасность", "safety.max_delete_ratio", "Макс. доля удаления", "float",
-		"Safe-diff: если будет удалено больше доли от существующих маршрутов сервиса (0.5 = 50%) — синхронизация прервётся, потребуется --force."},
+		"Safe-diff: если будет удалено больше доли от существующих записей сервиса (0.5 = 50%) — синхронизация прервётся, потребуется --force."},
 	{"Безопасность", "safety.require_confirmation_over", "Абсолютный лимит удалений", "number",
-		"Удаление более N маршрутов за раз требует --force даже при меньшей доле (100)."},
+		"Удаление более N записей за раз требует --force даже при меньшей доле (100)."},
 	{"Безопасность", "safety.min_prefix_v4", "Минимальная маска IPv4", "number",
 		"Префиксы шире (например /7) отклоняются валидацией. Разрешённый диапазон 8..32 (8)."},
 	{"Безопасность", "safety.allow_host_routes", "Разрешить /32", "bool",
-		"Хост-маршруты из dynamic/whois-сбора. По умолчанию true — dynamic отдаёт только /32, без них метод пуст."},
+		"Хостовые /32 из dynamic/whois-сбора. По умолчанию true — dynamic отдаёт только /32, без них метод пуст."},
 	{"Безопасность", "safety.max_asn_prefixes", "Лимит префиксов ASN/whois", "number",
 		"Защита от захвата чужих сетей мелкими сервисами (100). Переопределяется в overrides.<svc>.max_asn_prefixes."},
 	{"Retry", "retry.max_attempts", "Число попыток", "number",
@@ -1282,17 +1291,17 @@ var settingsSpec = []settingSpec{
 	{"Внешние API", "external.max_response_mb", "Макс. ответ, МБ", "number",
 		"Ограничение размера тела ответа (io.LimitReader), 50. Дамп таблицы bgp.tools ~30-40 МБ читается потоково и под этот лимит не попадает."},
 	{"Внешние API", "external.bgp_tools_contact", "Контакт для bgp.tools", "text",
-		"email или 'имя проекта + контакт' — подставляется в User-Agent. bgp.tools требует описательный UA вместо дефолтного и банит анонимные скрипты. ENV MRS_BGP_TOOLS_CONTACT."},
+		"email или 'имя проекта + контакт' — подставляется в User-Agent. bgp.tools требует описательный UA вместо дефолтного и банит анонимные скрипты. ENV MLS_BGP_TOOLS_CONTACT."},
 	{"Внешние API", "external.akamai_api_key", "Ключ Akamai", "secret",
-		"ENV MRS_AKAMAI_API_KEY. Akamai собирается методом asn; ключ не обязателен."},
+		"ENV MLS_AKAMAI_API_KEY. Akamai собирается методом asn; ключ не обязателен."},
 	{"Внешние API", "external.urlscan_api_key", "Ключ urlscan.io", "secret",
-		"ENV MRS_URLSCAN_API_KEY. Бесплатный ключ для подбора смежных доменов. Без него доступен только ограниченный анонимный режим."},
+		"ENV MLS_URLSCAN_API_KEY. Бесплатный ключ для подбора смежных доменов. Без него доступен только ограниченный анонимный режим."},
 	{"Внешние API", "external.rdap_timeout", "Таймаут RDAP", "duration",
 		"Проверка принадлежности префиксов ASN через RDAP (10s)."},
 	{"Внешние API", "external.resolver", "DNS-резолвер", "text",
 		"ip:port (1.1.1.1:53) для A-записей и Cymru-запросов ASN. Пусто — системный DNS. Применяется сразу."},
 	{"Снапшоты", "snapshots.enabled", "Снимки перед синхронизацией", "bool",
-		"Сохранять текущие маршруты сервиса в bbolt перед применением diff (нужно для ручного restore)."},
+		"Сохранять текущие записи сервиса в bbolt перед применением diff (нужно для ручного restore)."},
 	{"Снапшоты", "snapshots.ttl", "TTL снапшотов", "duration",
 		"Снапшоты старше этого возраста удаляются при cleanup (168h = 7 дней)."},
 	{"Снапшоты", "snapshots.max_count", "Максимум на сервис", "number",
@@ -1614,7 +1623,7 @@ func (s *Server) apiSuggestDomains(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiRefreshPreset — пересчёт Domains из пресета с сохранением ручных.
-// Отвечает diff'ом: UI предлагает dry-run перед применением маршрутов.
+// Отвечает diff'ом: UI предлагает dry-run перед применением записей.
 func (s *Server) apiRefreshPreset(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if !config.ValidateServiceName(strings.ToLower(name)) {

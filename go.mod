@@ -1,4 +1,4 @@
-module github.com/Kfaraon/mikrotik-route-sync
+module github.com/Kfaraon/mikrotik-list-sync
 
 go 1.27.1
 

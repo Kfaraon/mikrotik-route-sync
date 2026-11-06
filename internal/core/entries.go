@@ -9,9 +9,9 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/aggregator"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/validator"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/aggregator"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/validator"
 )
 
 type OrphanEntry struct {

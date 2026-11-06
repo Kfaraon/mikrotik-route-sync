@@ -23,9 +23,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/classifier"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/collectors"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/classifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/collectors"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 )
 
 // AdviseExpand считает совет по расширению доменного пресета до "preset,asn"

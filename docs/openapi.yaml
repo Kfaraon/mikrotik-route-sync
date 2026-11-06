@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: MikroTik Route Sync API
+  title: MikroTik List Sync API
   description: >-
     REST API для автоматического управления Firewall Address List в MikroTik RouterOS v7
     (один глобальный список firewall.address_list, изоляция сервисов по comment AUTO:<service>).
@@ -9,8 +9,8 @@ info:
     Все ответы в единой схеме { ok, data, error }.
   version: 1.0.0
   contact:
-    name: MikroTik Route Sync
-    url: https://github.com/Kfaraon/mikrotik-route-sync
+    name: MikroTik List Sync
+    url: https://github.com/Kfaraon/mikrotik-list-sync
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -853,7 +853,7 @@ components:
     sessionCookie:
       type: apiKey
       in: cookie
-      name: mrs_session
+      name: mls_session
 
   responses:
     OK:

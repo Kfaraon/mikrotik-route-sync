@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sony/gobreaker"
 	"golang.org/x/time/rate"

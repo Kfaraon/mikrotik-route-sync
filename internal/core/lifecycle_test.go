@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/addresslist"
 )
 
 // Занятый сервис (идёт синхронизация) — удаление отказывает, не начиная purge.

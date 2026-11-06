@@ -11,10 +11,10 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/core"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/storage"
 )
 
 func testSyncer(t *testing.T) *core.Syncer {

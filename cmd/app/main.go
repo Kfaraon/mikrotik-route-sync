@@ -18,17 +18,17 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/addresslist"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/bot"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/logging"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/presets"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/scheduler"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/storage"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/version"
-	webui "github.com/Kfaraon/mikrotik-route-sync/internal/web"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/addresslist"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/bot"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/core"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/logging"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/presets"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/scheduler"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/storage"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/version"
+	webui "github.com/Kfaraon/mikrotik-list-sync/internal/web"
 	"github.com/robfig/cron/v3"
 )
 
@@ -65,13 +65,13 @@ func main() {
 
 func newRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "app",
-		Short: "Автоматическое управление маршрутами на MikroTik RouterOS v7",
-		Long: `mikrotik-route-sync — production-ready система управления маршрутами MikroTik.
+		Use:   "mikrotik-list-sync",
+		Short: "Автоматическая синхронизация firewall address list на MikroTik RouterOS v7",
+		Long: `mikrotik-list-sync — production-ready синхронизация firewall address list для MikroTik RouterOS.
 
 Пользователь указывает только название сервиса (instagram, youtube, cloudflare),
 домен, IP или ASN. Система сама определяет метод сбора, собирает CIDR,
-валидирует, агрегирует и инкрементально синхронизирует маршруты через REST API.`,
+валидирует, агрегирует и инкрементально синхронизирует записи через REST API.`,
 		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -112,11 +112,11 @@ func newRoot() *cobra.Command {
 func syncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Синхронизировать маршруты (все сервисы или один сервис)",
+		Short: "Синхронизировать address list (все сервисы или один сервис)",
 		Example: `  app sync
-  app sync --service instagram
-  app sync --dry-run
-  app sync --service youtube --force`,
+  mikrotik-list-sync sync --service instagram
+  mikrotik-list-sync sync --dry-run
+  mikrotik-list-sync sync --service youtube --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
 				services, err := resolveTargets(cfg)
@@ -209,7 +209,7 @@ func listCmd() *cobra.Command {
 func infoCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "info <service>",
-		Short: "Информация о сервисе (расписание, overrides, маршруты)",
+		Short: "Информация о сервисе (расписание, overrides, записи)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
@@ -243,8 +243,8 @@ func addServiceCmd() *cobra.Command {
 		Short: "Добавить сервис и первоначально синхронизировать его",
 		Args:  cobra.ExactArgs(1),
 		Example: `  app add-service instagram
-  app add-service custom --method static_url --static-url https://example.org/prefixes.txt
-  app add-service youtube --method dynamic --domains youtube.com,googlevideo.com`,
+  mikrotik-list-sync add-service custom --method static_url --static-url https://example.org/prefixes.txt
+  mikrotik-list-sync add-service youtube --method dynamic --domains youtube.com,googlevideo.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
@@ -286,19 +286,19 @@ func addServiceCmd() *cobra.Command {
 func removeServiceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove-service <service>",
-		Short: "Удалить сервис (только его AUTO-маршруты)",
+		Short: "Удалить сервис (только его AUTO-записи)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
 				if err := s.RemoveService(ctx, args[0], purge || forceOp); err != nil {
 					return err
 				}
-				fmt.Printf("Service '%s' removed (routes purged: %v)\n", args[0], purge || forceOp)
+				fmt.Printf("Service '%s' removed (entries purged: %v)\n", args[0], purge || forceOp)
 				return nil
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&purge, "purge", false, "удалить AUTO-маршруты сервиса")
+	cmd.Flags().BoolVar(&purge, "purge", false, "удалить AUTO-записи сервиса")
 	cmd.Flags().BoolVar(&forceOp, "force", false, "то же, что --purge")
 	return cmd
 }
@@ -322,7 +322,7 @@ AUTO-записи и переключает метод на cdn. Выполня�
 демоне (нужен доступ к кэшу и роутеру).`,
 		Args: cobra.ExactArgs(1),
 		Example: `  app recommend rutracker.net
-  app recommend rutracker.net --yes`,
+  mikrotik-list-sync recommend rutracker.net --yes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
@@ -472,7 +472,7 @@ func backupCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "backup <service>",
-		Short: "Экспорт маршрутов сервиса в JSON",
+		Short: "Экспорт записей сервиса в JSON",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
@@ -509,10 +509,10 @@ func restoreCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "restore <service>",
-		Short: "Восстановление маршрутов сервиса из файла или снапшота",
+		Short: "Восстановление записей сервиса из файла или снапшота",
 		Args:  cobra.ExactArgs(1),
 		Example: `  app restore instagram --from-file backup.json --force
-  app restore instagram --from-snapshot 171234567890 --force`,
+  mikrotik-list-sync restore instagram --from-snapshot 171234567890 --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
 				name := args[0]
@@ -559,7 +559,7 @@ func snapshotsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "snapshots",
 		Aliases: []string{"snapshot"},
-		Short:   "Управление снапшотами маршрутов",
+		Short:   "Управление снапшотами записей",
 	}
 
 	listCmd := &cobra.Command{
@@ -598,7 +598,7 @@ func snapshotsCmd() *cobra.Command {
 
 	var createCmd = &cobra.Command{
 		Use:   "create <service>",
-		Short: "Создать снапшот текущих маршрутов сервиса",
+		Short: "Создать снапшот текущих записей сервиса",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withSyncer(func(ctx context.Context, cfg *config.Config, s *core.Syncer) error {
@@ -1200,7 +1200,7 @@ func testTelegramCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := n.Send(ctx, "✅ Проверка Telegram: тестовое сообщение от mikrotik-route-sync"); err != nil {
+			if err := n.Send(ctx, "✅ Проверка Telegram: тестовое сообщение от mikrotik-list-sync"); err != nil {
 				return err
 			}
 			fmt.Println("OK: telegram message sent")
@@ -1254,7 +1254,7 @@ func versionCmd() *cobra.Command {
 		Short: "Версия и информация о сборке",
 		Run: func(cmd *cobra.Command, args []string) {
 			info := version.Get()
-			fmt.Printf("mikrotik-route-sync %s\ncommit: %s\nbuilt: %s\ngo: %s\nos/arch: %s/%s\n",
+			fmt.Printf("mikrotik-list-sync %s\ncommit: %s\nbuilt: %s\ngo: %s\nos/arch: %s/%s\n",
 				info.Version, info.Commit, info.BuildDate, info.GoVersion, info.OS, info.Arch)
 		},
 	}

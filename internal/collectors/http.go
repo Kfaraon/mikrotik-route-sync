@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/sony/gobreaker"
 )
@@ -37,7 +37,7 @@ type HTTP struct {
 }
 
 // defaultUserAgent — честная идентификация обязательна для bgp.tools.
-const defaultUserAgent = "mikrotik-route-sync/1.0 (https://github.com/Kfaraon/mikrotik-route-sync)"
+const defaultUserAgent = "mikrotik-list-sync/1.0 (https://github.com/Kfaraon/mikrotik-list-sync)"
 
 // NewHTTP создаёт клиент с таймаутом, retry-политикой и лимитом ответа.
 // contact (если непусто) добавляется в User-Agent — источники вроде
@@ -51,7 +51,7 @@ func NewHTTP(timeout time.Duration, cfg config.RetryConfig, maxMB int, contact s
 	}
 	ua := defaultUserAgent
 	if c := strings.TrimSpace(contact); c != "" {
-		ua = "mikrotik-route-sync " + c
+		ua = "mikrotik-list-sync " + c
 	}
 
 	transport := &http.Transport{

@@ -2,7 +2,7 @@
 // Раньше esc/text/csrf копировались в services.js, dashboard.js, schedule.js
 // и app.js — копии расходились (например, правила экранирования).
 //
-// Внешний контракт: window.mrsUtil.{esc, text, csrf, trim, lower, flag}.
+// Внешний контракт: window.mlsUtil.{esc, text, csrf, trim, lower, flag}.
 (function () {
   "use strict";
 
@@ -51,7 +51,7 @@
     return m ? m.content : "";
   }
 
-  window.mrsUtil = {
+  window.mlsUtil = {
     esc: esc,
     text: text,
     trim: trim,

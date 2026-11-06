@@ -1,5 +1,8 @@
+name: mikrotik-list-sync
+
 services:
-  mrs:
+  mls:
+    image: mikrotik-list-sync:local
     build: .
     restart: unless-stopped
     read_only: true
@@ -7,12 +10,18 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     environment:
-      - MRS_REQUIRE_FILE_PERMS=0
+      - MLS_REQUIRE_FILE_PERMS=0
+      - MLS_MIKROTIK_PASSWORD=${MLS_MIKROTIK_PASSWORD:-}
+      - MLS_TELEGRAM_BOT_TOKEN=${MLS_TELEGRAM_BOT_TOKEN:-}
+      - MLS_WEB_PASSWORD=${MLS_WEB_PASSWORD:-}
+      # Старые имена: приложение читает MRS_* как fallback.
       - MRS_MIKROTIK_PASSWORD=${MRS_MIKROTIK_PASSWORD:-}
       - MRS_TELEGRAM_BOT_TOKEN=${MRS_TELEGRAM_BOT_TOKEN:-}
       - MRS_WEB_PASSWORD=${MRS_WEB_PASSWORD:-}
     volumes:
       - ./data:/data
+      - ./logs:/var/log/mikrotik-list-sync
+      # Совместимость с config.yaml, где ещё указан старый путь логов.
       - ./logs:/var/log/mikrotik-route-sync
     ports:
       - "8080:8080"

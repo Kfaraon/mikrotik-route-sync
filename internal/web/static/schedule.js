@@ -51,7 +51,7 @@
 
   // CSRF-токен: единая реализация в common.js (подключён раньше).
   function csrf() {
-    return (window.mrsUtil && window.mrsUtil.csrf) ? window.mrsUtil.csrf() : "";
+    return (window.mlsUtil && window.mlsUtil.csrf) ? window.mlsUtil.csrf() : "";
   }
 
   function normalizeSpec(v) {
@@ -62,10 +62,10 @@
     return n < 10 ? "0" + n : String(n);
   }
 
-  // Единый стек уведомлений (реализация в app.js: window.mrsToast).
+  // Единый стек уведомлений (реализация в app.js: window.mlsToast).
   function showToast(message, isError) {
-    if (window.mrsToast) {
-      window.mrsToast(message, isError);
+    if (window.mlsToast) {
+      window.mlsToast(message, isError);
     }
   }
 

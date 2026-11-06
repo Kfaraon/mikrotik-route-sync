@@ -1,4 +1,4 @@
-# Промпт для проекта mikrotik-route-sync / Firewall Address List mode
+# Промпт для проекта mikrotik-list-sync / Firewall Address List mode
 
 Ты — senior Go-разработчик, сетевой инженер и security-инженер.
 
@@ -878,10 +878,10 @@ HTML (шаблоны):
 
 ### 7.5 Общие компоненты
 
-- `theme.js` — переключение тем (localStorage `mrs-theme`), live-индикатор состояния роутера (поллинг `/api/v1/status` каждые 15 с, кэш в `localStorage["mrs_mt"]`), бейдж проблем в title вкладки
+- `theme.js` — переключение тем (localStorage `mls-theme`), live-индикатор состояния роутера (поллинг `/api/v1/status` каждые 15 с, кэш в `localStorage["mls_mt"]`), бейдж проблем в title вкладки
 - `app.js` — CSRF для HTMX, toast-уведомления, логи, secret-field toggle, fetch-interceptor для ошибок
 - Навигация `<nav class="bar">` + `<button class="theme-toggle">🌙`
-- Toast: `#mrs-toast.toast` (один глобальный контейнер)
+- Toast: `#mls-toast.toast` (один глобальный контейнер)
 - KPI-карточки: `.svc-kpi-grid` с `.svc-kpi-card`
 
 ### 7.6 Правила при добавлении нового функционала
@@ -957,7 +957,7 @@ Endpoints:
 ```yaml
 logging:
   level: info
-  file: /var/log/mikrotik-route-sync/app.log
+  file: /var/log/mikrotik-list-sync/app.log
   max_size_mb: 10
   max_files: 5
   max_total_mb: 50
@@ -1029,17 +1029,17 @@ ENV > config.yaml > defaults
 Поддерживаемые ENV:
 
 ```text
-MRS_MIKROTIK_PASSWORD
-MRS_TELEGRAM_BOT_TOKEN
-MRS_WEB_PASSWORD
-MRS_BGP_TOOLS_CONTACT
-MRS_AKAMAI_API_KEY
+MLS_MIKROTIK_PASSWORD
+MLS_TELEGRAM_BOT_TOKEN
+MLS_WEB_PASSWORD
+MLS_BGP_TOOLS_CONTACT
+MLS_AKAMAI_API_KEY
 ```
 
 Служебный ENV:
 
 ```text
-MRS_REQUIRE_FILE_PERMS
+MLS_REQUIRE_FILE_PERMS
 ```
 
 Атомарная запись конфига:
@@ -1390,7 +1390,7 @@ timezone: Europe/Moscow
 
 logging:
   level: info
-  file: /var/log/mikrotik-route-sync/app.log
+  file: /var/log/mikrotik-list-sync/app.log
   max_size_mb: 10
   max_files: 5
   max_total_mb: 50
@@ -1630,7 +1630,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -trimpath \
     -ldflags="-s -w" \
-    -o /bin/mikrotik-route-sync \
+    -o /bin/mikrotik-list-sync \
     ./cmd/app
 
 # Stage 2: Runtime
@@ -1638,14 +1638,14 @@ FROM alpine:3.20 AS runtime
 RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -g 65534 appgroup && \
     adduser -D -H -u 65534 -G appgroup appuser
-COPY --from=builder /bin/mikrotik-route-sync /usr/local/bin/mikrotik-route-sync
+COPY --from=builder /bin/mikrotik-list-sync /usr/local/bin/mikrotik-list-sync
 USER 65534:65534
 WORKDIR /data
 EXPOSE 8080
-VOLUME ["/data", "/var/log/mikrotik-route-sync"]
+VOLUME ["/data", "/var/log/mikrotik-list-sync"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/healthz || exit 1
-ENTRYPOINT ["/usr/local/bin/mikrotik-route-sync"]
+ENTRYPOINT ["/usr/local/bin/mikrotik-list-sync"]
 CMD ["daemon", "--config", "/data/config.yaml"]
 ```
 
@@ -1653,7 +1653,7 @@ CMD ["daemon", "--config", "/data/config.yaml"]
 
 ```yaml
 services:
-  mrs:
+  mls:
     build: .
     restart: unless-stopped
     read_only: true
@@ -1665,7 +1665,7 @@ services:
     volumes:
       - ./config.yaml:/data/config.yaml:ro
       - ./data:/data
-      - ./logs:/var/log/mikrotik-route-sync
+      - ./logs:/var/log/mikrotik-list-sync
     ports:
       - "127.0.0.1:8080:8080"
 ```

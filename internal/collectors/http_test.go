@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
 	"github.com/sony/gobreaker"
 )
 
@@ -64,7 +64,7 @@ func TestNewHTTPDefaults(t *testing.T) {
 	if h.limit != 50<<20 {
 		t.Fatalf("limit=%d", h.limit)
 	}
-	if !strings.HasPrefix(h.userAgent, "mikrotik-route-sync/") {
+	if !strings.HasPrefix(h.userAgent, "mikrotik-list-sync/") {
 		t.Fatalf("ua=%q", h.userAgent)
 	}
 	h2 := NewHTTP(time.Second, config.RetryConfig{}, 1, "ops@example.com")
@@ -83,7 +83,7 @@ func TestFetchHappyPathAndUA(t *testing.T) {
 	if string(body) != "1.0.0.0/24\n" {
 		t.Fatalf("body=%q", body)
 	}
-	if ua := stub.gotReq.Header.Get("User-Agent"); !strings.HasPrefix(ua, "mikrotik-route-sync") {
+	if ua := stub.gotReq.Header.Get("User-Agent"); !strings.HasPrefix(ua, "mikrotik-list-sync") {
 		t.Fatalf("ua=%q", ua)
 	}
 }

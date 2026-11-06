@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Kfaraon/mikrotik-route-sync/internal/config"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/core"
-	"github.com/Kfaraon/mikrotik-route-sync/internal/notifier"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/config"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/core"
+	"github.com/Kfaraon/mikrotik-list-sync/internal/notifier"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"golang.org/x/time/rate"
 )
@@ -127,7 +127,7 @@ func (b *Bot) menu(id int64) {
 		))
 	}
 	msg := tgbotapi.NewMessage(id,
-		"MikroTik Route Sync\n\nКоманды: /status /sync /schedule /help")
+		"MikroTik List Sync\n\nКоманды: /status /sync /schedule /help")
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		b.log.Warn("не удалось отправить в telegram", "chat_id", id, "err", err)

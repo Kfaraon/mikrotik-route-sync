@@ -68,7 +68,7 @@ func Open(path string) (*Cache, error) {
 		// flock (read-only режим не спасает: shared-lock тоже ждёт).
 		// Говорим прямо, что делать, вместо сырого "timeout".
 		if errors.Is(err, berrors.ErrTimeout) {
-			return nil, fmt.Errorf("open bolt %s: locked by another process (stop the daemon first, e.g. `docker compose stop mrs`, or use the web API instead of CLI): %w", path, err)
+			return nil, fmt.Errorf("open bolt %s: locked by another process (stop the daemon first, e.g. `docker compose stop mls`, or use the web API instead of CLI): %w", path, err)
 		}
 		return nil, fmt.Errorf("open bolt: %w", err)
 	}
