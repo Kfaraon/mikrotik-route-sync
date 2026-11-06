@@ -75,7 +75,8 @@
 
 .filter-input {
     padding: 6px 10px;
-    border: 1px solid var(--border);
+    /* Видимая граница контрола (WCAG 1.4.11): --border давал 1.5:1. */
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     font-size: 13px;
     min-width: 120px;

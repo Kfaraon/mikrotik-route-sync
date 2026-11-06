@@ -108,6 +108,22 @@ func TestPaletteContrast(t *testing.T) {
 		{"тост success", "on-success", "success"},
 		{"тост error", "on-danger", "danger"},
 		{"outline (текст)", "primary", "bg"},
+		// Уровни логов: раньше были захардкожены (#1e40af/#b45309/#dc2626)
+		// и в тёмной теме не следовали палитре opencode.
+		{"лог INFO", "on-info", "info"},
+		{"лог WARN", "on-warning", "warning"},
+		{"лог ERROR", "on-danger", "danger"},
+		{"лог DEBUG", "on-muted", "muted"},
+		{"secondary (текст)", "text", "control-bg"},
+	}
+
+	// Границы контролов — нетекстовые элементы: WCAG 1.4.11 требует 3:1,
+	// а не 4.5:1. Раньше --border (#d3d3d3) давал 1.41 на фоне страницы,
+	// и кнопки/поля сливались с карточками.
+	borderPairs := [][3]string{
+		{"secondary (граница)", "control-border", "bg-alt"},
+		{"поле ввода (граница)", "control-border", "bg"},
+		{"кнопка secondary на панели", "control-border", "control-bg-hover"},
 	}
 
 	for _, th := range themes {
@@ -120,6 +136,17 @@ func TestPaletteContrast(t *testing.T) {
 			}
 			if got := contrast(fg, bg); got < 4.5 {
 				t.Errorf("%s: %s (%s на %s) = %.2f < 4.5 (WCAG AA)", th.name, p[0], fg, bg, got)
+			}
+		}
+		for _, p := range borderPairs {
+			fg, okF := th.vars[p[1]]
+			bg, okB := th.vars[p[2]]
+			if !okF || !okB {
+				t.Errorf("%s: %s — переменные %s/%s не найдены", th.name, p[0], p[1], p[2])
+				continue
+			}
+			if got := contrast(fg, bg); got < 3.0 {
+				t.Errorf("%s: %s (%s на %s) = %.2f < 3.0 (WCAG 1.4.11 non-text)", th.name, p[0], fg, bg, got)
 			}
 		}
 	}
@@ -140,6 +167,60 @@ func TestPaletteSelfCheck(t *testing.T) {
 		got := contrast(c.fg, c.bg)
 		if fmt.Sprintf("%.2f", got) != fmt.Sprintf("%.2f", c.want) {
 			t.Errorf("contrast(%s,%s) = %.2f, want %.2f", c.fg, c.bg, got, c.want)
+		}
+	}
+}
+
+// TestLogLevelsUseThemePalette — значки уровней логов обязаны брать цвета из
+// переменных темы. Регресс: они были захардкожены (#1e40af/#b45309/#dc2626/
+// #4b5563) и в тёмной теме выбивались из палитры opencode.
+func TestLogLevelsUseThemePalette(t *testing.T) {
+	raw, err := os.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatalf("read app.css: %v", err)
+	}
+	css := string(raw)
+
+	want := map[string][2]string{
+		".level-debug": {"--muted", "--on-muted"},
+		".level-info":  {"--info", "--on-info"},
+		".level-warn":  {"--warning", "--on-warning"},
+		".level-error": {"--danger", "--on-danger"},
+	}
+	for sel, vars := range want {
+		block := cssBlock(t, css, sel+" {")
+		for _, v := range vars {
+			if !strings.Contains(block, "var("+v+")") {
+				t.Errorf("%s must use var(%s): %s", sel, v, block)
+			}
+		}
+	}
+
+	// Старые жёсткие цвета не должны вернуться.
+	for _, hard := range []string{"#1e40af", "#b45309", "#dc2626", "#4b5563"} {
+		if strings.Contains(css, hard) {
+			t.Errorf("log level styles must not hardcode %s", hard)
+		}
+	}
+}
+
+// TestControlBordersVisible — границы кнопок и полей ввода берут
+// --control-border, а не --border: #d3d3d3 на белом даёт 1.5:1, и контрол
+// сливался с карточкой (WCAG 1.4.11 требует 3:1 для нетекстовых элементов).
+func TestControlBordersVisible(t *testing.T) {
+	raw, err := os.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatalf("read app.css: %v", err)
+	}
+	css := string(raw)
+
+	for _, sel := range []string{
+		"input[type=\"text\"],\ninput[type=\"search\"],\ninput[type=\"password\"],\ninput[type=\"number\"],\nselect,\ntextarea {",
+		"button.btn.btn-secondary {",
+	} {
+		block := cssBlock(t, css, sel)
+		if !strings.Contains(block, "var(--control-border)") {
+			t.Errorf("%q must use --control-border: %s", sel, block)
 		}
 	}
 }

@@ -237,11 +237,15 @@
 
 /* Варианты кнопок в таблице/drawer */
 button.svc-secondary {
-  background: var(--bg-alt);
+  background: var(--control-bg);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
 }
-button.svc-secondary:hover:not(:disabled) { background: var(--border); color: var(--text); }
+button.svc-secondary:hover:not(:disabled) {
+  background: var(--control-bg-hover);
+  border-color: var(--control-border);
+  color: var(--text);
+}
 
 button.svc-outline {
   background: transparent;
@@ -313,7 +317,7 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
   justify-content: center;
   line-height: 1;
 }
-.svc-icon-btn:hover { background: var(--bg-alt, #f8f9fa); color: var(--text, #333); }
+.svc-icon-btn:hover { background: var(--control-bg-hover); color: var(--text, #333); }
 
 .svc-tabs {
   display: flex;
@@ -332,7 +336,7 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
   border-bottom: 3px solid transparent;
   transition: all 0.2s;
 }
-.svc-tab:hover { background: var(--bg, #fff); color: var(--text, #333); }
+.svc-tab:hover { background: var(--control-bg-hover); color: var(--text, #333); }
 .svc-tab.active { color: var(--primary, #007bff); border-bottom-color: var(--primary, #007bff); background: var(--bg, #fff); }
 
 .svc-drawer-body { flex: 1; padding: 1.5rem; overflow-y: auto; }
@@ -381,7 +385,7 @@ button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--
 }
 
 .svc-menu-item:hover:not(:disabled) {
-  background: var(--bg-alt, #f8f9fa);
+  background: var(--control-bg-hover);
   color: var(--text, #333);
   transform: none;
   box-shadow: none;

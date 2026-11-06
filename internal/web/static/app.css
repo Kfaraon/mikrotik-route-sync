@@ -35,6 +35,16 @@
   --on-primary: #ffffff;
   --on-danger: #ffffff;
   --on-success: #ffffff;
+  --on-warning: #ffffff;
+  --on-info: #ffffff;
+  --on-muted: #ffffff;
+
+  /* Нейтральные кнопки: фон страницы — #f8f8f8, поэтому secondary с
+     background #f8f8f8 и border #d3d3d3 сливалась с фоном (контраст
+     границы 1.41 — вдвое ниже порога 3:1 для границ контролов). */
+  --control-bg: #ffffff;
+  --control-bg-hover: #f0f0f0;
+  --control-border: #8a8a8a;
 
   --code-bg: #f0f0f0;
   --code-text: #2f5fa8;
@@ -105,6 +115,16 @@
   --on-primary: #141414;
   --on-danger: #141414;
   --on-success: #141414;
+  --on-warning: #141414;
+  --on-info: #141414;
+  --on-muted: #141414;
+
+  /* Границы контролов: #484848 на #141414 даёт 2.0 — кнопка выглядела
+     «призрачной». #858585 держит ≥3:1 на всех тёмных подложках, включая
+     hover-фон #2a2a2a (3.89). */
+  --control-bg: #1e1e1e;
+  --control-bg-hover: #2a2a2a;
+  --control-border: #858585;
 
   --code-bg: #1e1e1e;
   --code-text: #fab283;
@@ -224,8 +244,8 @@ table td.num {
 
 /* Переключатель темы */
 .theme-toggle {
-  background: var(--bg-alt);
-  border: 1px solid var(--border);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
   color: var(--text);
   width: 42px;
   height: 42px;
@@ -241,9 +261,9 @@ table td.num {
 }
 
 .theme-toggle:hover:not(:disabled) {
-  background: var(--border);
+  background: var(--control-bg-hover);
   color: var(--text);
-  border-color: var(--border-strong);
+  border-color: var(--control-border);
 }
 
 /* Правая группа навигации: статус MikroTik + тема.
@@ -382,13 +402,14 @@ button.btn.btn-primary:hover:not(:disabled) {
 }
 
 button.btn.btn-secondary {
-  background: var(--bg-alt);
+  background: var(--control-bg);
   color: var(--text);
-  border-color: var(--border);
+  border-color: var(--control-border);
 }
 
 button.btn.btn-secondary:hover:not(:disabled) {
-  background: var(--border);
+  background: var(--control-bg-hover);
+  border-color: var(--control-border);
   color: var(--text);
   transform: none;
   box-shadow: none;
@@ -411,7 +432,7 @@ button.btn.btn-danger {
 }
 
 button.btn.btn-danger:hover:not(:disabled) {
-  /* Затемнение вместо фиксированного #dc2626: в тёмной теме он не читался. */
+  /* Затемнение вместо фиксированного цвета: в тёмной теме он не читался. */
   filter: brightness(0.92);
   color: var(--on-danger);
 }
@@ -457,7 +478,9 @@ select,
 textarea {
   width: 100%;
   padding: 0.75rem;
-  border: 1px solid var(--border);
+  /* Границы полей: --border (#d3d3d3) давал 1.5:1 на белом — поле
+     визуально сливалось с карточкой. --control-border — 3.45:1. */
+  border: 1px solid var(--control-border);
   border-radius: var(--radius);
   font-size: 1rem;
   transition: border var(--transition), background var(--transition), color var(--transition);
@@ -904,6 +927,17 @@ summary:focus-visible {
     --border: #999999;
     --border-strong: #666666;
     --shadow: transparent;
+    /* Печать всегда светлая: без этого --on-* из тёмной темы (#141414)
+       оставались и давали тёмный текст на тёмном фоне плашек. */
+    --on-primary: #ffffff;
+    --on-danger: #ffffff;
+    --on-success: #ffffff;
+    --on-warning: #ffffff;
+    --on-info: #ffffff;
+    --on-muted: #ffffff;
+    --control-bg: #ffffff;
+    --control-bg-hover: #f0f0f0;
+    --control-border: #8a8a8a;
   }
   .log-output,
   .svc-table-wrap,
@@ -1102,26 +1136,28 @@ summary:focus-visible {
   text-transform: uppercase;
 }
 
-/* Уровни логов: цвета фиксированные (журнал не должен зависеть от темы),
-   но фон подобран так, чтобы белый текст проходил AA в любой теме. */
+/* Уровни логов следуют палитре темы (раньше были захардкожены и в тёмной
+   теме выбивались из opencode: насыщенный синий/красный на #141414).
+   Текст — через --on-*: в тёмной теме акценты светлые, белый на них
+   нечитаем. Контраст всех четырёх пар ≥ 4.5 в обеих темах. */
 .level-debug {
-  background: #4b5563;
-  color: #e5e7eb;
+  background: var(--muted);
+  color: var(--on-muted);
 }
 
 .level-info {
-  background: #1e40af;
-  color: #ffffff;
+  background: var(--info);
+  color: var(--on-info);
 }
 
 .level-warn {
-  background: #b45309;
-  color: #ffffff;
+  background: var(--warning);
+  color: var(--on-warning);
 }
 
 .level-error {
-  background: #dc2626;
-  color: white;
+  background: var(--danger);
+  color: var(--on-danger);
 }
 
 .log-service {
@@ -1165,7 +1201,7 @@ summary:focus-visible {
   top: 0.5rem;
   right: 0.5rem;
   background: transparent;
-  border: 1px solid var(--log-border);
+  border: 1px solid var(--control-border);
   color: var(--log-time);
   padding: 0.25rem 0.5rem;
   font-size: 0.75rem;
@@ -1262,9 +1298,9 @@ summary:focus-visible {
   height: 1.4rem;
   margin-left: 0.5rem;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 3px;
-  background: var(--bg-alt);
+  background: var(--control-bg);
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 600;
@@ -1471,7 +1507,7 @@ summary:focus-visible {
    ============================================================ */
 .log-output mark {
   background: var(--warning);
-  color: #111827;
+  color: var(--on-warning);
   border-radius: 2px;
   padding: 0 2px;
 }
@@ -1480,7 +1516,7 @@ button.btn.btn-secondary.log-pause.paused,
 button.btn.btn-secondary.log-pause.paused:hover:not(:disabled) {
   background: var(--warning);
   border-color: var(--warning);
-  color: #111827;
+  color: var(--on-warning);
   transform: none;
   box-shadow: none;
 }
