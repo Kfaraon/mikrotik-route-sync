@@ -1,9 +1,8 @@
 package web
 
 // Тест контраста палитры: цвета интерфейса обязаны проходить WCAG AA (4.5:1)
-// для текста. Палитра взята из opencode, но светлая тема затемнена —
-// исходные светлые значения (#3b7dd8, #d68c27, #3d9a57, #318795) на #f8f8f8
-// дают 3.87/2.59/3.32/3.93 и не проходят AA для мелкого текста.
+// для текста. Палитра — opencode в тёплой гамме: синих акцентов нет,
+// текстовые акценты затемнены до AA на белом.
 //
 // Тест читает реальный app.css, поэтому поймает и случайную правку цвета,
 // и новую пару «текст на фоне», добавленную без проверки.
@@ -12,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -99,6 +99,7 @@ func TestPaletteContrast(t *testing.T) {
 		{"diff без изм.", "diff-same-text", "diff-same-bg"},
 		{"лог: текст", "log-text", "log-bg"},
 		{"лог: время", "log-time", "log-bg"},
+		{"лог: сервис", "log-service", "log-entry-bg"},
 		// Кнопки: текст поверх акцентной заливки. Заливки (--fill-*) общие
 		// для обеих тем, текст на них тёмный — светлая тема повторяет вид
 		// тёмной, а не пишет белым по тёмно-синему.
@@ -269,4 +270,66 @@ func TestFilledButtonsMatchBothThemes(t *testing.T) {
 			t.Errorf("%q must use --on-primary: %s", sel, block)
 		}
 	}
+}
+
+// TestNoBlueAccents — в интерфейсе не должно оставаться синих/голубых
+// цветов: палитра выдержана в тёплой гамме opencode в обеих темах.
+// Проверяются все статические CSS, включая fallback-значения в var().
+func TestNoBlueAccents(t *testing.T) {
+	files, err := filepath.Glob("static/*.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no css files found")
+	}
+	hexRe := regexp.MustCompile(`#[0-9a-fA-F]{6}`)
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, hex := range hexRe.FindAllString(string(raw), -1) {
+			h, s, l := hexHSL(hex)
+			// 180-250° — голубой/синий. Фиолетовые (250+) и нейтральные
+			// (низкая насыщенность, очень светлые/тёмные) не считаются.
+			if h >= 180 && h < 250 && s > 0.15 && l > 0.05 && l < 0.95 {
+				t.Errorf("%s: синий акцент %s (h=%.0f s=%.2f l=%.2f)", f, hex, h, s, l)
+			}
+		}
+	}
+}
+
+// hexHSL переводит #rrggbb в тон (0-360), насыщенность и светлоту (0-1).
+func hexHSL(hex string) (h, s, l float64) {
+	hex = strings.TrimPrefix(hex, "#")
+	v, _ := strconv.ParseUint(hex, 16, 32)
+	r := float64(v>>16&0xff) / 255
+	g := float64(v>>8&0xff) / 255
+	b := float64(v&0xff) / 255
+
+	max := math.Max(r, math.Max(g, b))
+	min := math.Min(r, math.Min(g, b))
+	l = (max + min) / 2
+	if max == min {
+		return 0, 0, l
+	}
+	d := max - min
+	if l > 0.5 {
+		s = d / (2 - max - min)
+	} else {
+		s = d / (max + min)
+	}
+	switch max {
+	case r:
+		h = (g - b) / d
+		if g < b {
+			h += 6
+		}
+	case g:
+		h = (b-r)/d + 2
+	default:
+		h = (r-g)/d + 4
+	}
+	return h * 60, s, l
 }

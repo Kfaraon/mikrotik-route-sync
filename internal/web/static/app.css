@@ -1,7 +1,7 @@
 /* Базовые переменные (светлая тема).
-   Палитра — opencode. Светлые primary/accent/success/info затемнены
-   относительно исходных (#3b7dd8/#d68c27/#3d9a57/#318795): на #f8f8f8 они
-   давали 3.87/2.59/3.32/3.93 — ниже WCAG AA для мелкого текста. */
+   Палитра — opencode в тёплой гамме: синих/голубых акцентов нет.
+   Текстовые акценты затемнены до WCAG AA на белом, заливки кнопок
+   общие с тёмной темой (--fill-*). */
 :root {
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, "Liberation Mono", "Courier New", monospace;
@@ -13,12 +13,9 @@
      Заливки кнопок живут отдельно (--fill-*): мягкие, с тёмной подписью,
      как в тёмной теме. */
   --primary: #a05c0a;
-  --secondary: #6a4ca0;
-  --accent: #a05c0a;
   --success: #2f7a45;
   --warning: #a05c0a;
   --danger: #c02f34;
-  --info: #276b76;
   --muted: #6b6b6b;
   --bg: #ffffff;
   --bg-alt: #f8f8f8;
@@ -55,7 +52,7 @@
   --fill-warning-border: #c1761c;
   --fill-success: #7fd88f;
   --fill-success-border: #3f8f52;
-  --fill-info: #56b6c2;
+  --fill-info: #7fd88f;
   --fill-muted: #808080;
 
   /* Нейтральные кнопки: фон страницы — #f8f8f8, поэтому secondary с
@@ -74,8 +71,8 @@
   --badge-warn-text: #7a4400;
   --badge-err-bg: #f1dbd4;
   --badge-err-text: #962019;
-  --badge-auto-bg: #dde8f7;
-  --badge-auto-text: #1d5c99;
+  --badge-auto-bg: #e9e3cc;
+  --badge-auto-text: #5b5216;
   --badge-manual-bg: #efefef;
   --badge-manual-text: #4b4b4b;
   --badge-override-bg: #ece2f6;
@@ -97,7 +94,7 @@
   --log-key: #6b6b6b;
   --log-val: #3a3a3a;
   --log-err-val: #962019;
-  --log-service: #2f5fa8;
+  --log-service: #a05c0a;
   --log-msg: #2a2a2a;
 
   /* diff */
@@ -112,12 +109,9 @@
 /* Тёмная тема — палитра opencode (darkStep). */
 .dark {
   --primary: #fab283;
-  --secondary: #5c9cf5;
-  --accent: #9d7cd8;
   --success: #7fd88f;
   --warning: #f5a742;
   --danger: #e06c75;
-  --info: #56b6c2;
   --muted: #808080;
   --bg: #0a0a0a;
   --bg-alt: #141414;
@@ -148,7 +142,7 @@
   --fill-warning-border: #f5a742;
   --fill-success: #7fd88f;
   --fill-success-border: #7fd88f;
-  --fill-info: #56b6c2;
+  --fill-info: #7fd88f;
   --fill-muted: #808080;
 
   /* Границы контролов: #484848 на #141414 даёт 2.0 — кнопка выглядела
@@ -167,8 +161,8 @@
   --badge-warn-text: #f5a742;
   --badge-err-bg: #312528;
   --badge-err-text: #e06c75;
-  --badge-auto-bg: #1b2536;
-  --badge-auto-text: #5c9cf5;
+  --badge-auto-bg: #26251a;
+  --badge-auto-text: #d4c47a;
   --badge-manual-bg: #1e1e1e;
   --badge-manual-text: #b0b0b0;
   --badge-override-bg: #2a2136;
@@ -190,7 +184,7 @@
   --log-key: #808080;
   --log-val: #d0d0d0;
   --log-err-val: #e06c75;
-  --log-service: #5c9cf5;
+  --log-service: #fab283;
   --log-msg: #eeeeee;
 
   /* diff */
@@ -812,7 +806,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 summary:focus-visible {
-  outline: 2px solid var(--primary, #007bff);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
@@ -987,11 +981,28 @@ summary:focus-visible {
     --fill-warning-border: #c1761c;
     --fill-success: #7fd88f;
     --fill-success-border: #3f8f52;
-    --fill-info: #56b6c2;
+    --fill-info: #7fd88f;
     --fill-muted: #808080;
     --control-bg: #ffffff;
     --control-bg-hover: #f0f0f0;
     --control-border: #8a8a8a;
+    --primary: #a05c0a;
+    --code-text: #a05c0a;
+    --log-service: #a05c0a;
+    --badge-auto-bg: #e9e3cc;
+    --badge-auto-text: #5b5216;
+    --fill-info: #7fd88f;
+    --log-bg: #f8f8f8;
+    --log-entry-bg: #ffffff;
+    --log-entry-hover: #f0f0f0;
+    --log-entry-err-bg: #f1dbd4;
+    --log-entry-warn-bg: #f5e6cf;
+    --log-time: #6b6b6b;
+    --log-border: #d3d3d3;
+    --log-key: #6b6b6b;
+    --log-val: #3a3a3a;
+    --log-err-val: #962019;
+    --log-msg: #2a2a2a;
   }
   .log-output,
   .svc-table-wrap,

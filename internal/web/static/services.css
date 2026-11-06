@@ -144,7 +144,7 @@
 
 .svc-table tr:last-child td { border-bottom: none; }
 .svc-table tr:hover { background: var(--bg-alt, #f8f9fa); }
-.svc-table tr.svc-selected { background: var(--badge-auto-bg, #e3f2fd); }
+.svc-table tr.svc-selected { background: var(--badge-auto-bg); }
 .svc-col-check { width: 40px; text-align: center; }
 
 /* Бейджи */
@@ -351,7 +351,7 @@ button.svc-danger:hover:not(:disabled) {
   transition: all 0.2s;
 }
 .svc-tab:hover { background: var(--control-bg-hover); color: var(--text, #333); }
-.svc-tab.active { color: var(--primary, #007bff); border-bottom-color: var(--primary, #007bff); background: var(--bg, #fff); }
+.svc-tab.active { color: var(--primary); border-bottom-color: var(--primary); background: var(--bg, #fff); }
 
 .svc-drawer-body { flex: 1; padding: 1.5rem; overflow-y: auto; }
 
@@ -669,7 +669,7 @@ button.svc-danger:hover:not(:disabled) {
   overflow: hidden;
   line-height: 1.4;
 }
-.svc-field textarea:focus-visible { outline: 2px solid var(--primary, #007bff); outline-offset: 1px; }
+.svc-field textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 /* Домены пресета — только отображение (не редактируются) */
 .svc-field-readonly .svc-preset-domains {
   margin: 0;
@@ -702,7 +702,7 @@ button.svc-danger:hover:not(:disabled) {
   align-items: center;
 }
 .svc-collapsible > summary:focus-visible {
-  outline: 2px solid var(--primary, #007bff);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
