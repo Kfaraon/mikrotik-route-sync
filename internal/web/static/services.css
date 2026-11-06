@@ -252,12 +252,26 @@ button.svc-outline {
   color: var(--primary);
   border: 1px solid var(--primary);
 }
-button.svc-outline:hover:not(:disabled) { background: var(--primary); color: var(--on-primary); }
+button.svc-outline:hover:not(:disabled) {
+  /* Подложка, а не заливка: --on-primary теперь тёмный и на синем
+     фоне был бы нечитаем. */
+  background: var(--control-bg-hover);
+  color: var(--primary);
+  border-color: var(--primary);
+}
 
 /* Цвет подписи на плашке: в тёмной теме primary/danger светлые, белый текст
    на них нечитаем (1.79/3.20) — переменная задаётся в app.css по теме. */
-button.svc-danger { background: var(--danger); color: var(--on-danger); }
-button.svc-danger:hover:not(:disabled) { filter: brightness(0.92); color: var(--on-danger); }
+button.svc-danger {
+  background: var(--fill-danger);
+  border: 1px solid var(--fill-danger-border);
+  color: var(--on-danger);
+}
+button.svc-danger:hover:not(:disabled) {
+  filter: brightness(0.92);
+  border-color: var(--fill-danger-border);
+  color: var(--on-danger);
+}
 
 /* Действия в таблице */
 .svc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }

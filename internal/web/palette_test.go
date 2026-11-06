@@ -99,21 +99,20 @@ func TestPaletteContrast(t *testing.T) {
 		{"diff без изм.", "diff-same-text", "diff-same-bg"},
 		{"лог: текст", "log-text", "log-bg"},
 		{"лог: время", "log-time", "log-bg"},
-		// Кнопки: текст поверх акцентной заливки. В тёмной теме primary
-		// светлый, поэтому белый текст на нём нечитаем (1.79) — цвет
-		// задаётся переменной --on-* в каждой теме.
-		{"кнопка primary", "on-primary", "primary"},
-		{"кнопка primary hover", "on-primary", "primary-hover"},
-		{"кнопка danger", "on-danger", "danger"},
-		{"тост success", "on-success", "success"},
-		{"тост error", "on-danger", "danger"},
+		// Кнопки: текст поверх акцентной заливки. Заливки (--fill-*) общие
+		// для обеих тем, текст на них тёмный — светлая тема повторяет вид
+		// тёмной, а не пишет белым по тёмно-синему.
+		{"кнопка primary", "on-primary", "fill-primary"},
+		{"кнопка primary hover", "on-primary", "fill-primary-hover"},
+		{"кнопка danger", "on-danger", "fill-danger"},
+		{"тост success", "on-success", "fill-success"},
+		{"тост error", "on-danger", "fill-danger"},
 		{"outline (текст)", "primary", "bg"},
-		// Уровни логов: раньше были захардкожены (#1e40af/#b45309/#dc2626)
-		// и в тёмной теме не следовали палитре opencode.
-		{"лог INFO", "on-info", "info"},
-		{"лог WARN", "on-warning", "warning"},
-		{"лог ERROR", "on-danger", "danger"},
-		{"лог DEBUG", "on-muted", "muted"},
+		// Уровни логов: заливки общие для тем, текст на них тёмный.
+		{"лог INFO", "on-info", "fill-info"},
+		{"лог WARN", "on-warning", "fill-warning"},
+		{"лог ERROR", "on-danger", "fill-danger"},
+		{"лог DEBUG", "on-muted", "fill-muted"},
 		{"secondary (текст)", "text", "control-bg"},
 	}
 
@@ -124,6 +123,12 @@ func TestPaletteContrast(t *testing.T) {
 		{"secondary (граница)", "control-border", "bg-alt"},
 		{"поле ввода (граница)", "control-border", "bg"},
 		{"кнопка secondary на панели", "control-border", "control-bg-hover"},
+		// Заливка мягкая (на белом 1.7-2.4:1), поэтому у кнопок есть
+		// контур с контрастом ≥3:1 к странице.
+		{"кнопка primary (граница)", "fill-primary-border", "bg"},
+		{"кнопка danger (граница)", "fill-danger-border", "bg"},
+		{"кнопка warning (граница)", "fill-warning-border", "bg"},
+		{"кнопка success (граница)", "fill-success-border", "bg"},
 	}
 
 	for _, th := range themes {
@@ -182,10 +187,10 @@ func TestLogLevelsUseThemePalette(t *testing.T) {
 	css := string(raw)
 
 	want := map[string][2]string{
-		".level-debug": {"--muted", "--on-muted"},
-		".level-info":  {"--info", "--on-info"},
-		".level-warn":  {"--warning", "--on-warning"},
-		".level-error": {"--danger", "--on-danger"},
+		".level-debug": {"--fill-muted", "--on-muted"},
+		".level-info":  {"--fill-info", "--on-info"},
+		".level-warn":  {"--fill-warning", "--on-warning"},
+		".level-error": {"--fill-danger", "--on-danger"},
 	}
 	for sel, vars := range want {
 		block := cssBlock(t, css, sel+" {")
@@ -221,6 +226,46 @@ func TestControlBordersVisible(t *testing.T) {
 		block := cssBlock(t, css, sel)
 		if !strings.Contains(block, "var(--control-border)") {
 			t.Errorf("%q must use --control-border: %s", sel, block)
+		}
+	}
+}
+
+// TestFilledButtonsMatchBothThemes — залитые кнопки выглядят одинаково в
+// светлой и тёмной теме: мягкая заливка + тёмный текст. Регресс: в светлой
+// теме заливка была тёмно-синей с белой подписью, и интерфейс в двух темах
+// выглядел «инвертированным».
+func TestFilledButtonsMatchBothThemes(t *testing.T) {
+	raw, err := os.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatalf("read app.css: %v", err)
+	}
+	css := string(raw)
+
+	light := cssVars(cssBlock(t, css, ":root {"))
+	dark := cssVars(cssBlock(t, css, ".dark {"))
+
+	for _, v := range []string{"fill-primary", "fill-primary-hover", "fill-danger", "fill-warning", "fill-success", "fill-info", "fill-muted"} {
+		if light[v] == "" || dark[v] == "" {
+			t.Errorf("variable --%s must be defined in both themes", v)
+			continue
+		}
+		if light[v] != dark[v] {
+			t.Errorf("--%s differs: light %s, dark %s (fills must be shared)", v, light[v], dark[v])
+		}
+	}
+	for _, v := range []string{"on-primary", "on-danger", "on-success", "on-warning"} {
+		if light[v] != "#141414" || dark[v] != "#141414" {
+			t.Errorf("--%s must be #141414 in both themes, got light %q dark %q", v, light[v], dark[v])
+		}
+	}
+
+	for _, sel := range []string{"button,\ninput[type=\"submit\"] {", "button.btn {", "button.btn.btn-primary {"} {
+		block := cssBlock(t, css, sel)
+		if !strings.Contains(block, "var(--fill-primary)") {
+			t.Errorf("%q must use --fill-primary: %s", sel, block)
+		}
+		if !strings.Contains(block, "var(--on-primary)") {
+			t.Errorf("%q must use --on-primary: %s", sel, block)
 		}
 	}
 }
