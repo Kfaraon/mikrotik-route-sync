@@ -108,6 +108,7 @@ func TestPaletteContrast(t *testing.T) {
 		{"тост success", "on-success", "fill-success"},
 		{"тост error", "on-danger", "fill-danger"},
 		{"outline (текст)", "primary", "bg"},
+		{"код: текст", "code-text", "code-bg"},
 		// Уровни логов: заливки общие для тем, текст на них тёмный.
 		{"лог INFO", "on-info", "fill-info"},
 		{"лог WARN", "on-warning", "fill-warning"},
