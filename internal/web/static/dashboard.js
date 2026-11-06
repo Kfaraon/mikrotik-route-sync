@@ -444,6 +444,16 @@
     return Number(v) || 0;
   }
 
+  // routesKnown — счётчики получены с роутера. false = «неизвестно», а не
+  // «ноль»: при недоступном MikroTik UI показывал «нет активных записей».
+  function routesKnown(row) {
+    if (!row) return false;
+    var v = row.RoutesKnown;
+    if (v === undefined) v = row.routes_known;
+    if (v === undefined) return true; // старый ответ API — не вводим в заблуждение
+    return Boolean(v);
+  }
+
   function serviceSchedule(row) {
     if (!row) return "";
     return text(row.Schedule || row.schedule);
@@ -794,8 +804,11 @@
     var d = state.derived || {};
     var total = state.services.length;
     var withRoutes = 0;
+    var anyKnown = false;
 
     for (var i = 0; i < state.services.length; i++) {
+      if (!routesKnown(state.services[i])) continue;
+      anyKnown = true;
       if (serviceRoutes(state.services[i]) > 0) withRoutes++;
     }
 
@@ -813,14 +826,20 @@
     var routes = d.totalRoutes || 0;
     var problems = d.problemCount || 0;
 
-    setKpi("dash-total-value", "dash-total-note", String(total), withRoutes + " с записями", "muted");
+    setKpi(
+      "dash-total-value",
+      "dash-total-note",
+      String(total),
+      anyKnown ? withRoutes + " с записями" : "счётчики недоступны",
+      "muted"
+    );
 
     setKpi(
       "dash-routes-value",
       "dash-routes-note",
-      String(routes),
-      routes ? "управляемых адресов" : "записей пока нет",
-      routes ? "ok" : "muted"
+      anyKnown ? String(routes) : "—",
+      anyKnown ? (routes ? "управляемых адресов" : "записей пока нет") : "MikroTik недоступен",
+      anyKnown ? (routes ? "ok" : "muted") : "warn"
     );
 
     setKpi(
@@ -980,7 +999,9 @@
     }).catch(function (err) {
       setAlert("error", "Не удалось обновить дашборд: " + text(err && err.message));
     }).then(function () {
-      setRefreshing(false);
+      // Устаревший ответ не должен снимать индикатор актуальной загрузки:
+      // иначе спиннер гаснет, пока новые данные ещё в пути.
+      if (seq === loadSeq) setRefreshing(false);
     });
   }
 

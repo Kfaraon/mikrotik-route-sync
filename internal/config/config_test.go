@@ -577,3 +577,52 @@ func TestReplaceFromConcurrent(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+// TestLoadRejectsBadSchedule — опечатка в расписании должна падать при
+// загрузке, а не молча оставлять сервис без синхронизации до чтения логов.
+func TestLoadRejectsBadSchedule(t *testing.T) {
+	for _, global := range []string{"sometimes", "every 0h", "@every 0s"} {
+		path := writeTempConfig(t, `
+timezone: UTC
+mikrotik: {host: h, username: u, password: p}
+firewall: {address_list: "TO-VPN"}
+schedules: {global: "`+global+`"}
+services: [instagram]
+`)
+		if _, err := Load(path); err == nil {
+			t.Fatalf("Load must reject schedules.global=%q", global)
+		}
+	}
+}
+
+// TestLoadRejectsBadServiceSchedule — то же для override сервиса.
+func TestLoadRejectsBadServiceSchedule(t *testing.T) {
+	path := writeTempConfig(t, `
+timezone: UTC
+mikrotik: {host: h, username: u, password: p}
+firewall: {address_list: "TO-VPN"}
+schedules:
+  global: "every 6h"
+  services:
+    instagram: {schedule: "daily at 99:00"}
+services: [instagram]
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load must reject invalid service schedule")
+	}
+}
+
+// TestEffectiveScheduleInherit — "inherit" означает наследование, а не
+// собственное расписание (иначе планировщик его игнорирует и сервис
+// не синхронизируется вообще).
+func TestEffectiveScheduleInherit(t *testing.T) {
+	cfg := &Config{Schedules: SchedulesConfig{
+		Global: "every 6h",
+		Services: map[string]ServiceSchedule{
+			"instagram": {Schedule: "inherit"},
+		},
+	}}
+	if got := cfg.EffectiveSchedule("instagram"); got != "every 6h" {
+		t.Fatalf("inherit must fall back to global, got %q", got)
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -217,27 +216,35 @@ func (s *Scheduler) addLocked(ctx context.Context, service, spec string) {
 	if spec == "" || spec == "manual" || spec == "disabled" || spec == "inherit" {
 		return
 	}
-	if c, ok := toCron(spec); ok {
-		svc, original := service, spec
-		_, err := s.cron.AddFunc(c, func() { s.dispatch(ctx, svc, original) })
-		if err != nil {
-			s.log.Error("не удалось добавить расписание", "service", service, "schedule", spec, "err", err)
-		}
+	// Единая точка разбора: CronSpec понимает всё, что принимает API/конфиг
+	// (@daily, @every, "every 30m", "daily at", 5 полей). Раньше addLocked
+	// использовал собственные toCron/interval: @daily и @every проходили
+	// валидацию, но молча не планировались.
+	canonical, err := CronSpec(spec)
+	if err != nil {
+		s.log.Warn("неподдерживаемое расписание", "service", service, "schedule", spec, "err", err)
 		return
 	}
-	if d, ok := interval(spec); ok {
+	if d, ok := strings.CutPrefix(canonical, "@every "); ok {
+		dur, derr := time.ParseDuration(d)
+		if derr != nil || dur <= 0 {
+			s.log.Warn("неподдерживаемый интервал", "service", service, "schedule", spec)
+			return
+		}
 		svc, original := service, spec
-		// Добавляем в кучу вместо создания горутины на сервис.
 		// Первый запуск — через интервал (как было в Ticker).
 		s.intervalHeap.Push(intervalItem{
 			service:  svc,
 			spec:     original,
-			interval: d,
-			nextRun:  time.Now().Add(d),
+			interval: dur,
+			nextRun:  time.Now().Add(dur),
 		})
 		return
 	}
-	s.log.Warn("неподдерживаемое расписание", "service", service, "schedule", spec)
+	svc, original := service, spec
+	if _, err := s.cron.AddFunc(canonical, func() { s.dispatch(ctx, svc, original) }); err != nil {
+		s.log.Error("не удалось добавить расписание", "service", service, "schedule", spec, "err", err)
+	}
 }
 
 func (s *Scheduler) dispatch(schedCtx context.Context, service, spec string) {
@@ -268,6 +275,10 @@ func (s *Scheduler) dispatch(schedCtx context.Context, service, spec string) {
 	if semRaw != nil {
 		sem = semRaw.(chan struct{})
 	}
+	// Таймер с явным Stop: time.After в select утекал на 5 минут при каждом
+	// успешном захвате семафора (и при отмене контекста).
+	timer := time.NewTimer(5 * time.Minute)
+	defer timer.Stop()
 	select {
 	case sem <- struct{}{}:
 		started = true
@@ -278,7 +289,7 @@ func (s *Scheduler) dispatch(schedCtx context.Context, service, spec string) {
 		}(sem)
 	case <-schedCtx.Done():
 		s.log.Warn("синхронизация по расписанию пропущена: контекст отменён", "service", service, "schedule", spec)
-	case <-time.After(5 * time.Minute):
+	case <-timer.C:
 		s.log.Warn("синхронизация по расписанию пропущена: достигнут лимит параллельных", "service", service, "schedule", spec)
 	}
 }
@@ -549,71 +560,37 @@ func (s *Scheduler) intervalRunner(ctx context.Context) {
 
 func ValidSpec(spec string) bool {
 	if err := Validate(spec); err == nil {
-		if s := strings.TrimSpace(strings.ToLower(spec)); s == "every" || s == "daily" || s == "weekly" {
-			return false
-		}
 		return true
 	}
 	return false
 }
 
+// toCron — совместимая обёртка: канонический cron-вид спецификации.
+// false для manual/disabled/inherit и интервалов (@every): они не cron.
 func toCron(spec string) (string, bool) {
-	if strings.HasPrefix(spec, "daily at ") {
-		h, m, ok := clock(strings.TrimPrefix(spec, "daily at "))
-		if ok {
-			return fmt.Sprintf("%d %d * * *", m, h), true
-		}
+	canonical, err := CronSpec(spec)
+	if err != nil {
+		return "", false
 	}
-	if strings.HasPrefix(spec, "weekly on ") {
-		parts := strings.SplitN(strings.TrimPrefix(spec, "weekly on "), " at ", 2)
-		if len(parts) == 2 {
-			dow := weekday(parts[0])
-			h, m, ok := clock(parts[1])
-			if dow != "" && ok {
-				return fmt.Sprintf("%d %d * * %s", m, h, dow), true
-			}
-		}
+	if canonical == "manual" || canonical == "disabled" || canonical == "inherit" {
+		return "", false
 	}
-	if len(strings.Fields(spec)) == 5 {
-		return spec, true
+	if strings.HasPrefix(canonical, "@every ") {
+		return "", false
 	}
-	return "", false
+	return canonical, true
 }
 
+// interval — совместимая обёртка: положительный интервал из @every-формы.
 func interval(spec string) (time.Duration, bool) {
-	if !strings.HasPrefix(spec, "every ") {
+	canonical, err := CronSpec(spec)
+	if err != nil {
 		return 0, false
 	}
-	d, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(spec, "every ")))
+	raw, ok := strings.CutPrefix(canonical, "@every ")
+	if !ok {
+		return 0, false
+	}
+	d, err := time.ParseDuration(raw)
 	return d, err == nil && d > 0
-}
-
-func clock(v string) (int, int, bool) {
-	p := strings.Split(v, ":")
-	if len(p) != 2 {
-		return 0, 0, false
-	}
-	h, e1 := strconv.Atoi(p[0])
-	m, e2 := strconv.Atoi(p[1])
-	return h, m, e1 == nil && e2 == nil && h >= 0 && h < 24 && m >= 0 && m < 60
-}
-
-func weekday(s string) string {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "sun", "sunday":
-		return "0"
-	case "mon", "monday":
-		return "1"
-	case "tue", "tuesday":
-		return "2"
-	case "wed", "wednesday":
-		return "3"
-	case "thu", "thursday":
-		return "4"
-	case "fri", "friday":
-		return "5"
-	case "sat", "saturday":
-		return "6"
-	}
-	return ""
 }

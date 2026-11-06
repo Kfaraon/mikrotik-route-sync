@@ -594,21 +594,6 @@
     scheduleLive();
   }
 
-  document.querySelectorAll(".secret-field").forEach(function (el) {
-    var input = el.querySelector("input");
-    var btn = el.querySelector("button");
-    if (!input || !btn) return;
-
-    var timer = null;
-    btn.addEventListener("click", function () {
-      input.type = "text";
-      clearTimeout(timer);
-      timer = setTimeout(function () {
-        input.type = "password";
-      }, 10000);
-    });
-  });
-
   // Кнопка «?» в заголовке группы «Общее» — показывает/скрывает подсказку.
   (function () {
     var btn = document.querySelector(".group-help-btn");
@@ -708,7 +693,10 @@
       btn.type = "button";
       btn.className = "btn btn-outline cdn-row-remove";
       btn.title = "Удалить строку";
-      btn.textContent = "✕";
+      btn.setAttribute("aria-label", "Удалить строку");
+      // Иконка из общего спрайта: текстовый «✕» выбивался из стиля и не
+      // наследовал цвет темы.
+      btn.innerHTML = '<svg class="px" aria-hidden="true" focusable="false"><use href="#px-close"></use></svg>';
       return btn;
     }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Kfaraon/mikrotik-route-sync/internal/schedule"
 	"gopkg.in/yaml.v3"
 )
 
@@ -559,6 +560,20 @@ func (c *Config) Validate() error {
 	if c.Schedules.Global == "" {
 		return fmt.Errorf("schedules.global required")
 	}
+	// Fail-fast: раньше опечатка в расписании ("sometimes") сохранялась и
+	// сервис молча никогда не синхронизировался — ошибка была видна только
+	// в логе планировщика. Проверяем глобальное и все override-расписания.
+	if err := schedule.Validate(c.Schedules.Global); err != nil {
+		return fmt.Errorf("schedules.global %q: %w", c.Schedules.Global, err)
+	}
+	for name, sched := range c.Schedules.Services {
+		if sched.Schedule == "" {
+			continue
+		}
+		if err := schedule.Validate(sched.Schedule); err != nil {
+			return fmt.Errorf("schedules.services.%s %q: %w", name, sched.Schedule, err)
+		}
+	}
 	// Диапазоны safety: мусор (отрицательные, нулевые маски) ловим здесь,
 	// а не молчаливым отключением защит (MaxDeleteRatio<=0, например,
 	// незаметно выключал бы safe-diff).
@@ -750,12 +765,18 @@ func (s SafetyConfig) AllowHostRoutesEnabled() bool {
 	return s.AllowHostRoutes == nil || *s.AllowHostRoutes
 }
 
-// EffectiveSchedule возвращает эффективное расписание сервиса.
+// EffectiveSchedule возвращает расписание сервиса с учётом наследования.
 // Приоритет: service -> global.
+// "inherit" — не самостоятельное расписание, а явный запрос наследовать
+// глобальное: раньше он возвращался как есть, планировщик его игнорировал,
+// и сервис молча никогда не синхронизировался (UI при этом показывал
+// «наследуется»).
 func (c *Config) EffectiveSchedule(service string) string {
 	if c.Schedules.Services != nil {
-		if s, ok := c.Schedules.Services[service]; ok && s.Schedule != "" {
-			return s.Schedule
+		if s, ok := c.Schedules.Services[service]; ok {
+			if spec := strings.TrimSpace(s.Schedule); spec != "" && !strings.EqualFold(spec, "inherit") {
+				return s.Schedule
+			}
 		}
 	}
 	return c.Schedules.Global

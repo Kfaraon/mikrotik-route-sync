@@ -155,3 +155,41 @@ func TestReloadKeepsSyncBaseContext(t *testing.T) {
 		t.Fatal("stop must cancel the running sync base context")
 	}
 }
+
+// TestCanonicalSpecsAreSchedulable — каждая спецификация, которую принимает
+// ValidSpec, обязана попадать либо в cron, либо в interval-кучу. Регресс:
+// @daily/@weekly/@hourly проходили валидацию, но addLocked их не понимал,
+// и сервис молча никогда не запускался.
+func TestCanonicalSpecsAreSchedulable(t *testing.T) {
+	for _, spec := range []string{
+		"every 30m", "every 6h", "@every 30m", "@daily", "@weekly",
+		"@hourly", "@monthly", "daily at 03:00", "weekly on sunday at 04:00",
+		"0 3 * * *",
+	} {
+		if !ValidSpec(spec) {
+			t.Fatalf("ValidSpec(%q) = false", spec)
+		}
+		c, err := CronSpec(spec)
+		if err != nil {
+			t.Fatalf("CronSpec(%q): %v", spec, err)
+		}
+		_, isCron := toCron(spec)
+		_, isInterval := interval(spec)
+		if !isCron && !isInterval {
+			t.Fatalf("%q (canonical %q) is accepted but never scheduled", spec, c)
+		}
+		if isCron && isInterval {
+			t.Fatalf("%q classified as both cron and interval", spec)
+		}
+	}
+}
+
+// TestZeroAndNegativeIntervalsRejected — robfig/cron принимает @every 0s и
+// @every -1s (запуск в цикле), поэтому валидатор обязан отсекать их сам.
+func TestZeroAndNegativeIntervalsRejected(t *testing.T) {
+	for _, spec := range []string{"@every 0s", "@every -1s", "every 0h", "every -5m"} {
+		if ValidSpec(spec) {
+			t.Fatalf("ValidSpec(%q) must be false", spec)
+		}
+	}
+}

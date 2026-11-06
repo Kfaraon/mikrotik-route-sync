@@ -1012,13 +1012,17 @@ func (s *Server) partialStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type serviceRow struct {
-	Name      string
-	List      string
-	Comment   string
-	Schedule  string
-	Routes    int
-	LastSync  string
-	Overrides bool
+	Name     string
+	List     string
+	Comment  string
+	Schedule string
+	Routes   int
+	// RoutesKnown — удалось ли прочитать счётчики с роутера. false означает
+	// «неизвестно», а не «ноль записей»: UI больше не пишет «нет активных
+	// записей», когда MikroTik недоступен.
+	RoutesKnown bool
+	LastSync    string
+	Overrides   bool
 	// GUID — идентификатор текущего воплощения сервиса (UUID v4): UI
 	// сопоставляет с ним историю, чтобы не показывать данные прежнего
 	// сервиса с тем же именем.
@@ -1074,8 +1078,9 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 	s.cfg.RUnlock()
 
 	// O1: один запрос к роутеру на все сервисы (было N в одном 3-секундном
-	// ctx — хвост молча получал Routes=0). Ошибка чтения — счётчики пусты.
-	counts, _ := s.syncer.ServiceEntryCounts(ctx)
+	// ctx — хвост молча получал Routes=0).
+	counts, countsErr := s.syncer.ServiceEntryCounts(ctx)
+	routesKnown := countsErr == nil
 
 	rows := make([]serviceRow, 0, len(statics))
 	for _, row := range statics {
@@ -1088,6 +1093,7 @@ func (s *Server) serviceRows(r *http.Request) []serviceRow {
 			}
 		}
 		row.Routes = counts[row.Name]
+		row.RoutesKnown = routesKnown
 		// Фактически применяемый метод (preset/override/классификатор) — для
 		// UI, когда override пуст, но сбор работает по дефолту классификатора.
 		row.EffectiveMethod = s.syncer.CurrentMethod(row.Name)
@@ -1130,7 +1136,8 @@ func (s *Server) pageSchedules(w http.ResponseWriter, r *http.Request) {
 		if sv, ok := s.cfg.Schedules.Services[name]; ok {
 			st.serviceOv = sv.Schedule
 		}
-		if st.serviceOv != "" {
+		// "inherit" — явное наследование, а не собственное расписание.
+		if st.serviceOv != "" && !strings.EqualFold(st.serviceOv, "inherit") {
 			st.source = "service"
 		} else {
 			st.source = "global"
@@ -1581,6 +1588,10 @@ func (s *Server) apiAddService(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Новый сервис должен получить расписание сразу: без перестройки он
+	// оставался ненастроенным до SIGHUP/перезапуска (если reload_interval
+	// не задан, то навсегда).
+	s.reloadScheduler()
 	s.auditChange(r, "api", "service_add", req.Name)
 	writeOK(w, map[string]string{"service": req.Name})
 }
@@ -2019,6 +2030,9 @@ func (s *Server) apiDeleteService(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Удалённый сервис не должен оставаться в cron-таблицах планировщика
+	// до перезапуска.
+	s.reloadScheduler()
 	s.auditChange(r, "api", "service_delete", name)
 	writeOK(w, map[string]string{"service": name})
 }
@@ -2133,6 +2147,12 @@ func (s *Server) apiUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.applySchedule(r, service, req.Schedule); err != nil {
+		// Несуществующий сервис — 404, а не 400: клиент должен отличать
+		// опечатку в имени от неверного расписания.
+		if errors.Is(err, core.ErrServiceNotFound) {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -2149,12 +2169,20 @@ func (s *Server) apiUpdateGlobalSchedule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	spec := strings.TrimSpace(req.Schedule)
-	if spec != "" && !scheduler.ValidSpec(spec) {
+	// Пустое глобальное расписание недопустимо (config.Validate требует его):
+	// раньше PUT с пустой строкой проходил проверку, ReplaceGlobalSchedule
+	// сохранял его, Save падал на валидации — и клиент получал голый 500,
+	// а конфиг в памяти оставался с пустым global.
+	if spec == "" {
+		writeErr(w, http.StatusBadRequest, `schedules.global cannot be empty; use "manual" or "disabled"`)
+		return
+	}
+	if !scheduler.ValidSpec(spec) {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("invalid schedule %q (expected cron, 'every 6h', 'daily at 03:00', manual/disabled)", spec))
 		return
 	}
 	if err := s.cfg.ReplaceGlobalSchedule(spec); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.auditChange(r, "web", "schedule_change", "global")
@@ -2178,6 +2206,21 @@ func (s *Server) applySchedule(r *http.Request, service, spec string) error {
 	}
 	if spec != "" && !scheduler.ValidSpec(spec) {
 		return fmt.Errorf("invalid schedule %q (expected cron, 'every 6h', 'daily at 03:00', manual/disabled/inherit)", spec)
+	}
+	// Сервис должен существовать: раньше PUT для опечатанного имени
+	// создавал запись в schedules.services, которая переживала всё и
+	// всплывала при добавлении сервиса с этим именем.
+	s.cfg.RLock()
+	known := false
+	for _, name := range s.cfg.Services {
+		if name == service {
+			known = true
+			break
+		}
+	}
+	s.cfg.RUnlock()
+	if !known {
+		return fmt.Errorf("%w: %s", core.ErrServiceNotFound, service)
 	}
 	if err := s.cfg.ReplaceServiceSchedule(service, spec); err != nil {
 		return err
@@ -2543,6 +2586,7 @@ func (s *Server) actionAddService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.reloadScheduler()
 	s.auditChange(r, "web", "service_add", name)
 	w.Header().Set("HX-Refresh", "true")
 	writeOK(w, map[string]string{"service": name})
@@ -2566,6 +2610,7 @@ func (s *Server) actionDeleteService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.reloadScheduler()
 	s.auditChange(r, "web", "service_delete", name)
 	w.Header().Set("HX-Refresh", "true")
 	writeOK(w, map[string]string{"service": name})

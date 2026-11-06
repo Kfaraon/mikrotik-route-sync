@@ -71,7 +71,6 @@
             {{ else if eq $row.Type "secret" }}
               <span class="secret-field">
                 <input aria-labelledby="set-{{ $row.Key }}" aria-describedby="help-{{ $row.Key }}" type="password" name="{{ $row.Key }}" value="{{ $row.Value }}" autocomplete="off">
-                <button type="button" class="btn btn-outline" title="Показать на 10 секунд" aria-label="Показать значение на 10 секунд"><svg class="px" aria-hidden="true" focusable="false"><use href="#px-eye"></use></svg></button>
               </span>
               <label class="clear-secret"><input type="checkbox" name="clear:{{ $row.Key }}" value="1"> очистить</label>
             {{ else if eq $row.Type "number" }}

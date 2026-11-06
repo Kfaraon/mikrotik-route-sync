@@ -1420,11 +1420,6 @@ summary:focus-visible {
   min-width: 0;
 }
 
-.secret-field button {
-  padding: 0.5rem 1rem;
-  font-size: 1rem;
-}
-
 @media (max-width: 480px) {
   .settings-grid {
     gap: 0.75rem;

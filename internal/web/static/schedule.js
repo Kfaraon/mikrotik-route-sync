@@ -271,7 +271,8 @@
 
   function effectiveForRow(row) {
     var override = normalizeSpec(row.getAttribute("data-override"));
-    if (override) return override;
+    // "inherit" — явное наследование: эффективное расписание глобальное.
+    if (override && override.toLowerCase() !== "inherit") return override;
 
     return normalizeSpec(globalSchedule);
   }
@@ -285,8 +286,9 @@
   function sourceForRow(row) {
     // Та же логика, что на сервере (атрибут data-source — лишь начальная
     // подсказка): override → своё, иначе глобальное. Пересчитывается при
-    // правках, поэтому не «залипает».
-    if (normalizeSpec(row.getAttribute("data-override"))) return "service";
+    // правках, поэтому не «залипает». "inherit" — не своё расписание.
+    var override = normalizeSpec(row.getAttribute("data-override"));
+    if (override && override.toLowerCase() !== "inherit") return "service";
 
     return "global";
   }

@@ -520,6 +520,16 @@
     return Number(v) || 0;
   }
 
+  // routesKnown — счётчики получены с роутера. false = «неизвестно», а не
+  // «ноль»: при недоступном MikroTik UI показывал «нет активных записей».
+  function routesKnown(row) {
+    if (!row) return false;
+    var v = row.RoutesKnown;
+    if (v === undefined) v = row.routes_known;
+    if (v === undefined) return true; // старый ответ API — не вводим в заблуждение
+    return Boolean(v);
+  }
+
   function serviceSchedule(row) {
     if (!row) return "";
     return text(row.Schedule || row.schedule);
@@ -972,6 +982,7 @@
         name: name,
         row: row,
         routes: serviceRoutes(row),
+        routesKnown: routesKnown(row),
         effective: effective,
         cls: cls,
         next: next,
@@ -1018,7 +1029,7 @@
       '<td data-label="Расписание">' +
         "<div>" + esc(humanSchedule(item.effective)) + "</div>" + nextHtml +
       "</td>" +
-      '<td data-label="Записей">' + esc(String(item.routes)) + "</td>" +
+      '<td data-label="Записей">' + esc(item.routesKnown === false ? "—" : String(item.routes)) + "</td>" +
       '<td data-label="Последняя синхр.">' + lastHtml + "</td>" +
       '<td data-label="Действия" class="mrs-flat">' +
         '<div class="svc-actions">' +
@@ -1058,7 +1069,7 @@
 
     if (mode === "manual") return item.cls.key === "manual";
     if (mode === "disabled") return item.cls.key === "disabled";
-    if (mode === "routes") return item.routes > 0;
+    if (mode === "routes") return item.routesKnown === false || item.routes > 0;
     if (mode === "problems") return item.health.priority <= 1;
     if (mode === "override") return item.configOverride || item.scheduleOverride;
 
@@ -1317,12 +1328,16 @@
     var label = btn.querySelector(".btn-label");
     var hadLabel = Boolean(label);
     var oldLabel = hadLabel ? label.textContent : "";
-    var oldText = hadLabel ? null : btn.textContent;
+    // У иконочной кнопки текста нет: oldText должен остаться null, иначе
+    // restore() присвоит textContent = "" и сотрёт SVG (иконка «Синхр.»
+    // в drawer исчезала после первого клика).
+    var hasIcon = Boolean(btn.querySelector("svg"));
+    var oldText = hadLabel || hasIcon ? null : btn.textContent;
 
     btn.disabled = true;
     if (hadLabel) {
       label.textContent = busyLabel || "…";
-    } else if (!btn.querySelector("svg")) {
+    } else if (!hasIcon) {
       btn.textContent = busyLabel || "…";
     } else {
       // Иконочная кнопка: подпись менять некуда — только крутим иконку.
@@ -1461,7 +1476,9 @@
     }).catch(function (err) {
       setAlert("error", "Ошибка загрузки страницы: " + text(err && err.message));
     }).then(function () {
-      setRefreshing(false);
+      // Устаревший ответ не должен снимать индикатор актуальной загрузки:
+      // иначе спиннер гаснет, пока новые данные ещё в пути.
+      if (seq === loadSeq) setRefreshing(false);
     });
   }
 
@@ -2147,9 +2164,13 @@
 
     html += detailItem(
       "Записи",
-      esc(String(item.routes)),
-      item.routes ? "управляемые адреса" : "нет активных записей",
-      item.routes ? "ok" : "muted"
+      esc(item.routesKnown === false ? "—" : String(item.routes)),
+      item.routesKnown === false
+        ? "MikroTik недоступен — данные неизвестны"
+        : item.routes
+          ? "управляемые адреса"
+          : "нет активных записей",
+      item.routesKnown === false ? "warn" : item.routes ? "ok" : "muted"
     );
 
     html += detailItem(

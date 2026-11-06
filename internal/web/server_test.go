@@ -2979,3 +2979,118 @@ func TestServicesJSStaticURLEditable(t *testing.T) {
 		t.Fatal("addService must send static_url")
 	}
 }
+
+// TestAPIUpdateScheduleUnknownService — расписание для несуществующего
+// сервиса не должно создавать «фантомный» override: раньше PUT проходил,
+// запись жила в config.yaml и всплывала при добавлении сервиса с этим именем.
+func TestAPIUpdateScheduleUnknownService(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	token := csrfToken(t, client, ts.URL)
+
+	st, _ := doJSON(client, ts.URL, "PUT", "/api/v1/schedules/nosuchsvc", token,
+		map[string]any{"schedule": "every 1h"}, "")
+	if st != http.StatusNotFound {
+		t.Fatalf("unknown service: want 404, got %d", st)
+	}
+	if _, ok := cfg.Schedules.Services["nosuchsvc"]; ok {
+		t.Fatal("schedule for unknown service must not be persisted")
+	}
+}
+
+// TestAPIUpdateGlobalScheduleEmpty — пустой global отклоняется 400, а не
+// сохраняется с падением Save и голым 500.
+func TestAPIUpdateGlobalScheduleEmpty(t *testing.T) {
+	srv, cfg := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	token := csrfToken(t, client, ts.URL)
+
+	st, _ := doJSON(client, ts.URL, "PUT", "/api/v1/schedules/global", token,
+		map[string]any{"schedule": ""}, "")
+	if st != http.StatusBadRequest {
+		t.Fatalf("empty global: want 400, got %d", st)
+	}
+	if cfg.Schedules.Global != "every 6h" {
+		t.Fatalf("global must stay unchanged, got %q", cfg.Schedules.Global)
+	}
+}
+
+// TestServicesRoutesKnown — при недоступном MikroTik API отдаёт
+// routes_known=false, а не молчаливые нули: UI не должен утверждать
+// «нет активных записей», когда счётчики не получены.
+func TestServicesRoutesKnown(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	client := &http.Client{Jar: newJar(t)}
+	_, body := doAuth(client, ts.URL, "GET", "/api/v1/services", "", nil)
+
+	var v apiEnvelope
+	if err := json.Unmarshal([]byte(body), &v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	data, _ := v.Data.(map[string]any)
+	rows, _ := data["services"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("want one service row, got %+v", data)
+	}
+	row, _ := rows[0].(map[string]any)
+	// MikroTik в тестах мёртв: счётчики обязаны быть помечены неизвестными.
+	if known, ok := row["RoutesKnown"]; !ok || known != false {
+		t.Fatalf("RoutesKnown must be false when router is down: %+v", row)
+	}
+}
+
+// TestServicesJSRespectsRoutesKnown — JS не должен превращать «неизвестно»
+// в «ноль записей».
+func TestServicesJSRespectsRoutesKnown(t *testing.T) {
+	raw, err := os.ReadFile("static/services.js")
+	if err != nil {
+		t.Fatalf("read services.js: %v", err)
+	}
+	js := string(raw)
+	if !strings.Contains(js, "function routesKnown") {
+		t.Fatal("services.js must expose routesKnown helper")
+	}
+	if !strings.Contains(js, `routesKnown === false ? "—"`) {
+		t.Fatal("services.js must render dash instead of 0 for unknown routes")
+	}
+	raw, err = os.ReadFile("static/dashboard.js")
+	if err != nil {
+		t.Fatalf("read dashboard.js: %v", err)
+	}
+	if !strings.Contains(string(raw), "routesKnown") {
+		t.Fatal("dashboard.js must not report zero routes when counters are unknown")
+	}
+}
+
+// TestSecretFieldHasNoRevealButton — сервер отдаёт только маску, поэтому
+// кнопка «показать» раскрывала маску, а не секрет. Настоящее значение в
+// браузер не попадает и не должно.
+func TestSecretFieldHasNoRevealButton(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("templates", "settings.html"))
+	if err != nil {
+		t.Fatalf("read settings.html: %v", err)
+	}
+	page := string(raw)
+	if strings.Contains(page, "Показать значение") {
+		t.Fatal("masked secret has no reveal: button must be removed")
+	}
+	if strings.Count(page, `class="secret-field"`) == 0 {
+		t.Fatal("secret fields must remain password inputs")
+	}
+	js, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	if strings.Contains(string(js), `input.type = "text"`) {
+		t.Fatal("app.js must not unmask masked secrets")
+	}
+}
